@@ -47,6 +47,42 @@ See [Architecture](docs/ARCHITECTURE.md), [Security](docs/SECURITY.md), and
 the [provider contract](contracts/provider/v1/README.md). Flow clients use the
 separate [data-plane access contract](contracts/flow-access/v1/README.md).
 
+## Public DNS onboarding
+
+The `heterocloud` CLI generates one hostname per public failure domain. It
+discovers the public IPv4 addresses from the HeteroNetwork-backed Flow RTC
+`LoadBalancer` Service by default:
+
+```sh
+heterocloud dns records \
+  --domain heterocloud.example.com \
+  --kubeconfig /path/to/admin.conf
+```
+
+The default output is a complete BIND-compatible zone block for
+`cloud-a/b/c`, `flow-a/b/c`, `rtc-a/b/c`, and `turn-a/b/c`. Paste the whole
+block into a DNS provider's zone importer. When Kubernetes discovery is not
+available, provide every public address explicitly:
+
+```sh
+heterocloud dns records \
+  --domain heterocloud.example.com \
+  --public-ip 163.220.236.51 \
+  --public-ip 163.220.236.52 \
+  --public-ip 163.220.236.53
+```
+
+Documentation-range and private addresses are rejected unless
+`--allow-non-public` is explicitly set for a lab. After publishing the
+records, run the verification command printed at the bottom of the generated
+zone block. It checks every A record and fails on missing, extra, IPv6, or
+incorrect destinations. `--format table` and `--format json` are available
+for providers that do not accept zone imports.
+
+Per-node names are deliberate: they preserve ordered endpoint failover and
+allow each gateway to obtain its own TLS certificate. Do not collapse them
+into one unmanaged round-robin A record.
+
 ## Development
 
 Prerequisites are Rust 1.96.1, Node.js 24, PostgreSQL 17+, and Lean 4.32.2.

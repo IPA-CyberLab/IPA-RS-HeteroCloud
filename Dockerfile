@@ -14,8 +14,9 @@ COPY lean ./lean
 COPY crates ./crates
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --locked --release -p heterocloud-api -p heterocloud-worker \
+    cargo build --locked --release -p heterocloud-api -p heterocloud-cli -p heterocloud-worker \
     && cp target/release/heterocloud-api /tmp/heterocloud-api \
+    && cp target/release/heterocloud /tmp/heterocloud \
     && cp target/release/heterocloud-worker /tmp/heterocloud-worker
 
 FROM debian:bookworm-slim AS runtime
@@ -24,6 +25,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin heterocloud
 COPY --from=backend /tmp/heterocloud-api /usr/local/bin/heterocloud-api
+COPY --from=backend /tmp/heterocloud /usr/local/bin/heterocloud
 COPY --from=backend /tmp/heterocloud-worker /usr/local/bin/heterocloud-worker
 COPY --from=console /src/apps/console/dist /opt/heterocloud/console
 USER 10001:10001

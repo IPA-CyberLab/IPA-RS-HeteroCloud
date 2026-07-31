@@ -71,3 +71,58 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64
+
+  cli:
+    needs: validate
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release --locked -p heterocloud-cli
+
+      - name: Upload Unix CLI
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          os=$(printf '%s' "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')
+          arch=$(printf '%s' "$RUNNER_ARCH" | tr '[:upper:]' '[:lower:]')
+          asset="heterocloud-${RELEASE_TAG}-${os}-${arch}.tar.gz"
+          tar -C target/release -czf "$asset" heterocloud
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$asset" >"${asset}.sha256"
+          else
+            shasum -a 256 "$asset" >"${asset}.sha256"
+          fi
+          gh release upload "$RELEASE_TAG" "$asset" "${asset}.sha256" --clobber
+
+      - name: Upload Windows CLI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $arch = $env:RUNNER_ARCH.ToLowerInvariant()
+          $asset = "heterocloud-$env:RELEASE_TAG-windows-$arch.zip"
+          Compress-Archive -Path target/release/heterocloud.exe -DestinationPath $asset
+          $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
+          "$hash  $asset" | Set-Content -NoNewline "$asset.sha256"
+          gh release upload $env:RELEASE_TAG $asset "$asset.sha256" --clobber

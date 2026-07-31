@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "crates/heterocloud-api",
   "crates/heterocloud-auth",
+  "crates/heterocloud-cli",
   "crates/heterocloud-domain",
   "crates/heterocloud-iam",
   "crates/heterocloud-provider",
@@ -11,7 +12,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud"
