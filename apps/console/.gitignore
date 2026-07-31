@@ -3,5 +3,7 @@ dist/
 coverage/
 .playwright/
 .playwright-browsers/
+playwright-report/
+test-results/
 *.tsbuildinfo
 *.local
