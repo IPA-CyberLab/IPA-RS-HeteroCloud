@@ -149,14 +149,13 @@ impl Store {
         organization_id: OrganizationId,
         created_by: UserId,
         code_hash: &[u8; 32],
-        max_uses: i32,
         expires_at: DateTime<Utc>,
     ) -> Result<Uuid, StoreError> {
         let id = Uuid::now_v7();
         let result = sqlx::query(
             "INSERT INTO invitations
                 (id, code_hash, created_by, organization_id, max_uses, expires_at)
-             SELECT $1, $2, $3, m.organization_id, $5, $6
+             SELECT $1, $2, $3, m.organization_id, 1, $5
              FROM organization_memberships m
              WHERE m.organization_id = $4 AND m.user_id = $3 AND m.role = 'owner'",
         )
@@ -164,7 +163,6 @@ impl Store {
         .bind(code_hash.as_slice())
         .bind(created_by.0)
         .bind(organization_id.0)
-        .bind(max_uses)
         .bind(expires_at)
         .execute(&self.pool)
         .await?;
@@ -174,25 +172,59 @@ impl Store {
         Ok(id)
     }
 
+    pub async fn invitation_available(&self, code_hash: &[u8; 32]) -> Result<bool, StoreError> {
+        sqlx::query_scalar(
+            "SELECT EXISTS (
+                 SELECT 1
+                 FROM invitations
+                 WHERE code_hash = $1
+                   AND revoked_at IS NULL
+                   AND expires_at > now()
+                   AND max_uses = 1
+                   AND used_count = 0
+             )",
+        )
+        .bind(code_hash.as_slice())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StoreError::from)
+    }
+
     pub async fn register_with_invitation(
         &self,
         input: RegisterWithInvitation<'_>,
     ) -> Result<SessionUser, StoreError> {
         let mut transaction = self.pool.begin().await?;
-        let organization_id = sqlx::query_scalar::<_, Option<Uuid>>(
-            "SELECT organization_id
+        let invitation = sqlx::query_as::<_, (Uuid, Option<Uuid>)>(
+            "SELECT id, organization_id
              FROM invitations
              WHERE code_hash = $1
                AND revoked_at IS NULL
                AND expires_at > now()
-               AND used_count < max_uses
+               AND max_uses = 1
+               AND used_count = 0
              FOR UPDATE",
         )
         .bind(input.code_hash.as_slice())
         .fetch_optional(&mut *transaction)
         .await?
-        .flatten()
         .ok_or(StoreError::InvitationUnavailable)?;
+        let organization_id = invitation.1.ok_or(StoreError::InvitationUnavailable)?;
+        let consumed = sqlx::query(
+            "UPDATE invitations
+             SET used_count = 1
+             WHERE id = $1
+               AND revoked_at IS NULL
+               AND expires_at > now()
+               AND max_uses = 1
+               AND used_count = 0",
+        )
+        .bind(invitation.0)
+        .execute(&mut *transaction)
+        .await?;
+        if consumed.rows_affected() != 1 {
+            return Err(StoreError::InvitationUnavailable);
+        }
         if lookup_user_by_email(&mut transaction, input.email)
             .await?
             .is_some()
@@ -231,14 +263,6 @@ impl Store {
         .bind(organization_id)
         .bind(user_id.0)
         .bind(principal_id.0)
-        .execute(&mut *transaction)
-        .await?;
-        sqlx::query(
-            "UPDATE invitations
-             SET used_count = used_count + 1
-             WHERE code_hash = $1",
-        )
-        .bind(input.code_hash.as_slice())
         .execute(&mut *transaction)
         .await?;
         transaction.commit().await?;

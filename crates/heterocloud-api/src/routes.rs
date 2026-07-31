@@ -168,18 +168,28 @@ async fn register(
     Json(request): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     require_same_origin(&state.config, &headers)?;
+    if !EmailAddress::is_valid(&request.email) {
+        return Err(ApiError::BadRequest("Invalid email address.".into()));
+    }
+    validate_name(&request.display_name)?;
+    let invitation_hash = token_hash(request.invitation_code.expose_secret());
+    if !state
+        .store
+        .invitation_available(&invitation_hash)
+        .await
+        .map_err(ApiError::from_store)?
+    {
+        return Err(ApiError::from_store(
+            heterocloud_store::StoreError::InvitationUnavailable,
+        ));
+    }
     let _permit = state
         .registration_limiter
         .clone()
         .try_acquire_owned()
         .map_err(|_| ApiError::TooManyRequests)?;
-    if !EmailAddress::is_valid(&request.email) {
-        return Err(ApiError::BadRequest("Invalid email address.".into()));
-    }
-    validate_name(&request.display_name)?;
     let password_hash = hash_password(&request.password)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    let invitation_hash = token_hash(request.invitation_code.expose_secret());
     let session_user = state
         .store
         .register_with_invitation(RegisterWithInvitation {
@@ -538,8 +548,6 @@ async fn create_api_key(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateInvitation {
-    #[serde(default = "default_invitation_max_uses")]
-    max_uses: i32,
     #[serde(default = "default_invitation_ttl_hours")]
     expires_in_hours: i64,
 }
@@ -552,11 +560,7 @@ async fn create_invitation(
     Json(request): Json<CreateInvitation>,
 ) -> Result<impl IntoResponse, ApiError> {
     let authenticated = authenticated_mutation(&state, &headers, &jar).await?;
-    if !(1..=100).contains(&request.max_uses) || !(1..=168).contains(&request.expires_in_hours) {
-        return Err(ApiError::BadRequest(
-            "max_uses must be 1..100 and expires_in_hours must be 1..168".into(),
-        ));
-    }
+    validate_invitation_ttl(request.expires_in_hours)?;
     authorize_organization(
         &state,
         &authenticated.user,
@@ -574,7 +578,6 @@ async fn create_invitation(
             OrganizationId(organization_id),
             authenticated.user.user.id,
             &code_hash,
-            request.max_uses,
             expires_at,
         )
         .await
@@ -584,7 +587,7 @@ async fn create_invitation(
         Json(json!({
             "id": id,
             "code": code.expose_secret(),
-            "max_uses": request.max_uses,
+            "max_uses": 1,
             "expires_at": expires_at,
         })),
     ))
@@ -1037,13 +1040,20 @@ fn organization_resource(organization_id: Uuid, suffix: &str) -> String {
     format!("hc:org:{organization_id}:{suffix}")
 }
 
-const fn default_invitation_max_uses() -> i32 {
-    1
+fn validate_invitation_ttl(expires_in_hours: i64) -> Result<(), ApiError> {
+    if !(1..=INVITATION_MAX_TTL_HOURS).contains(&expires_in_hours) {
+        return Err(ApiError::BadRequest(format!(
+            "expires_in_hours must be 1..{INVITATION_MAX_TTL_HOURS}"
+        )));
+    }
+    Ok(())
 }
 
 const fn default_invitation_ttl_hours() -> i64 {
-    24
+    INVITATION_MAX_TTL_HOURS
 }
+
+const INVITATION_MAX_TTL_HOURS: i64 = 24;
 
 #[derive(Serialize)]
 struct SessionResponse {
@@ -1069,7 +1079,12 @@ fn _service_id_type_guard(id: Uuid) -> ServiceInstanceId {
 
 #[cfg(test)]
 mod tests {
-    use super::{CSRF_HEADER, SESSION_COOKIE, parse_api_key_prefix, validate_slug};
+    use serde_json::json;
+
+    use super::{
+        CSRF_HEADER, CreateInvitation, INVITATION_MAX_TTL_HOURS, SESSION_COOKIE,
+        parse_api_key_prefix, validate_invitation_ttl, validate_slug,
+    };
 
     #[test]
     fn public_security_names_are_stable() {
@@ -1089,5 +1104,25 @@ mod tests {
         let token = "hc_0123456789abcdef_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG";
         assert_eq!(parse_api_key_prefix(token).ok(), Some("0123456789abcdef"));
         assert!(parse_api_key_prefix("not-a-key").is_err());
+    }
+
+    #[test]
+    fn invitation_creation_is_single_use_and_short_lived() {
+        let default_request = serde_json::from_value::<CreateInvitation>(json!({}))
+            .map_err(|error| format!("default invitation request should deserialize: {error}"));
+        assert_eq!(
+            default_request.ok().map(|request| request.expires_in_hours),
+            Some(INVITATION_MAX_TTL_HOURS)
+        );
+        assert!(
+            serde_json::from_value::<CreateInvitation>(
+                json!({"max_uses": 2, "expires_in_hours": 1})
+            )
+            .is_err()
+        );
+        assert!(validate_invitation_ttl(1).is_ok());
+        assert!(validate_invitation_ttl(INVITATION_MAX_TTL_HOURS).is_ok());
+        assert!(validate_invitation_ttl(0).is_err());
+        assert!(validate_invitation_ttl(INVITATION_MAX_TTL_HOURS + 1).is_err());
     }
 }

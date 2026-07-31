@@ -8,6 +8,13 @@ organization invitation flow. Account creation alone must never grant free
 service capacity; quotas and billing eligibility are separate HeteroCloud
 state.
 
+Organization invitations are single-use and expire within 24 hours. The API
+performs an indexed availability lookup before running Argon2id, then locks
+and revalidates the invitation row in the registration transaction. This
+limits CPU amplification from invalid invitation traffic while ensuring that
+only one of several concurrent registration attempts can consume a code.
+Unavailable, expired, revoked, and consumed codes share one public error.
+
 Future public admission should combine phone verification, payment
 verification, per-phone uniqueness using a keyed HMAC index, cooldowns, and
 IP/ASN/device rate limits. SMS alone is not a Sybil defense.
@@ -47,4 +54,3 @@ Secrets, NetworkPolicies, container images, and release lifecycles. Provider
 tokens are short-lived, audience-bound, and contain only opaque tenant
 context. A Flow compromise must not grant access to HeteroCloud password
 hashes, sessions, IAM policy storage, or provider signing keys.
-
