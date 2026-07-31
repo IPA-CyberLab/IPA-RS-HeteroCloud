@@ -1,0 +1,52 @@
+cloud-b.163-220-236-52.sslip.io {
+	reverse_proxy https://10.250.0.5:8443 https://10.250.0.6:8443 https://10.250.0.4:8443 {
+		lb_policy first
+		health_uri /api/v1/health/live
+		health_interval 5s
+		health_timeout 2s
+		fail_duration 10s
+		max_fails 2
+		transport http {
+			tls_insecure_skip_verify
+		}
+	}
+}
+
+flow-b.163-220-236-52.sslip.io {
+	handle /internal/* {
+		respond 404
+	}
+
+	handle /v1/signal/* {
+		reverse_proxy 10.250.0.5:8082 10.250.0.6:8082 10.250.0.4:8082 {
+			lb_policy first
+			health_uri /health/live
+			health_interval 5s
+			health_timeout 2s
+			fail_duration 10s
+			max_fails 2
+		}
+	}
+
+	handle {
+		reverse_proxy 10.250.0.5:8080 10.250.0.6:8080 10.250.0.4:8080 {
+			lb_policy first
+			health_uri /health/live
+			health_interval 5s
+			health_timeout 2s
+			fail_duration 10s
+			max_fails 2
+		}
+	}
+}
+
+rtc-b.163-220-236-52.sslip.io {
+	reverse_proxy 10.250.0.5:7880 10.250.0.6:7880 10.250.0.4:7880 {
+		lb_policy first
+		health_uri /
+		health_interval 5s
+		health_timeout 2s
+		fail_duration 10s
+		max_fails 2
+	}
+}
