@@ -12,7 +12,7 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -29,7 +29,7 @@ jobs:
         with:
           lake-package-directory: lean
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -42,7 +42,7 @@ jobs:
       - working-directory: apps/console
         run: npm run build
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
       - run: helm lint deploy/helm/heterocloud
       - run: helm template heterocloud deploy/helm/heterocloud >/tmp/heterocloud.yaml
 
@@ -50,7 +50,7 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -85,7 +85,7 @@ jobs:
           - windows-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
