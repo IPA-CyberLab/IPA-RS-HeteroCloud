@@ -1,0 +1,8 @@
+/target/
+/lean/.lake/
+/apps/console/node_modules/
+/apps/console/dist/
+/.env
+/.idea/
+/.vscode/
+*.log

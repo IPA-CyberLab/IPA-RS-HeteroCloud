@@ -1,0 +1,81 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/heterocloud-api",
+  "crates/heterocloud-auth",
+  "crates/heterocloud-domain",
+  "crates/heterocloud-iam",
+  "crates/heterocloud-provider",
+  "crates/heterocloud-store",
+  "crates/heterocloud-worker",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud"
+rust-version = "1.96"
+
+[workspace.dependencies]
+argon2 = { version = "0.5.3", features = ["std"] }
+axum = { version = "0.8.9", features = ["http2", "macros", "matched-path"] }
+axum-extra = { version = "0.12.5", features = ["cookie"] }
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
+base64 = "0.22.1"
+chrono = { version = "0.4.42", features = ["serde"] }
+clap = { version = "4.5.54", features = ["derive", "env"] }
+email_address = "0.2.9"
+getrandom = "0.3.4"
+hmac = "0.12.1"
+http = "1.4.0"
+jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["http2", "json", "rustls"] }
+secrecy = { version = "0.10.3", features = ["serde"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = "0.10.9"
+sqlx = { version = "0.9.0", default-features = false, features = [
+  "chrono",
+  "derive",
+  "json",
+  "macros",
+  "migrate",
+  "postgres",
+  "runtime-tokio",
+  "tls-rustls-ring-webpki",
+  "uuid",
+] }
+subtle = "2.6.1"
+thiserror = "2.0.18"
+time = "0.3.54"
+tokio = { version = "1.49.0", features = ["macros", "net", "process", "rt-multi-thread", "signal", "time"] }
+tower = { version = "0.5.3", features = ["timeout", "util"] }
+tower-http = { version = "0.6.8", features = [
+  "compression-gzip",
+  "catch-panic",
+  "fs",
+  "request-id",
+  "sensitive-headers",
+  "set-header",
+  "trace",
+] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt", "json"] }
+url = { version = "2.5.8", features = ["serde"] }
+uuid = { version = "1.20.0", features = ["serde", "v4", "v7"] }
+zeroize = "1.8.2"
+
+heterocloud-auth = { path = "crates/heterocloud-auth" }
+heterocloud-domain = { path = "crates/heterocloud-domain" }
+heterocloud-iam = { path = "crates/heterocloud-iam" }
+heterocloud-provider = { path = "crates/heterocloud-provider" }
+heterocloud-store = { path = "crates/heterocloud-store" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+expect_used = "deny"
+panic = "deny"
+unwrap_used = "deny"

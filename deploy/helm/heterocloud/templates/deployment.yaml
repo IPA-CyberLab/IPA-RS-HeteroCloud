@@ -1,0 +1,150 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "heterocloud.fullname" . }}
+  labels:
+    {{- include "heterocloud.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "heterocloud.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "heterocloud.selectorLabels" . | nindent 8 }}
+    spec:
+      hostNetwork: {{ .Values.hostNetwork }}
+      {{- if .Values.hostNetwork }}
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      serviceAccountName: {{ include "heterocloud.fullname" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 40
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              {{- include "heterocloud.selectorLabels" . | nindent 14 }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  {{- include "heterocloud.selectorLabels" . | nindent 18 }}
+        {{- with .Values.affinity }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --listen=0.0.0.0:8443
+            - --database-url-file=/var/run/secrets/runtime/database-url
+            - --csrf-key-file=/var/run/secrets/runtime/csrf-key
+            - --public-origin={{ required "publicOrigin is required" .Values.publicOrigin }}
+            {{- if .Values.additionalOrigins }}
+            - --additional-origins={{ join "," .Values.additionalOrigins }}
+            {{- end }}
+            - --secure-cookie={{ .Values.secureCookie }}
+            - --session-ttl-seconds={{ .Values.sessionTtlSeconds }}
+            - --database-max-connections={{ .Values.databaseMaxConnections }}
+            - --console-dir=/opt/heterocloud/console
+            - --tls-cert-file=/var/run/secrets/tls/tls.crt
+            - --tls-key-file=/var/run/secrets/tls/tls.key
+            {{- if .Values.bootstrap.enabled }}
+            - --bootstrap-email={{ required "bootstrap.email is required" .Values.bootstrap.email }}
+            - --bootstrap-password-file=/var/run/secrets/runtime/bootstrap-password
+            - --bootstrap-display-name={{ .Values.bootstrap.displayName }}
+            - --bootstrap-organization-slug={{ .Values.bootstrap.organizationSlug }}
+            - --bootstrap-organization-name={{ .Values.bootstrap.organizationName }}
+            {{- end }}
+          ports:
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health/ready
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health/live
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: runtime
+              mountPath: /var/run/secrets/runtime
+              readOnly: true
+            - name: tls
+              mountPath: /var/run/secrets/tls
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: runtime
+          secret:
+            secretName: {{ .Values.secrets.runtimeSecretName }}
+            defaultMode: 0400
+            items:
+              - key: {{ .Values.secrets.databaseUrlKey }}
+                path: database-url
+              - key: {{ .Values.secrets.csrfKeyKey }}
+                path: csrf-key
+              {{- if .Values.bootstrap.enabled }}
+              - key: {{ .Values.secrets.bootstrapPasswordKey }}
+                path: bootstrap-password
+              {{- end }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.secrets.tlsSecretName }}
+            defaultMode: 0400
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

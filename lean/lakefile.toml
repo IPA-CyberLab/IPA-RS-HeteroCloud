@@ -1,0 +1,7 @@
+name = "heterocloud-iam"
+version = "0.1.0"
+defaultTargets = ["HeteroCloud"]
+
+[[lean_lib]]
+name = "HeteroCloud"
+

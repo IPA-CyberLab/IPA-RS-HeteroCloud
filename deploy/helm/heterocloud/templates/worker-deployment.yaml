@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "heterocloud.fullname" . }}-worker
+  labels:
+    {{- include "heterocloud.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "heterocloud.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "heterocloud.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: worker
+    spec:
+      hostNetwork: {{ .Values.hostNetwork }}
+      {{- if .Values.hostNetwork }}
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      serviceAccountName: {{ include "heterocloud.fullname" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 40
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "heterocloud.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: worker
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: {{ include "heterocloud.name" . }}
+                  app.kubernetes.io/instance: {{ .Release.Name }}
+                  app.kubernetes.io/component: worker
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /usr/local/bin/heterocloud-worker
+          args:
+            - --database-url-file=/var/run/secrets/runtime/database-url
+            - --signing-key-file=/var/run/secrets/provider/ed25519-private.pem
+            - --flow-endpoint={{ .Values.worker.flowEndpoint }}
+            - --issuer={{ .Values.worker.providerIssuer }}
+            - --flow-audience={{ .Values.worker.flowAudience }}
+            - --key-id={{ .Values.worker.providerKeyId }}
+            - --poll-milliseconds={{ .Values.worker.pollMilliseconds }}
+            - --database-max-connections={{ .Values.worker.databaseMaxConnections }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: runtime
+              mountPath: /var/run/secrets/runtime
+              readOnly: true
+            - name: provider
+              mountPath: /var/run/secrets/provider
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: runtime
+          secret:
+            secretName: {{ .Values.secrets.runtimeSecretName }}
+            defaultMode: 0400
+            items:
+              - key: {{ .Values.secrets.databaseUrlKey }}
+                path: database-url
+        - name: provider
+          secret:
+            secretName: {{ .Values.secrets.providerSigningSecretName }}
+            defaultMode: 0400
+            items:
+              - key: {{ .Values.secrets.providerSigningKeyKey }}
+                path: ed25519-private.pem
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

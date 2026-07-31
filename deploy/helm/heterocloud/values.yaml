@@ -1,0 +1,74 @@
+replicaCount: 3
+hostNetwork: true
+
+image:
+  repository: ghcr.io/ipa-cyberlab/ipa-rs-heterocloud
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+publicOrigin: https://cloud.example.com
+additionalOrigins: []
+secureCookie: true
+sessionTtlSeconds: 43200
+databaseMaxConnections: 20
+
+worker:
+  replicaCount: 3
+  flowEndpoint: http://heterocloud-flow-api.heterocloud-flow.svc.cluster.local:8080/
+  providerIssuer: heterocloud
+  flowAudience: heterocloud-flow
+  providerKeyId: heterocloud-provider-1
+  pollMilliseconds: 500
+  databaseMaxConnections: 5
+
+secrets:
+  runtimeSecretName: heterocloud-runtime
+  databaseUrlKey: database-url
+  csrfKeyKey: csrf-key
+  bootstrapPasswordKey: bootstrap-password
+  tlsSecretName: heterocloud-tls
+  providerSigningSecretName: heterocloud-provider-signing
+  providerSigningKeyKey: ed25519-private.pem
+
+bootstrap:
+  enabled: false
+  email: ""
+  displayName: HeteroCloud Administrator
+  organizationSlug: heterocloud
+  organizationName: HeteroCloud
+
+service:
+  type: LoadBalancer
+  port: 10443
+  loadBalancerClass: heteronetwork.io/public
+  trafficMode: forwarded
+  ingressReplicas: 3
+  externalTrafficPolicy: Cluster
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+
+podDisruptionBudget:
+  minAvailable: 2
+
+networkPolicy:
+  enabled: true
+  databaseCidrs:
+    - 10.250.0.0/24
+  databasePort: 25432
+  providerCidrs:
+    - 10.96.0.0/12
+  providerPort: 8080
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

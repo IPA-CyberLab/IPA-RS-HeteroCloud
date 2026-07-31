@@ -1,0 +1,35 @@
+replicaCount: 3
+hostNetwork: true
+
+publicOrigin: https://cloud-a.163-220-236-51.sslip.io
+additionalOrigins:
+  - https://cloud-b.163-220-236-52.sslip.io
+  - https://cloud-c.163-220-236-53.sslip.io
+
+image:
+  repository: ghcr.io/ipa-cyberlab/ipa-rs-heterocloud
+  pullPolicy: IfNotPresent
+
+worker:
+  replicaCount: 3
+  flowEndpoint: http://heterocloud-flow-api.heterocloud-flow.svc.cluster.local:8080/
+  providerIssuer: heterocloud
+  flowAudience: heterocloud-flow
+  providerKeyId: heterocloud-provider-1
+
+service:
+  type: LoadBalancer
+  port: 10443
+  loadBalancerClass: heteronetwork.io/public
+  trafficMode: forwarded
+  ingressReplicas: 3
+  externalTrafficPolicy: Cluster
+
+networkPolicy:
+  enabled: true
+  databaseCidrs:
+    - 10.250.0.0/24
+  databasePort: 25432
+  providerCidrs:
+    - 10.96.0.0/12
+  providerPort: 8080
