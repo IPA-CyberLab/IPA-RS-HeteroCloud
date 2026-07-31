@@ -12,6 +12,7 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    install_crypto_provider()?;
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
@@ -72,6 +73,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         axum::serve(listener, router)
             .with_graceful_shutdown(shutdown_signal())
             .await?;
+    }
+    Ok(())
+}
+
+fn install_crypto_provider() -> Result<(), std::io::Error> {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .map_err(|_| std::io::Error::other("failed to install the Rustls Ring provider"))?;
     }
     Ok(())
 }

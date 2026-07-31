@@ -12,6 +12,7 @@ heterocloud-domain.workspace = true
 heterocloud-provider.workspace = true
 heterocloud-store.workspace = true
 reqwest.workspace = true
+rustls.workspace = true
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
