@@ -103,10 +103,40 @@ pub struct ReconcileRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AcceptedOperation {
     pub operation_id: Uuid,
+    pub status: Value,
 }
 
 #[derive(Debug, Error)]
 pub enum ProviderError {
     #[error("provider signing failed: {0}")]
     Jwt(#[from] jsonwebtoken::errors::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::AcceptedOperation;
+
+    #[test]
+    fn accepted_operation_requires_provider_status() -> Result<(), Box<dyn std::error::Error>> {
+        let operation_id = Uuid::from_u128(1);
+        let operation: AcceptedOperation = serde_json::from_value(json!({
+            "operation_id": operation_id,
+            "status": {
+                "phase": "ready",
+                "observed_generation": 1
+            }
+        }))?;
+        assert_eq!(operation.operation_id, operation_id);
+        assert_eq!(operation.status["phase"], json!("ready"));
+        assert!(
+            serde_json::from_value::<AcceptedOperation>(json!({
+                "operation_id": operation_id
+            }))
+            .is_err()
+        );
+        Ok(())
+    }
 }

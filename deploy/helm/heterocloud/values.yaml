@@ -16,6 +16,13 @@ secureCookie: true
 sessionTtlSeconds: 43200
 databaseMaxConnections: 20
 
+flowAccess:
+  issuer: heterocloud
+  audience: heterocloud-flow-data
+
+flowPublicEndpoints:
+  - https://flow.example.com
+
 worker:
   replicaCount: 3
   flowEndpoint: http://heterocloud-flow-api.heterocloud-flow.svc.cluster.local:8080/
@@ -31,6 +38,8 @@ secrets:
   csrfKeyKey: csrf-key
   bootstrapPasswordKey: bootstrap-password
   tlsSecretName: heterocloud-tls
+  flowAccessSecretName: heterocloud-flow-access
+  flowAccessSecretKey: hmac-secret
   providerSigningSecretName: heterocloud-provider-signing
   providerSigningKeyKey: ed25519-private.pem
 

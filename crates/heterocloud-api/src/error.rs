@@ -19,6 +19,8 @@ pub enum ApiError {
     Internal,
     #[error("resource not found")]
     NotFound,
+    #[error("service instance is not ready")]
+    ServiceInstanceNotReady,
     #[error("too many requests")]
     TooManyRequests,
     #[error("authentication required")]
@@ -74,6 +76,11 @@ impl IntoResponse for ApiError {
                 StatusCode::NOT_FOUND,
                 "not_found",
                 "The requested resource was not found.",
+            ),
+            Self::ServiceInstanceNotReady => (
+                StatusCode::CONFLICT,
+                "service_instance_not_ready",
+                "The Flow service instance is not ready for access contexts.",
             ),
             Self::TooManyRequests => (
                 StatusCode::TOO_MANY_REQUESTS,

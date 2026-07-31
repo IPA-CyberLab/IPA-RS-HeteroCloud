@@ -22,6 +22,20 @@ data paths. No HeteroCloud customer model is compiled into HeteroNetwork.
 6. A service mutation commits desired state and an outbox event atomically.
 7. A provider worker signs a short-lived `provider/v1` command for Flow.
 
+Flow data-plane access is a separate path. An authenticated user or API key
+requests an instance-scoped context. IAM evaluates
+`flow:IssueAccessContext` against
+`hc:org:<organization UUID>:flow/instance/<instance UUID>`, then the API signs
+only the requested allow-listed permissions. For non-owner principals, every
+requested data-plane permission also maps to a distinct IAM action evaluated
+against that same instance resource. Each allow or deny is audited, and one
+explicit or default deny aborts the whole issuance. The instance must already
+be `ready`; provisioning and error instances cannot mint credentials. The
+project identifier is loaded from the service instance; clients cannot supply
+it. The response carries the configured concrete Flow endpoint list so
+failover does not depend on assuming that one sslip.io hostname has multiple
+healthy address records.
+
 The browser never receives database credentials, provider credentials,
 LiveKit API secrets, or TURN shared secrets.
 
@@ -71,3 +85,17 @@ later, `hostNetwork` can be disabled without changing the API.
 
 Provider commands use a transactional outbox. A replica or provider outage
 therefore delays reconciliation without losing accepted desired state.
+After Flow accepts a reconcile operation, the worker records its operation ID
+and provider status and changes the instance to `ready` only when the stored
+generation still matches the delivered generation.
+
+The HeteroNet production profile schedules all three API replicas and all
+three provider workers on the three control-plane nodes. Required anti-affinity
+keeps each component at one replica per node.
+
+With host networking enabled, each API process binds only to the downward-API
+`status.hostIP` on port 8443. The production Kubernetes Service is ClusterIP;
+it does not create a HeteroNetwork public LoadBalancer or expose port 10443.
+Public HTTPS terminates only at Caddy on port 443. Each public control-plane
+Caddy instance proxies the three HeteroNetwork node IP upstreams on port 8443,
+so losing one API or control-plane node does not require a public bypass port.

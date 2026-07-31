@@ -739,6 +739,30 @@ impl Store {
         .transpose()
     }
 
+    pub async fn mark_service_instance_ready(
+        &self,
+        id: ServiceInstanceId,
+        generation: i64,
+        operation_id: Uuid,
+        provider_status: Value,
+    ) -> Result<bool, StoreError> {
+        let status = serde_json::json!({
+            "operation_id": operation_id,
+            "status": provider_status,
+        });
+        let result = sqlx::query(
+            "UPDATE service_instances
+             SET state = 'ready', status = $3, updated_at = now()
+             WHERE id = $1 AND generation = $2 AND provider = 'flow'",
+        )
+        .bind(id.0)
+        .bind(generation)
+        .bind(status)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
     pub async fn claim_outbox_event(&self) -> Result<Option<OutboxEvent>, StoreError> {
         sqlx::query_as::<_, OutboxEvent>(
             "UPDATE outbox_events

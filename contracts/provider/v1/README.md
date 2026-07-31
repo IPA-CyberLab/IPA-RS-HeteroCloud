@@ -45,8 +45,10 @@ both `organization_id` and `project_id`. Repeated `jti` values are idempotent.
 }
 ```
 
-The provider returns `202 Accepted` and an operation identifier. Status
-updates are generation-checked and never overwrite newer desired state.
+The provider returns `202 Accepted`, an operation identifier, and a required
+provider status object. HeteroCloud records both and marks the instance ready
+only if its generation still matches. Status updates never overwrite newer
+desired state.
 
 ## Delete
 

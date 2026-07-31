@@ -6,6 +6,19 @@ additionalOrigins:
   - https://cloud-b.163-220-236-52.sslip.io
   - https://cloud-c.163-220-236-53.sslip.io
 
+flowAccess:
+  issuer: heterocloud
+  audience: heterocloud-flow-data
+
+flowPublicEndpoints:
+  - https://flow-a.163-220-236-51.sslip.io
+  - https://flow-b.163-220-236-52.sslip.io
+  - https://flow-c.163-220-236-53.sslip.io
+
+secrets:
+  flowAccessSecretName: heterocloud-flow-access
+  flowAccessSecretKey: hmac-secret
+
 image:
   repository: ghcr.io/ipa-cyberlab/ipa-rs-heterocloud
   pullPolicy: IfNotPresent
@@ -18,12 +31,8 @@ worker:
   providerKeyId: heterocloud-provider-1
 
 service:
-  type: LoadBalancer
-  port: 10443
-  loadBalancerClass: heteronetwork.io/public
-  trafficMode: forwarded
-  ingressReplicas: 3
-  externalTrafficPolicy: Cluster
+  type: ClusterIP
+  port: 8443
 
 networkPolicy:
   enabled: true
@@ -33,3 +42,11 @@ networkPolicy:
   providerCidrs:
     - 10.96.0.0/12
   providerPort: 8080
+
+nodeSelector:
+  node-role.kubernetes.io/control-plane: ""
+
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule

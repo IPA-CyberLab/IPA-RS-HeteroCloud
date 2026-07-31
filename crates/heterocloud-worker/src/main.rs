@@ -5,7 +5,7 @@ use std::{
 
 use clap::Parser;
 use heterocloud_domain::{OrganizationId, PrincipalId, ProjectId, ServiceInstanceId};
-use heterocloud_provider::{ProviderContext, ProviderSigner, ReconcileRequest};
+use heterocloud_provider::{AcceptedOperation, ProviderContext, ProviderSigner, ReconcileRequest};
 use heterocloud_store::{OutboxEvent, Store};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
@@ -128,6 +128,13 @@ async fn process_one(
     };
     match deliver(store, client, signer, flow_endpoint, &event).await {
         Ok(()) => store.mark_outbox_delivered(event.id).await?,
+        Err(WorkerError::StalePayload) => {
+            warn!(
+                event_id = %event.id,
+                "stale provider event was superseded by a newer generation"
+            );
+            store.mark_outbox_delivered(event.id).await?;
+        }
         Err(error) => {
             warn!(
                 event_id = %event.id,
@@ -191,6 +198,18 @@ async fn deliver(
     if !response.status().is_success() {
         return Err(WorkerError::ProviderStatus(response.status().as_u16()));
     }
+    let operation: AcceptedOperation = response.json().await?;
+    if !store
+        .mark_service_instance_ready(
+            payload.service_instance_id,
+            payload.generation,
+            operation.operation_id,
+            operation.status,
+        )
+        .await?
+    {
+        return Err(WorkerError::StalePayload);
+    }
     Ok(())
 }
 
@@ -215,14 +234,14 @@ async fn read_secret(path: &Path) -> Result<SecretString, WorkerError> {
 }
 
 async fn read_secret_bytes(path: &Path) -> Result<Vec<u8>, WorkerError> {
-    let metadata = fs::symlink_metadata(path).await?;
+    let metadata = fs::metadata(path).await?;
     if !metadata.file_type().is_file() {
         return Err(WorkerError::InvalidSecret);
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if metadata.mode() & 0o077 != 0 {
+        if metadata.mode() & 0o037 != 0 {
             return Err(WorkerError::UnsafeSecretPermissions);
         }
     }

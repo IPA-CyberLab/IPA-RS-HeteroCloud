@@ -19,6 +19,7 @@ selection, packet forwarding, LiveKit, TURN, or matchmaking.
   policy bindings, Flow service instances, an outbox, and audit events.
 - Default-deny IAM with explicit-deny precedence and an organization boundary.
 - A Lean 4 authorization kernel proving the final decision invariants.
+- IAM-authorized, five-minute-or-shorter Flow data-plane access contexts.
 - A React and TypeScript operations console served by the Rust API.
 
 There is deliberately no anonymous self-registration endpoint. Public
@@ -43,7 +44,8 @@ HeteroNetwork
 ```
 
 See [Architecture](docs/ARCHITECTURE.md), [Security](docs/SECURITY.md), and
-the [provider contract](contracts/provider/v1/README.md).
+the [provider contract](contracts/provider/v1/README.md). Flow clients use the
+separate [data-plane access contract](contracts/flow-access/v1/README.md).
 
 ## Development
 
@@ -69,11 +71,15 @@ API:
 printf '%s\n' 'postgres://heterocloud:password@127.0.0.1/heterocloud' \
   > /tmp/heterocloud-database-url
 openssl rand -base64 48 > /tmp/heterocloud-csrf-key
-chmod 600 /tmp/heterocloud-database-url /tmp/heterocloud-csrf-key
+openssl rand -base64 48 > /tmp/heterocloud-flow-access-secret
+chmod 600 /tmp/heterocloud-database-url /tmp/heterocloud-csrf-key \
+  /tmp/heterocloud-flow-access-secret
 
 cargo run -p heterocloud-api -- \
   --database-url-file /tmp/heterocloud-database-url \
   --csrf-key-file /tmp/heterocloud-csrf-key \
+  --flow-access-secret-file /tmp/heterocloud-flow-access-secret \
+  --flow-public-endpoints http://localhost:8090 \
   --public-origin http://localhost:8080 \
   --secure-cookie=false \
   --console-dir apps/console/dist
@@ -81,4 +87,3 @@ cargo run -p heterocloud-api -- \
 
 Bootstrap configuration is accepted only as a complete email/password-file
 pair. Remove those settings after the first successful deployment.
-

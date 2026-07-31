@@ -1,4 +1,8 @@
-use std::sync::Arc;
+use std::{
+    collections::BTreeSet,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use axum::{
     Json, Router,
@@ -14,8 +18,8 @@ use heterocloud_auth::{
     constant_time_token_eq, csrf_token, generate_token, hash_password, token_hash, verify_password,
 };
 use heterocloud_domain::{
-    FlowSpec, OrganizationId, PolicyDocument, PolicyId, PrincipalId, ProjectId, ServiceInstanceId,
-    UserStatus,
+    FlowSpec, OrganizationId, PolicyDocument, PolicyId, PrincipalId, ProjectId, ServiceInstance,
+    ServiceInstanceId, ServiceState, UserStatus,
 };
 use heterocloud_iam::{AuthorizationRequest, Decision, authorize, semantics_digest};
 use heterocloud_store::{
@@ -26,9 +30,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use time::Duration as CookieDuration;
 use tokio::sync::Semaphore;
+use url::Url;
 use uuid::Uuid;
 
-use crate::{config::RuntimeConfig, error::ApiError};
+use crate::{
+    config::RuntimeConfig,
+    error::ApiError,
+    flow_access::{FlowAccessInput, SignedFlowAccessContext},
+};
 
 const SESSION_COOKIE: &str = "hc_session";
 const CSRF_HEADER: &str = "x-heterocloud-csrf";
@@ -76,6 +85,10 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route(
             "/organizations/{organization_id}/flow/instances",
             get(list_flow_instances).post(create_flow_instance),
+        )
+        .route(
+            "/organizations/{organization_id}/flow/instances/{service_instance_id}/access-contexts",
+            post(create_flow_access_context),
         )
         .route(
             "/organizations/{organization_id}/audit-events",
@@ -671,6 +684,199 @@ async fn create_flow_instance(
     Ok((StatusCode::ACCEPTED, Json(instance)))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateFlowAccessContext {
+    permissions: BTreeSet<String>,
+    expires_in_seconds: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct FlowAccessHeaders {
+    #[serde(rename = "x-flow-principal")]
+    principal: String,
+    #[serde(rename = "x-flow-timestamp")]
+    timestamp: String,
+    #[serde(rename = "x-flow-signature")]
+    signature: String,
+}
+
+#[derive(Serialize)]
+struct FlowAccessContextResponse {
+    headers: FlowAccessHeaders,
+    endpoints: Vec<Url>,
+    issued_at: u64,
+    expires_at: u64,
+    context_id: Uuid,
+    organization_id: OrganizationId,
+    project_id: ProjectId,
+    service_instance_id: ServiceInstanceId,
+    principal_id: PrincipalId,
+}
+
+async fn create_flow_access_context(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<CreateFlowAccessContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    validate_flow_permissions(&request.permissions)?;
+    let expires_in_seconds = validate_flow_access_ttl(request.expires_in_seconds)?;
+
+    let instance = state
+        .store
+        .service_instance(ServiceInstanceId(service_instance_id))
+        .await
+        .map_err(ApiError::from_store)?;
+    let instance = validate_flow_access_target(
+        instance,
+        OrganizationId(organization_id),
+        ServiceInstanceId(service_instance_id),
+    )?;
+    let resource = flow_instance_resource(organization_id, service_instance_id);
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flow:IssueAccessContext",
+        &resource,
+    )
+    .await?;
+    for permission in &request.permissions {
+        let action = flow_permission_iam_action(permission).ok_or(ApiError::Internal)?;
+        authorize_actor(
+            &state,
+            &actor,
+            OrganizationId(organization_id),
+            action,
+            &resource,
+        )
+        .await?;
+    }
+
+    let issued_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| ApiError::Internal)?
+        .as_secs();
+    let expires_at = issued_at
+        .checked_add(expires_in_seconds)
+        .ok_or(ApiError::Internal)?;
+    let signed = state
+        .config
+        .flow_access_signer
+        .sign(
+            FlowAccessInput {
+                organization_id: instance.organization_id,
+                project_id: instance.project_id,
+                service_instance_id: instance.id,
+                principal_id: authorization.principal_id,
+                permissions: request.permissions,
+            },
+            issued_at,
+            expires_at,
+            Uuid::now_v7(),
+        )
+        .map_err(|_| ApiError::Internal)?;
+    let response = flow_access_response(signed, &state.config.flow_public_endpoints);
+    Ok((
+        StatusCode::CREATED,
+        [
+            (header::CACHE_CONTROL, "no-store"),
+            (header::PRAGMA, "no-cache"),
+        ],
+        Json(response),
+    ))
+}
+
+fn flow_access_response(
+    signed: SignedFlowAccessContext,
+    flow_public_endpoints: &[Url],
+) -> FlowAccessContextResponse {
+    FlowAccessContextResponse {
+        endpoints: flow_public_endpoints.to_vec(),
+        issued_at: signed.context.issued_at,
+        expires_at: signed.context.expires_at,
+        context_id: signed.context.context_id,
+        organization_id: signed.context.organization_id,
+        project_id: signed.context.project_id,
+        service_instance_id: signed.context.service_instance_id,
+        principal_id: signed.context.principal_id,
+        headers: FlowAccessHeaders {
+            principal: signed.encoded,
+            timestamp: signed.timestamp,
+            signature: signed.signature,
+        },
+    }
+}
+
+fn validate_flow_permissions(permissions: &BTreeSet<String>) -> Result<(), ApiError> {
+    if permissions.is_empty() {
+        return Err(ApiError::BadRequest(
+            "permissions must contain at least one permission".into(),
+        ));
+    }
+    if permissions
+        .iter()
+        .any(|permission| permission.contains('*'))
+    {
+        return Err(ApiError::BadRequest(
+            "wildcard Flow permissions are not allowed".into(),
+        ));
+    }
+    if permissions
+        .iter()
+        .any(|permission| flow_permission_iam_action(permission).is_none())
+    {
+        return Err(ApiError::BadRequest(
+            "permissions contains an unsupported Flow permission".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn flow_permission_iam_action(permission: &str) -> Option<&'static str> {
+    match permission {
+        "flow.queue.read" => Some("flow:QueueRead"),
+        "flow.queue.write" => Some("flow:QueueWrite"),
+        "flow.room.create" => Some("flow:RoomCreate"),
+        "flow.room.read" => Some("flow:RoomRead"),
+        "flow.room.join" => Some("flow:RoomJoin"),
+        "flow.turn.issue" => Some("flow:TurnIssue"),
+        "flow.signal.connect" => Some("flow:SignalConnect"),
+        _ => None,
+    }
+}
+
+fn validate_flow_access_ttl(expires_in_seconds: Option<u64>) -> Result<u64, ApiError> {
+    let expires_in_seconds = expires_in_seconds.unwrap_or(FLOW_ACCESS_DEFAULT_TTL_SECONDS);
+    if !(FLOW_ACCESS_MIN_TTL_SECONDS..=FLOW_ACCESS_MAX_TTL_SECONDS).contains(&expires_in_seconds) {
+        return Err(ApiError::BadRequest(format!(
+            "expires_in_seconds must be {FLOW_ACCESS_MIN_TTL_SECONDS}..{FLOW_ACCESS_MAX_TTL_SECONDS}"
+        )));
+    }
+    Ok(expires_in_seconds)
+}
+
+fn validate_flow_access_target(
+    instance: Option<ServiceInstance>,
+    organization_id: OrganizationId,
+    service_instance_id: ServiceInstanceId,
+) -> Result<ServiceInstance, ApiError> {
+    let instance = instance
+        .filter(|instance| {
+            instance.id == service_instance_id
+                && instance.organization_id == organization_id
+                && instance.provider == "flow"
+        })
+        .ok_or(ApiError::NotFound)?;
+    if instance.state != ServiceState::Ready {
+        return Err(ApiError::ServiceInstanceNotReady);
+    }
+    Ok(instance)
+}
+
 #[derive(Default, Deserialize)]
 struct AuditQuery {
     limit: Option<i64>,
@@ -1040,6 +1246,13 @@ fn organization_resource(organization_id: Uuid, suffix: &str) -> String {
     format!("hc:org:{organization_id}:{suffix}")
 }
 
+fn flow_instance_resource(organization_id: Uuid, service_instance_id: Uuid) -> String {
+    organization_resource(
+        organization_id,
+        &format!("flow/instance/{service_instance_id}"),
+    )
+}
+
 fn validate_invitation_ttl(expires_in_hours: i64) -> Result<(), ApiError> {
     if !(1..=INVITATION_MAX_TTL_HOURS).contains(&expires_in_hours) {
         return Err(ApiError::BadRequest(format!(
@@ -1054,6 +1267,9 @@ const fn default_invitation_ttl_hours() -> i64 {
 }
 
 const INVITATION_MAX_TTL_HOURS: i64 = 24;
+const FLOW_ACCESS_DEFAULT_TTL_SECONDS: u64 = 300;
+const FLOW_ACCESS_MIN_TTL_SECONDS: u64 = 30;
+const FLOW_ACCESS_MAX_TTL_SECONDS: u64 = 300;
 
 #[derive(Serialize)]
 struct SessionResponse {
@@ -1079,11 +1295,22 @@ fn _service_id_type_guard(id: Uuid) -> ServiceInstanceId {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use std::collections::BTreeSet;
+
+    use chrono::Utc;
+    use heterocloud_domain::{
+        OrganizationId, ProjectId, ServiceInstance, ServiceInstanceId, ServiceState,
+    };
+    use serde_json::{Value, json};
+    use uuid::Uuid;
+
+    use crate::error::ApiError;
 
     use super::{
         CSRF_HEADER, CreateInvitation, INVITATION_MAX_TTL_HOURS, SESSION_COOKIE,
-        parse_api_key_prefix, validate_invitation_ttl, validate_slug,
+        flow_permission_iam_action, parse_api_key_prefix, validate_flow_access_target,
+        validate_flow_access_ttl, validate_flow_permissions, validate_invitation_ttl,
+        validate_slug,
     };
 
     #[test]
@@ -1124,5 +1351,114 @@ mod tests {
         assert!(validate_invitation_ttl(INVITATION_MAX_TTL_HOURS).is_ok());
         assert!(validate_invitation_ttl(0).is_err());
         assert!(validate_invitation_ttl(INVITATION_MAX_TTL_HOURS + 1).is_err());
+    }
+
+    #[test]
+    fn flow_permissions_are_exact_and_never_wildcarded() {
+        assert!(
+            validate_flow_permissions(&BTreeSet::from([
+                "flow.room.join".to_owned(),
+                "flow.turn.issue".to_owned(),
+            ]))
+            .is_ok()
+        );
+        assert!(validate_flow_permissions(&BTreeSet::new()).is_err());
+        assert!(validate_flow_permissions(&BTreeSet::from(["flow.room.*".to_owned()])).is_err());
+        assert!(
+            validate_flow_permissions(&BTreeSet::from(["flow.room.delete".to_owned()])).is_err()
+        );
+    }
+
+    #[test]
+    fn every_flow_permission_maps_to_one_least_privilege_iam_action() {
+        assert_eq!(
+            [
+                "flow.queue.read",
+                "flow.queue.write",
+                "flow.room.create",
+                "flow.room.read",
+                "flow.room.join",
+                "flow.turn.issue",
+                "flow.signal.connect",
+            ]
+            .map(flow_permission_iam_action),
+            [
+                Some("flow:QueueRead"),
+                Some("flow:QueueWrite"),
+                Some("flow:RoomCreate"),
+                Some("flow:RoomRead"),
+                Some("flow:RoomJoin"),
+                Some("flow:TurnIssue"),
+                Some("flow:SignalConnect"),
+            ]
+        );
+        assert_eq!(flow_permission_iam_action("flow.room.*"), None);
+    }
+
+    #[test]
+    fn flow_access_lifetime_defaults_to_five_minutes_and_is_bounded() {
+        assert_eq!(validate_flow_access_ttl(None).ok(), Some(300));
+        assert_eq!(validate_flow_access_ttl(Some(30)).ok(), Some(30));
+        assert_eq!(validate_flow_access_ttl(Some(300)).ok(), Some(300));
+        assert!(validate_flow_access_ttl(Some(29)).is_err());
+        assert!(validate_flow_access_ttl(Some(301)).is_err());
+    }
+
+    #[test]
+    fn flow_access_target_requires_ready_same_organization_flow_instance() {
+        let organization_id = OrganizationId(Uuid::from_u128(1));
+        let service_instance_id = ServiceInstanceId(Uuid::from_u128(2));
+        let instance = ServiceInstance {
+            id: service_instance_id,
+            organization_id,
+            project_id: ProjectId(Uuid::from_u128(3)),
+            provider: "flow".into(),
+            name: "flow-test".into(),
+            generation: 1,
+            state: ServiceState::Ready,
+            spec: Value::Null,
+            status: Value::Null,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        assert!(
+            validate_flow_access_target(
+                Some(instance.clone()),
+                organization_id,
+                service_instance_id,
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_flow_access_target(
+                Some(instance.clone()),
+                OrganizationId(Uuid::from_u128(4)),
+                service_instance_id,
+            )
+            .is_err()
+        );
+        assert!(matches!(
+            validate_flow_access_target(
+                Some(ServiceInstance {
+                    state: ServiceState::Provisioning,
+                    ..instance.clone()
+                }),
+                organization_id,
+                service_instance_id,
+            ),
+            Err(ApiError::ServiceInstanceNotReady)
+        ));
+        assert!(
+            validate_flow_access_target(
+                Some(ServiceInstance {
+                    provider: "other".into(),
+                    ..instance
+                }),
+                organization_id,
+                service_instance_id,
+            )
+            .is_err()
+        );
     }
 }

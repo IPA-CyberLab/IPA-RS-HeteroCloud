@@ -55,10 +55,23 @@ spec:
         - name: api
           image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
           args:
+            {{- if .Values.hostNetwork }}
+            - --listen=$(HOST_IP):8443
+            {{- else }}
             - --listen=0.0.0.0:8443
+            {{- end }}
             - --database-url-file=/var/run/secrets/runtime/database-url
             - --csrf-key-file=/var/run/secrets/runtime/csrf-key
+            - --flow-access-secret-file=/var/run/secrets/flow-access/hmac-secret
+            - --flow-access-issuer={{ .Values.flowAccess.issuer }}
+            - --flow-access-audience={{ .Values.flowAccess.audience }}
+            - --flow-public-endpoints={{ join "," (required "flowPublicEndpoints is required" .Values.flowPublicEndpoints) }}
             - --public-origin={{ required "publicOrigin is required" .Values.publicOrigin }}
             {{- if .Values.additionalOrigins }}
             - --additional-origins={{ join "," .Values.additionalOrigins }}
@@ -113,6 +126,9 @@ spec:
             - name: tls
               mountPath: /var/run/secrets/tls
               readOnly: true
+            - name: flow-access
+              mountPath: /var/run/secrets/flow-access
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
@@ -133,6 +149,13 @@ spec:
           secret:
             secretName: {{ .Values.secrets.tlsSecretName }}
             defaultMode: 0400
+        - name: flow-access
+          secret:
+            secretName: {{ .Values.secrets.flowAccessSecretName }}
+            defaultMode: 0400
+            items:
+              - key: {{ .Values.secrets.flowAccessSecretKey }}
+                path: hmac-secret
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi

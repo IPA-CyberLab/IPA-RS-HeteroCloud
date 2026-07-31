@@ -4,9 +4,11 @@ metadata:
   name: {{ include "heterocloud.fullname" . }}
   labels:
     {{- include "heterocloud.labels" . | nindent 4 }}
+  {{- if eq .Values.service.type "LoadBalancer" }}
   annotations:
     networking.heteronetwork.io/traffic-mode: {{ .Values.service.trafficMode | quote }}
     networking.heteronetwork.io/ingress-replicas: {{ .Values.service.ingressReplicas | quote }}
+  {{- end }}
 spec:
   type: {{ .Values.service.type }}
   {{- if eq .Values.service.type "LoadBalancer" }}
@@ -22,4 +24,3 @@ spec:
       targetPort: https
       protocol: TCP
       appProtocol: https
-

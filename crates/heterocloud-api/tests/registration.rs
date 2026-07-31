@@ -5,6 +5,7 @@ use axum::{
     http::{Request, StatusCode, header},
 };
 use chrono::{Duration, Utc};
+use heterocloud_api::flow_access::FlowAccessSigner;
 use heterocloud_api::{app, config::RuntimeConfig, routes::AppState};
 use heterocloud_domain::OrganizationId;
 use heterocloud_store::{BootstrapAdmin, RegisterWithInvitation, Store, StoreError};
@@ -151,6 +152,12 @@ async fn test_state() -> Result<Option<(Store, Arc<AppState>)>, Box<dyn Error>> 
             secure_cookie: false,
             session_ttl: StdDuration::from_secs(3600),
             csrf_key: SecretString::from("test-csrf-key-at-least-32-bytes"),
+            flow_access_signer: FlowAccessSigner::new(
+                "heterocloud",
+                "heterocloud-flow-data",
+                SecretString::from("test-flow-access-secret-at-least-32-bytes"),
+            )?,
+            flow_public_endpoints: vec![Url::parse("http://flow.example.test")?],
         },
         registration_limiter: Arc::new(Semaphore::new(2)),
     });

@@ -32,9 +32,9 @@ IP/ASN/device rate limits. SMS alone is not a Sybil defense.
   replicas.
 
 TLS is mandatory on public deployments. Database URLs, CSRF keys, bootstrap
-passwords, TLS private keys, provider signing keys, and service credentials
-must be mounted as Kubernetes Secrets; they are never accepted as command-line
-values.
+passwords, TLS private keys, Flow access HMAC secrets, provider signing keys,
+and service credentials must be mounted as Kubernetes Secrets; they are never
+accepted as command-line values.
 
 ## Authorization
 
@@ -54,3 +54,26 @@ Secrets, NetworkPolicies, container images, and release lifecycles. Provider
 tokens are short-lived, audience-bound, and contain only opaque tenant
 context. A Flow compromise must not grant access to HeteroCloud password
 hashes, sessions, IAM policy storage, or provider signing keys.
+
+Flow data-plane contexts expire after 30 to 300 seconds and contain exact,
+allow-listed permissions. Wildcards are rejected. Their HMAC secret is a
+dedicated file readable only by the API process owner or its dedicated runtime
+group, and is not the Ed25519 key used by the provider worker. Responses
+containing signed headers are marked `Cache-Control: no-store`.
+
+`flow:IssueAccessContext` is necessary but cannot delegate permissions by
+itself. Each requested Flow permission requires its fixed instance-scoped IAM
+action, and the existing explicit-deny/default-deny semantics apply to every
+mapping. Each decision is audited before any credential is signed. Access
+contexts are issued only after generation-guarded reconciliation has moved the
+service instance to `ready`.
+
+Secure mode accepts only HTTPS Flow public endpoints. HeteroCloud returns the
+configured concrete endpoint list without converting it into a synthetic
+single-host failover claim.
+
+The HeteroNet production API does not listen on every host interface and does
+not use a public Kubernetes LoadBalancer. It binds to the Kubernetes host IP on
+port 8443, while Caddy is the only public listener on port 443 and proxies over
+HeteroNetwork node addresses. This prevents direct access that bypasses the
+public TLS gateway policy.
