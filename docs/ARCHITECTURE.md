@@ -11,6 +11,21 @@ HeteroNetwork remains an infrastructure dependency. It exposes the Kubernetes
 `heteronetwork.io/public` load-balancer class and selects direct or forwarded
 data paths. No HeteroCloud customer model is compiled into HeteroNetwork.
 
+## DNS reconciliation
+
+HeteroCloud declares public DNS as an `externaldns.k8s.io` `DNSEndpoint`.
+ExternalDNS owns provider communication, authentication conventions, retries,
+and TXT record conflict detection. The CLI installs a pinned controller chart,
+restricts it to the requested domain and HeteroCloud-managed CRDs, then waits
+for all expected A records to resolve. Provider selection does not alter the
+record model.
+
+This boundary supports native ExternalDNS providers, cloud workload identity,
+RFC2136, and provider webhooks. Migrating providers changes controller
+configuration and credentials, not HeteroCloud code or service manifests.
+The generated endpoint contains only per-node public names; internal VPN and
+Kubernetes addresses are never published by default.
+
 ## Request path
 
 1. The Rust API authenticates an opaque session cookie or service-account key.

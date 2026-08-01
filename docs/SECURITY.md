@@ -36,6 +36,19 @@ passwords, TLS private keys, Flow access HMAC secrets, provider signing keys,
 and service credentials must be mounted as Kubernetes Secrets; they are never
 accepted as command-line values.
 
+DNS provider tokens follow the same rule. `heterocloud dns reconcile` accepts
+token contents only through a regular local file with mode `0400` or `0600`,
+or by referencing a pre-existing Secret in the ExternalDNS namespace. Local
+contents are validated in zeroizing memory and piped from `kubectl` to
+`kubectl`; they are not embedded in child-process arguments, manifests,
+dry-run output, or repository configuration. Kubernetes Secret encryption at
+rest and least-privilege provider tokens remain deployment requirements.
+
+ExternalDNS is restricted by an exact domain filter, a HeteroCloud label
+selector, A-record type filtering, and a unique TXT owner ID. Cloudflare
+records remain DNS-only by default so non-HTTP RTC and TURN traffic cannot be
+silently routed through an incompatible proxy.
+
 ## Authorization
 
 IAM is default-deny. The organization boundary is evaluated before policy

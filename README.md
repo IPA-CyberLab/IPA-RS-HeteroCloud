@@ -49,9 +49,66 @@ separate [data-plane access contract](contracts/flow-access/v1/README.md).
 
 ## Public DNS onboarding
 
-The `heterocloud` CLI generates one hostname per public failure domain. It
+The `heterocloud` CLI manages one hostname per public failure domain. It
 discovers the public IPv4 addresses from the HeteroNetwork-backed Flow RTC
-`LoadBalancer` Service by default:
+`LoadBalancer` Service by default.
+
+For automatic DNS, `dns reconcile` installs a pinned ExternalDNS controller
+and applies a provider-neutral `DNSEndpoint`. The provider is an adapter, so
+the same desired records work with Cloudflare, AWS, Google, RFC2136, or an
+ExternalDNS webhook without putting provider API calls in HeteroCloud.
+
+For Cloudflare, create an API token limited to `Zone:Read` and `DNS:Edit` for
+the parent zone. Store it without a trailing newline in a private file; do not
+put it in a shell argument or `.env` file:
+
+```bash
+mkdir -p "$HOME/.config/heterocloud"
+umask 077
+read -r -s -p "Cloudflare API token: " CF_API_TOKEN
+printf '%s' "$CF_API_TOKEN" > "$HOME/.config/heterocloud/cloudflare-token"
+unset CF_API_TOKEN
+
+heterocloud dns reconcile \
+  --domain heterocloud.mizuame.app \
+  --provider cloudflare \
+  --credential-file \
+    CF_API_TOKEN="$HOME/.config/heterocloud/cloudflare-token" \
+  --kubeconfig /path/to/admin.conf
+```
+
+This creates `cloud-a/b/c`, `flow-a/b/c`, `rtc-a/b/c`, and `turn-a/b/c` as
+DNS-only A records. Cloudflare proxying is deliberately not enabled because
+the RTC and TURN endpoints are not ordinary HTTP traffic. ExternalDNS uses a
+TXT ownership registry and is restricted to the requested domain and
+HeteroCloud-labelled resources.
+
+Provider authentication may instead use workload identity or a Secret that
+already exists in the controller namespace:
+
+```sh
+heterocloud dns reconcile \
+  --domain heterocloud.example.com \
+  --provider aws \
+  --provider-values /secure/external-dns-aws-values.yaml \
+  --kubeconfig /path/to/admin.conf
+
+heterocloud dns reconcile \
+  --domain heterocloud.example.com \
+  --provider webhook \
+  --credential-secret DNS_API_TOKEN=provider-credentials:api-token \
+  --provider-values /secure/external-dns-webhook-values.yaml \
+  --kubeconfig /path/to/admin.conf
+```
+
+`--provider-values` is for non-secret Helm configuration. Pass provider
+secrets with `--credential-file`, an existing Secret, or workload identity.
+Use `--provider-arg=--name=value` for non-secret provider flags. Run with
+`--dry-run` to inspect the sanitized controller configuration and
+`DNSEndpoint` before applying it. Re-running the command is idempotent and
+reconciles address changes.
+
+For manual DNS onboarding, generate a copy-paste-ready zone block:
 
 ```sh
 heterocloud dns records \
@@ -59,10 +116,9 @@ heterocloud dns records \
   --kubeconfig /path/to/admin.conf
 ```
 
-The default output is a complete BIND-compatible zone block for
-`cloud-a/b/c`, `flow-a/b/c`, `rtc-a/b/c`, and `turn-a/b/c`. Paste the whole
-block into a DNS provider's zone importer. When Kubernetes discovery is not
-available, provide every public address explicitly:
+Paste the complete BIND-compatible output into the provider's zone importer.
+When Kubernetes discovery is not available, provide every public address
+explicitly to either `dns records` or `dns reconcile`:
 
 ```sh
 heterocloud dns records \
