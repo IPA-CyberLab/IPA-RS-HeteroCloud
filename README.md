@@ -110,6 +110,25 @@ Use `--provider-arg=--name=value` for non-secret provider flags. Run with
 `DNSEndpoint` before applying it. Re-running the command is idempotent and
 reconciles address changes.
 
+When the cluster Service IP is not a reliable path to the Kubernetes API,
+configure the controller Pod and an explicit API endpoint independently of
+the DNS provider:
+
+```sh
+heterocloud dns reconcile \
+  --domain heterocloud.example.com \
+  --provider cloudflare \
+  --credential-secret CF_API_TOKEN=cloudflare-credentials:api-token \
+  --controller-node-selector node-role.kubernetes.io/control-plane= \
+  --controller-dns-policy Default \
+  --controller-kube-api-server https://10.250.0.4:6443 \
+  --kubeconfig /path/to/admin.conf
+```
+
+The generated ConfigMap contains the API URL and references to the Pod's
+projected service-account CA and token files. The service-account token itself
+remains in the Kubernetes-managed volume and is never stored in the ConfigMap.
+
 For manual DNS onboarding, generate a copy-paste-ready zone block:
 
 ```sh

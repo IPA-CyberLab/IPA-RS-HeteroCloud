@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     ffi::OsString,
     fs,
     io::{self, Write},
@@ -14,6 +14,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use clap::Args;
 use serde_json::{Value, json};
+use url::Url;
 use zeroize::Zeroizing;
 
 use super::{
@@ -26,6 +27,10 @@ const EXTERNAL_DNS_CHART: &str = "external-dns/external-dns";
 const DEFAULT_CHART_VERSION: &str = "1.20.0";
 const MAX_CREDENTIAL_BYTES: u64 = 65_536;
 const DNS_POLL_INTERVAL: Duration = Duration::from_secs(5);
+const CONTROLLER_KUBECONFIG_KEY: &str = "kubeconfig";
+const CONTROLLER_KUBECONFIG_MOUNT_PATH: &str = "/etc/heterocloud/external-dns";
+const SERVICE_ACCOUNT_CA_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
+const SERVICE_ACCOUNT_TOKEN_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccount/token";
 
 #[derive(Clone, Debug, Args)]
 pub struct ReconcileArgs {
@@ -55,6 +60,18 @@ pub struct ReconcileArgs {
     /// Additional non-secret Helm values for a webhook or provider integration.
     #[arg(long = "provider-values", value_name = "PATH")]
     pub provider_values: Vec<PathBuf>,
+
+    /// Kubernetes API URL used by the ExternalDNS controller instead of the in-cluster Service IP.
+    #[arg(long, value_name = "HTTPS_URL")]
+    pub controller_kube_api_server: Option<String>,
+
+    /// Node selector applied to the ExternalDNS Pod. Repeat for multiple KEY=VALUE entries.
+    #[arg(long = "controller-node-selector", value_name = "KEY=VALUE")]
+    pub controller_node_selectors: Vec<String>,
+
+    /// Kubernetes DNS policy applied to the ExternalDNS Pod.
+    #[arg(long, value_name = "POLICY")]
+    pub controller_dns_policy: Option<String>,
 
     /// Namespace for ExternalDNS and the managed DNSEndpoint.
     #[arg(long, default_value = "heterocloud-dns")]
@@ -115,6 +132,7 @@ struct ReconcilePlan {
     records: Vec<super::DnsRecord>,
     local_credentials: Vec<LocalCredential>,
     helm_values: Value,
+    controller_kubeconfig: Option<Value>,
     endpoint: Value,
 }
 
@@ -134,6 +152,9 @@ pub fn reconcile(args: ReconcileArgs) -> Result<(), CliError> {
     apply_namespace(&args)?;
     if !plan.local_credentials.is_empty() {
         apply_local_credentials(&args, &plan.local_credentials)?;
+    }
+    if let Some(kubeconfig) = &plan.controller_kubeconfig {
+        apply_manifest(&args.source, kubeconfig)?;
     }
     install_external_dns(&args, &plan.helm_values)?;
     apply_manifest(&args.source, &plan.endpoint)?;
@@ -160,6 +181,17 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
     validate_chart_version(&args.chart_version)?;
     validate_provider_args(&args.provider_args)?;
     validate_values_files(&args.provider_values)?;
+    let node_selector = parse_node_selectors(&args.controller_node_selectors)?;
+    let dns_policy = args
+        .controller_dns_policy
+        .as_deref()
+        .map(validate_dns_policy)
+        .transpose()?;
+    let kube_api_server = args
+        .controller_kube_api_server
+        .as_deref()
+        .map(normalize_kube_api_server)
+        .transpose()?;
 
     let (domain, addresses) = resolve_source(&args.source)?;
     let records = build_records(&domain, &addresses, args.ttl);
@@ -182,7 +214,32 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
         &secret_credentials,
         &args.credential_secret_name,
     );
-    let helm_values = json!({
+    let mut extra_args = args.provider_args.clone();
+    let controller_kubeconfig = if let Some(server) = kube_api_server {
+        if extra_args
+            .iter()
+            .any(|argument| argument == "--kubeconfig" || argument.starts_with("--kubeconfig="))
+        {
+            return Err(CliError::InvalidValue {
+                kind: "ExternalDNS kubeconfig argument",
+                value: "--kubeconfig may not be combined with --controller-kube-api-server".into(),
+            });
+        }
+        let config_map_name = format!("{}-kubeconfig", args.controller_release);
+        validate_kubernetes_name(&config_map_name, "controller kubeconfig ConfigMap")?;
+        extra_args.push(format!(
+            "--kubeconfig={CONTROLLER_KUBECONFIG_MOUNT_PATH}/{CONTROLLER_KUBECONFIG_KEY}"
+        ));
+        Some(controller_kubeconfig_manifest(
+            args,
+            &config_map_name,
+            &server,
+        )?)
+    } else {
+        None
+    };
+
+    let mut helm_values = json!({
         "fullnameOverride": args.controller_release,
         "provider": {"name": args.provider},
         "sources": ["crd"],
@@ -197,12 +254,37 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
         "triggerLoopOnEvent": true,
         "logFormat": "json",
         "env": environment,
-        "extraArgs": args.provider_args,
+        "extraArgs": extra_args,
         "resources": {
             "requests": {"cpu": "25m", "memory": "64Mi"},
             "limits": {"memory": "192Mi"}
         }
     });
+    if !node_selector.is_empty() {
+        helm_values["nodeSelector"] = json!(node_selector);
+    }
+    if let Some(dns_policy) = dns_policy {
+        helm_values["dnsPolicy"] = json!(dns_policy);
+    }
+    if controller_kubeconfig.is_some() {
+        let config_map_name = format!("{}-kubeconfig", args.controller_release);
+        helm_values["automountServiceAccountToken"] = json!(true);
+        helm_values["extraVolumes"] = json!([{
+            "name": "controller-kubeconfig",
+            "configMap": {
+                "name": config_map_name,
+                "items": [{
+                    "key": CONTROLLER_KUBECONFIG_KEY,
+                    "path": CONTROLLER_KUBECONFIG_KEY
+                }]
+            }
+        }]);
+        helm_values["extraVolumeMounts"] = json!([{
+            "name": "controller-kubeconfig",
+            "mountPath": CONTROLLER_KUBECONFIG_MOUNT_PATH,
+            "readOnly": true
+        }]);
+    }
     let endpoints = records
         .iter()
         .map(|record| {
@@ -234,6 +316,7 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
         records,
         local_credentials,
         helm_values,
+        controller_kubeconfig,
         endpoint,
     })
 }
@@ -266,6 +349,165 @@ fn provider_environment(
         .collect::<Vec<_>>();
     environment.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
     environment
+}
+
+fn controller_kubeconfig_manifest(
+    args: &ReconcileArgs,
+    config_map_name: &str,
+    server: &str,
+) -> Result<Value, CliError> {
+    let kubeconfig = serde_json::to_string_pretty(&json!({
+        "apiVersion": "v1",
+        "kind": "Config",
+        "clusters": [{
+            "name": "controller",
+            "cluster": {
+                "certificate-authority": SERVICE_ACCOUNT_CA_PATH,
+                "server": server
+            }
+        }],
+        "contexts": [{
+            "name": "controller",
+            "context": {
+                "cluster": "controller",
+                "user": "service-account"
+            }
+        }],
+        "current-context": "controller",
+        "users": [{
+            "name": "service-account",
+            "user": {"tokenFile": SERVICE_ACCOUNT_TOKEN_PATH}
+        }]
+    }))?;
+    Ok(json!({
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": config_map_name,
+            "namespace": args.controller_namespace,
+            "labels": {
+                "app.kubernetes.io/name": "heterocloud-external-dns-kubeconfig",
+                "app.kubernetes.io/part-of": "heterocloud",
+                "app.kubernetes.io/managed-by": "heterocloud"
+            }
+        },
+        "data": {CONTROLLER_KUBECONFIG_KEY: kubeconfig}
+    }))
+}
+
+fn normalize_kube_api_server(value: &str) -> Result<String, CliError> {
+    let parsed = Url::parse(value).map_err(|_| CliError::InvalidValue {
+        kind: "controller Kubernetes API server",
+        value: value.to_owned(),
+    })?;
+    if parsed.scheme() != "https"
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || !matches!(parsed.path(), "" | "/")
+    {
+        return Err(CliError::InvalidValue {
+            kind: "controller Kubernetes API server",
+            value: value.to_owned(),
+        });
+    }
+    Ok(parsed.as_str().trim_end_matches('/').to_owned())
+}
+
+fn validate_dns_policy(value: &str) -> Result<&str, CliError> {
+    if matches!(
+        value,
+        "Default" | "ClusterFirst" | "ClusterFirstWithHostNet" | "None"
+    ) {
+        return Ok(value);
+    }
+    Err(CliError::InvalidValue {
+        kind: "controller DNS policy",
+        value: value.to_owned(),
+    })
+}
+
+fn parse_node_selectors(values: &[String]) -> Result<BTreeMap<String, String>, CliError> {
+    let mut selectors = BTreeMap::new();
+    for value in values {
+        let Some((key, label_value)) = value.split_once('=') else {
+            return Err(CliError::InvalidValue {
+                kind: "controller node selector",
+                value: value.clone(),
+            });
+        };
+        if !valid_label_key(key) || !valid_label_value(label_value) {
+            return Err(CliError::InvalidValue {
+                kind: "controller node selector",
+                value: value.clone(),
+            });
+        }
+        if selectors
+            .insert(key.to_owned(), label_value.to_owned())
+            .is_some()
+        {
+            return Err(CliError::InvalidValue {
+                kind: "duplicate controller node selector",
+                value: key.to_owned(),
+            });
+        }
+    }
+    Ok(selectors)
+}
+
+fn valid_label_key(value: &str) -> bool {
+    let mut parts = value.split('/');
+    let first = parts.next().unwrap_or_default();
+    let second = parts.next();
+    if parts.next().is_some() {
+        return false;
+    }
+    match second {
+        Some(name) => valid_dns_subdomain(first) && valid_label_name(name),
+        None => valid_label_name(first),
+    }
+}
+
+fn valid_dns_subdomain(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 253
+        && value.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+                && label
+                    .as_bytes()
+                    .first()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+                && label
+                    .as_bytes()
+                    .last()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+        })
+}
+
+fn valid_label_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 63
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        && value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && value
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric)
+}
+
+fn valid_label_value(value: &str) -> bool {
+    value.is_empty() || valid_label_name(value)
 }
 
 fn parse_local_credentials(values: &[String]) -> Result<Vec<LocalCredential>, CliError> {
@@ -494,7 +736,8 @@ fn print_dry_run(args: &ReconcileArgs, plan: &ReconcilePlan) -> Result<(), CliEr
             "release": args.controller_release,
             "provider": args.provider,
             "credentials": credentials,
-            "values": plan.helm_values
+            "values": plan.helm_values,
+            "kubeconfigConfigMap": plan.controller_kubeconfig
         },
         "dnsEndpoint": plan.endpoint
     });
@@ -813,6 +1056,9 @@ mod tests {
             credential_secrets: Vec::new(),
             provider_args: Vec::new(),
             provider_values: Vec::new(),
+            controller_kube_api_server: None,
+            controller_node_selectors: Vec::new(),
+            controller_dns_policy: None,
             controller_namespace: "heterocloud-dns".into(),
             controller_release: "heterocloud-dns".into(),
             credential_secret_name: "heterocloud-dns-provider".into(),
@@ -854,6 +1100,91 @@ mod tests {
         assert_eq!(plan.helm_values["policy"], "sync");
         assert_eq!(plan.helm_values["managedRecordTypes"], json!(["A"]));
         Ok(())
+    }
+
+    #[test]
+    fn controller_connectivity_uses_standard_chart_values_and_path_only_kubeconfig()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut args = base_args("cloudflare");
+        args.controller_kube_api_server = Some("https://10.250.0.4:6443".into());
+        args.controller_node_selectors = vec!["node-role.kubernetes.io/control-plane=".into()];
+        args.controller_dns_policy = Some("Default".into());
+
+        let plan = build_plan(&args)?;
+        assert_eq!(
+            plan.helm_values["nodeSelector"],
+            json!({"node-role.kubernetes.io/control-plane": ""})
+        );
+        assert_eq!(plan.helm_values["dnsPolicy"], "Default");
+        assert!(plan.helm_values.get("hostNetwork").is_none());
+        assert_eq!(plan.helm_values["automountServiceAccountToken"], true);
+        assert_eq!(
+            plan.helm_values["extraArgs"],
+            json!(["--kubeconfig=/etc/heterocloud/external-dns/kubeconfig"])
+        );
+        assert_eq!(
+            plan.helm_values["extraVolumes"][0]["configMap"]["name"],
+            "heterocloud-dns-kubeconfig"
+        );
+        assert_eq!(
+            plan.helm_values["extraVolumeMounts"][0]["mountPath"],
+            CONTROLLER_KUBECONFIG_MOUNT_PATH
+        );
+
+        let manifest = plan
+            .controller_kubeconfig
+            .as_ref()
+            .ok_or("controller kubeconfig ConfigMap must exist")?;
+        assert_eq!(manifest["kind"], "ConfigMap");
+        let contents = manifest["data"][CONTROLLER_KUBECONFIG_KEY]
+            .as_str()
+            .ok_or("kubeconfig data must be a string")?;
+        let kubeconfig: Value = serde_json::from_str(contents)?;
+        assert_eq!(
+            kubeconfig["clusters"][0]["cluster"]["server"],
+            "https://10.250.0.4:6443"
+        );
+        assert_eq!(
+            kubeconfig["clusters"][0]["cluster"]["certificate-authority"],
+            SERVICE_ACCOUNT_CA_PATH
+        );
+        assert_eq!(
+            kubeconfig["users"][0]["user"]["tokenFile"],
+            SERVICE_ACCOUNT_TOKEN_PATH
+        );
+        assert!(kubeconfig["users"][0]["user"].get("token").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn controller_connectivity_values_are_absent_unless_explicit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let plan = build_plan(&base_args("cloudflare"))?;
+        assert!(plan.helm_values.get("nodeSelector").is_none());
+        assert!(plan.helm_values.get("dnsPolicy").is_none());
+        assert!(plan.helm_values.get("extraVolumes").is_none());
+        assert!(plan.helm_values.get("extraVolumeMounts").is_none());
+        assert!(plan.controller_kubeconfig.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unsafe_or_conflicting_controller_connectivity() {
+        let mut args = base_args("cloudflare");
+        args.controller_kube_api_server = Some("http://10.250.0.4:6443".into());
+        assert!(build_plan(&args).is_err());
+
+        args.controller_kube_api_server = Some("https://10.250.0.4:6443".into());
+        args.provider_args = vec!["--kubeconfig=/tmp/other".into()];
+        assert!(build_plan(&args).is_err());
+
+        args.provider_args.clear();
+        args.controller_node_selectors = vec!["missing-value".into()];
+        assert!(build_plan(&args).is_err());
+
+        args.controller_node_selectors.clear();
+        args.controller_dns_policy = Some("Invalid".into());
+        assert!(build_plan(&args).is_err());
     }
 
     #[test]
