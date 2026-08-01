@@ -10,6 +10,10 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod external_dns;
+
+pub use external_dns::ReconcileArgs;
+
 const SERVICE_PREFIXES: [&str; 4] = ["cloud", "flow", "rtc", "turn"];
 const MAX_BASE_DOMAIN_LENGTH: usize = 230;
 
@@ -42,6 +46,8 @@ pub enum DnsCommand {
     Records(RecordsArgs),
     /// Verify that every generated hostname resolves to its expected address.
     Verify(VerifyArgs),
+    /// Reconcile records through a provider-neutral ExternalDNS controller.
+    Reconcile(Box<ReconcileArgs>),
 }
 
 #[derive(Clone, Debug, Args)]
@@ -138,6 +144,42 @@ pub enum CliError {
     InvalidIngressAddress(String),
     #[error("DNS verification failed for {0} record(s)")]
     VerificationFailed(usize),
+    #[error("invalid {kind} `{value}`")]
+    InvalidValue { kind: &'static str, value: String },
+    #[error("invalid credential mapping `{0}`; expected ENV=PATH or ENV=SECRET:KEY")]
+    InvalidCredential(String),
+    #[error("failed to inspect credential file {path}: {source}")]
+    CredentialFile {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("credential file {0} must be a regular file and not a symbolic link")]
+    UnsafeCredentialFile(PathBuf),
+    #[error("credential file {path} has unsafe mode {mode:o}; use chmod 600 or chmod 400")]
+    UnsafeCredentialMode { path: PathBuf, mode: u32 },
+    #[error("credential file {0} must contain 1 to 65536 bytes without NUL or line breaks")]
+    InvalidCredentialContent(PathBuf),
+    #[error("failed to start {program}: {source}")]
+    CommandStart {
+        program: &'static str,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to write input to {program}: {source}")]
+    CommandInput {
+        program: &'static str,
+        #[source]
+        source: io::Error,
+    },
+    #[error("{program} failed ({status}): {stderr}")]
+    CommandFailed {
+        program: &'static str,
+        status: String,
+        stderr: String,
+    },
+    #[error("DNS did not converge within {seconds} seconds ({failures} record(s) still invalid)")]
+    DnsConvergenceTimeout { seconds: u64, failures: usize },
 }
 
 #[derive(Debug, Deserialize)]
@@ -167,6 +209,7 @@ pub fn execute(cli: Cli) -> Result<(), CliError> {
         TopLevelCommand::Dns(args) => match args.command {
             DnsCommand::Records(args) => print_records(args),
             DnsCommand::Verify(args) => verify_records(args),
+            DnsCommand::Reconcile(args) => external_dns::reconcile(*args),
         },
     }
 }
@@ -362,6 +405,21 @@ pub fn verify_with<F>(records: &[DnsRecord], mut lookup: F) -> Vec<String>
 where
     F: FnMut(&str) -> io::Result<Vec<IpAddr>>,
 {
+    let (successes, failures) = check_records_with(records, &mut lookup);
+    for (name, address) in successes {
+        println!("OK   {name} -> {address}");
+    }
+    failures
+}
+
+pub(crate) fn check_records_with<F>(
+    records: &[DnsRecord],
+    mut lookup: F,
+) -> (Vec<(String, Ipv4Addr)>, Vec<String>)
+where
+    F: FnMut(&str) -> io::Result<Vec<IpAddr>>,
+{
+    let mut successes = Vec::new();
     let mut failures = Vec::new();
     for record in records {
         match lookup(&record.name) {
@@ -376,16 +434,16 @@ where
                         render_ip_set(&actual)
                     ));
                 } else {
-                    println!("OK   {} -> {}", record.name, record.value);
+                    successes.push((record.name.clone(), record.value));
                 }
             }
             Err(error) => failures.push(format!("{} lookup failed: {error}", record.name)),
         }
     }
-    failures
+    (successes, failures)
 }
 
-fn system_lookup(host: &str) -> io::Result<Vec<IpAddr>> {
+pub(crate) fn system_lookup(host: &str) -> io::Result<Vec<IpAddr>> {
     (host, 0)
         .to_socket_addrs()
         .map(|addresses| addresses.map(|address| address.ip()).collect())
