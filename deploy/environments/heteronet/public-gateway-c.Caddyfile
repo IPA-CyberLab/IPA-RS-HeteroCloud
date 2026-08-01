@@ -1,6 +1,6 @@
 (heterocloud_frontend) {
 	@realm path /id/realms/heterocloud /id/realms/heterocloud/*
-	@resources path /resources/* /robots.txt
+	@resources path /id/resources/* /id/robots.txt /resources/* /robots.txt
 
 	handle @realm {
 		uri strip_prefix /id
@@ -13,6 +13,7 @@
 	}
 
 	handle @resources {
+		uri strip_prefix /id
 		reverse_proxy http://127.0.0.1:18079 {
 			header_up Host {host}
 			header_up X-Forwarded-Proto https
