@@ -21,6 +21,7 @@ flowPublicEndpoints:
   - https://flow-a.heterocloud.mizuame.app
   - https://flow-b.heterocloud.mizuame.app
   - https://flow-c.heterocloud.mizuame.app
+flowInternalEndpoint: http://heterocloud-flow-api.heterocloud-flow.svc.cluster.local:8080/
 
 secrets:
   flowAccessSecretName: heterocloud-flow-access

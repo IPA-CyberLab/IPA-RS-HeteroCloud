@@ -165,17 +165,21 @@ async fn deliver(
     flow_endpoint: &Url,
     event: &OutboxEvent,
 ) -> Result<(), WorkerError> {
-    if event.topic != "service-instance.reconcile" {
+    if !matches!(
+        event.topic.as_str(),
+        "service-instance.reconcile" | "service-instance.delete"
+    ) {
         return Err(WorkerError::UnsupportedTopic(event.topic.clone()));
     }
     let payload: ReconcilePayload = serde_json::from_value(event.payload.clone())?;
     if payload.provider != "flow" || payload.service_instance_id.0 != event.aggregate_id {
         return Err(WorkerError::InvalidPayload);
     }
-    let instance = store
-        .service_instance(payload.service_instance_id)
-        .await?
-        .ok_or(WorkerError::MissingInstance)?;
+    let instance = match store.service_instance(payload.service_instance_id).await? {
+        Some(instance) => instance,
+        None if event.topic == "service-instance.delete" => return Ok(()),
+        None => return Err(WorkerError::MissingInstance),
+    };
     if instance.generation != payload.generation
         || instance.organization_id != payload.organization_id
         || instance.project_id != payload.project_id
@@ -190,25 +194,55 @@ async fn deliver(
         action: event.topic.clone(),
         generation: payload.generation,
     })?;
-    let url = flow_endpoint.join(&format!(
+    let mut url = flow_endpoint.join(&format!(
         "internal/v1/service-instances/{}",
         payload.service_instance_id
     ))?;
-    let response = client
-        .put(url)
+    if event.topic == "service-instance.delete" {
+        url.query_pairs_mut()
+            .append_pair("generation", &instance.generation.to_string());
+    }
+    let request = client
+        .request(
+            if event.topic == "service-instance.delete" {
+                reqwest::Method::DELETE
+            } else {
+                reqwest::Method::PUT
+            },
+            url,
+        )
         .bearer_auth(signed.token)
-        .header("idempotency-key", signed.claims.jwt_id.to_string())
-        .json(&ReconcileRequest {
-            generation: instance.generation,
-            name: instance.name,
-            spec: instance.spec,
-        })
-        .send()
-        .await?;
+        .header("idempotency-key", signed.claims.jwt_id.to_string());
+    let response = if event.topic == "service-instance.delete" {
+        request.send().await?
+    } else {
+        request
+            .json(&ReconcileRequest {
+                generation: instance.generation,
+                name: instance.name,
+                spec: instance.spec,
+            })
+            .send()
+            .await?
+    };
     if !response.status().is_success() {
         return Err(WorkerError::ProviderStatus(response.status().as_u16()));
     }
     let operation: AcceptedOperation = response.json().await?;
+    if event.topic == "service-instance.delete" {
+        if !store
+            .complete_delete_service_instance(payload.service_instance_id, payload.generation)
+            .await?
+        {
+            return Err(WorkerError::StalePayload);
+        }
+        info!(
+            service_instance_id = %payload.service_instance_id,
+            operation_id = %operation.operation_id,
+            "realtime service deleted"
+        );
+        return Ok(());
+    }
     if !store
         .mark_service_instance_ready(
             payload.service_instance_id,

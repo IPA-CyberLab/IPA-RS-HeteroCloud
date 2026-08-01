@@ -28,6 +28,7 @@ flowAccess:
 
 flowPublicEndpoints:
   - https://flow.example.com
+flowInternalEndpoint: http://heterocloud-flow-api.heterocloud-flow.svc.cluster.local:8080/
 
 worker:
   replicaCount: 3

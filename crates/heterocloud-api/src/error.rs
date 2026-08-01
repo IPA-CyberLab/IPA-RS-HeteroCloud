@@ -23,6 +23,8 @@ pub enum ApiError {
     NotFound,
     #[error("service instance is not ready")]
     ServiceInstanceNotReady,
+    #[error("realtime provider is unavailable")]
+    RealtimeProviderUnavailable,
     #[error("too many requests")]
     TooManyRequests,
     #[error("authentication required")]
@@ -33,6 +35,7 @@ impl ApiError {
     pub fn from_store(error: heterocloud_store::StoreError) -> Self {
         match error {
             heterocloud_store::StoreError::AlreadyExists => Self::Conflict,
+            heterocloud_store::StoreError::Conflict => Self::Conflict,
             heterocloud_store::StoreError::InvitationUnavailable => {
                 Self::BadRequest("The invitation is invalid or no longer available.".into())
             }
@@ -88,6 +91,11 @@ impl IntoResponse for ApiError {
                 StatusCode::CONFLICT,
                 "service_instance_not_ready",
                 "The Flow service instance is not ready for access contexts.",
+            ),
+            Self::RealtimeProviderUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "realtime_provider_unavailable",
+                "The realtime data plane is temporarily unavailable.",
             ),
             Self::TooManyRequests => (
                 StatusCode::TOO_MANY_REQUESTS,

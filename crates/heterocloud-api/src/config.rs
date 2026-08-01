@@ -54,6 +54,13 @@ pub struct Config {
 
     #[arg(
         long,
+        env = "HETEROCLOUD_FLOW_INTERNAL_ENDPOINT",
+        default_value = "http://heterocloud-flow-api.heterocloud-flow.svc.cluster.local:8080/"
+    )]
+    pub flow_internal_endpoint: Url,
+
+    #[arg(
+        long,
         env = "HETEROCLOUD_PUBLIC_ORIGIN",
         default_value = "http://localhost:8080"
     )]
@@ -142,6 +149,7 @@ pub struct RuntimeConfig {
     pub csrf_key: SecretString,
     pub flow_access_signer: FlowAccessSigner,
     pub flow_public_endpoints: Vec<Url>,
+    pub flow_internal_endpoint: Url,
     pub oidc: Option<OidcConfig>,
 }
 
@@ -188,6 +196,7 @@ impl Config {
             return Err(ConfigError::SecureCookieRequiresHttps);
         }
         validate_flow_public_endpoints(&self.flow_public_endpoints, self.secure_cookie)?;
+        validate_flow_internal_endpoint(&self.flow_internal_endpoint)?;
         Ok(LoadedSecrets {
             database_url,
             csrf_key,
@@ -204,6 +213,7 @@ impl Config {
         oidc_client_secret: Option<SecretString>,
     ) -> Result<RuntimeConfig, ConfigError> {
         validate_flow_public_endpoints(&self.flow_public_endpoints, self.secure_cookie)?;
+        validate_flow_internal_endpoint(&self.flow_internal_endpoint)?;
         let mut allowed_origins = vec![self.public_origin.origin().ascii_serialization()];
         for origin in &self.additional_origins {
             let serialized = origin.origin().ascii_serialization();
@@ -247,6 +257,7 @@ impl Config {
                 flow_access_secret,
             )?,
             flow_public_endpoints,
+            flow_internal_endpoint: self.flow_internal_endpoint.clone(),
             oidc,
         })
     }
@@ -322,6 +333,20 @@ fn validate_flow_public_endpoints(endpoints: &[Url], secure_mode: bool) -> Resul
     Ok(())
 }
 
+fn validate_flow_internal_endpoint(endpoint: &Url) -> Result<(), ConfigError> {
+    if !matches!(endpoint.scheme(), "http" | "https")
+        || !endpoint.has_host()
+        || !endpoint.username().is_empty()
+        || endpoint.password().is_some()
+        || endpoint.query().is_some()
+        || endpoint.fragment().is_some()
+        || !matches!(endpoint.path(), "" | "/")
+    {
+        return Err(ConfigError::InvalidFlowInternalEndpoint);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("bootstrap email and password file must be configured together")]
@@ -338,6 +363,8 @@ pub enum ConfigError {
     Oidc(#[from] OidcConfigError),
     #[error("Flow public endpoints must be absolute HTTP(S) URLs")]
     InvalidFlowPublicEndpoint,
+    #[error("Flow internal endpoint must be an absolute HTTP(S) base URL")]
+    InvalidFlowInternalEndpoint,
     #[error("between one and sixteen Flow public endpoints are required")]
     MissingFlowPublicEndpoints,
     #[error("secret file is empty: {0}")]

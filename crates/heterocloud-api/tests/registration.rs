@@ -218,8 +218,10 @@ async fn test_state() -> Result<Option<(Store, Arc<AppState>)>, Box<dyn Error>> 
                 SecretString::from("test-flow-access-secret-at-least-32-bytes"),
             )?,
             flow_public_endpoints: vec![Url::parse("http://flow.example.test")?],
+            flow_internal_endpoint: Url::parse("http://flow.example.test")?,
             oidc: None,
         },
+        flow_client: reqwest::Client::new(),
         registration_limiter: Arc::new(Semaphore::new(2)),
     });
     Ok(Some((store, state)))

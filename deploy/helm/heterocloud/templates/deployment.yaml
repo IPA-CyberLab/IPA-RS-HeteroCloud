@@ -72,6 +72,7 @@ spec:
             - --flow-access-issuer={{ .Values.flowAccess.issuer }}
             - --flow-access-audience={{ .Values.flowAccess.audience }}
             - --flow-public-endpoints={{ join "," (required "flowPublicEndpoints is required" .Values.flowPublicEndpoints) }}
+            - --flow-internal-endpoint={{ required "flowInternalEndpoint is required" .Values.flowInternalEndpoint }}
             - --public-origin={{ required "publicOrigin is required" .Values.publicOrigin }}
             {{- if .Values.additionalOrigins }}
             - --additional-origins={{ join "," .Values.additionalOrigins }}

@@ -55,6 +55,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(AppState {
         store,
         config: runtime,
+        flow_client: reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(3))
+            .timeout(std::time::Duration::from_secs(10))
+            .build()?,
         registration_limiter: Arc::new(Semaphore::new(4)),
     });
     let router = app(state, config.console_dir.as_deref());

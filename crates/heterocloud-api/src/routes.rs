@@ -50,6 +50,7 @@ const CSRF_HEADER: &str = "x-heterocloud-csrf";
 pub struct AppState {
     pub store: Store,
     pub config: RuntimeConfig,
+    pub flow_client: reqwest::Client,
     pub registration_limiter: Arc<Semaphore>,
 }
 
@@ -89,12 +90,22 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             post(create_invitation),
         )
         .route(
-            "/organizations/{organization_id}/flow/instances",
-            get(list_flow_instances).post(create_flow_instance),
+            "/organizations/{organization_id}/realtime/services",
+            get(list_realtime_services).post(create_realtime_service),
         )
         .route(
-            "/organizations/{organization_id}/flow/instances/{service_instance_id}/access-contexts",
-            post(create_flow_access_context),
+            "/organizations/{organization_id}/realtime/services/{service_instance_id}",
+            get(get_realtime_service)
+                .patch(update_realtime_service)
+                .delete(delete_realtime_service),
+        )
+        .route(
+            "/organizations/{organization_id}/realtime/services/{service_instance_id}/access-credentials",
+            post(create_realtime_access_credential),
+        )
+        .route(
+            "/organizations/{organization_id}/realtime/services/{service_instance_id}/metrics",
+            get(get_realtime_service_metrics),
         )
         .route(
             "/organizations/{organization_id}/audit-events",
@@ -689,7 +700,7 @@ struct FlowListQuery {
     project_id: Option<Uuid>,
 }
 
-async fn list_flow_instances(
+async fn list_realtime_services(
     State(state): State<Arc<AppState>>,
     Path(organization_id): Path<Uuid>,
     Query(query): Query<FlowListQuery>,
@@ -701,8 +712,8 @@ async fn list_flow_instances(
         &state,
         &actor,
         OrganizationId(organization_id),
-        "flow:ListInstances",
-        &organization_resource(organization_id, "flow/*"),
+        "realtime:ListServices",
+        &organization_resource(organization_id, "realtime/*"),
     )
     .await?;
     let items = state
@@ -719,32 +730,28 @@ async fn list_flow_instances(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CreateFlowInstance {
+struct CreateRealtimeService {
     project_id: Uuid,
     name: String,
     spec: FlowSpec,
 }
 
-async fn create_flow_instance(
+async fn create_realtime_service(
     State(state): State<Arc<AppState>>,
     Path(organization_id): Path<Uuid>,
     headers: HeaderMap,
     jar: CookieJar,
-    Json(request): Json<CreateFlowInstance>,
+    Json(request): Json<CreateRealtimeService>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     validate_name(&request.name)?;
-    if request.spec.max_participants == 0 || request.spec.max_participants > 100_000 {
-        return Err(ApiError::BadRequest(
-            "max_participants must be between 1 and 100000".into(),
-        ));
-    }
+    validate_flow_spec(&request.spec)?;
     let authorization = authorize_actor(
         &state,
         &actor,
         OrganizationId(organization_id),
-        "flow:CreateInstance",
-        &organization_resource(organization_id, "flow/*"),
+        "realtime:CreateService",
+        &organization_resource(organization_id, "realtime/*"),
     )
     .await?;
     let instance = state
@@ -762,9 +769,104 @@ async fn create_flow_instance(
     Ok((StatusCode::ACCEPTED, Json(instance)))
 }
 
+async fn get_realtime_service(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<ServiceInstance>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "realtime:GetService",
+        &realtime_service_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    Ok(Json(
+        realtime_service(&state, organization_id, service_instance_id).await?,
+    ))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CreateFlowAccessContext {
+struct UpdateRealtimeService {
+    name: Option<String>,
+    spec: Option<FlowSpec>,
+}
+
+async fn update_realtime_service(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<UpdateRealtimeService>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    if request.name.is_none() && request.spec.is_none() {
+        return Err(ApiError::BadRequest("name or spec must be supplied".into()));
+    }
+    let current = realtime_service(&state, organization_id, service_instance_id).await?;
+    let name = request.name.unwrap_or(current.name);
+    validate_name(&name)?;
+    let spec = match request.spec {
+        Some(spec) => spec,
+        None => serde_json::from_value(current.spec).map_err(|_| ApiError::Internal)?,
+    };
+    validate_flow_spec(&spec)?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "realtime:UpdateService",
+        &realtime_service_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let service = state
+        .store
+        .update_service_instance(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_instance_id),
+            authorization.principal_id,
+            &name,
+            serde_json::to_value(spec).map_err(|_| ApiError::Internal)?,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::ACCEPTED, Json(service)))
+}
+
+async fn delete_realtime_service(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "realtime:DeleteService",
+        &realtime_service_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let service = state
+        .store
+        .begin_delete_service_instance(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_instance_id),
+            authorization.principal_id,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::ACCEPTED, Json(service)))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateRealtimeAccessCredential {
     permissions: BTreeSet<String>,
     expires_in_seconds: Option<u64>,
 }
@@ -792,12 +894,12 @@ struct FlowAccessContextResponse {
     principal_id: PrincipalId,
 }
 
-async fn create_flow_access_context(
+async fn create_realtime_access_credential(
     State(state): State<Arc<AppState>>,
     Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
     jar: CookieJar,
-    Json(request): Json<CreateFlowAccessContext>,
+    Json(request): Json<CreateRealtimeAccessCredential>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     validate_flow_permissions(&request.permissions)?;
@@ -813,12 +915,12 @@ async fn create_flow_access_context(
         OrganizationId(organization_id),
         ServiceInstanceId(service_instance_id),
     )?;
-    let resource = flow_instance_resource(organization_id, service_instance_id);
+    let resource = realtime_service_resource(organization_id, service_instance_id);
     let authorization = authorize_actor(
         &state,
         &actor,
         OrganizationId(organization_id),
-        "flow:IssueAccessContext",
+        "realtime:IssueAccessCredential",
         &resource,
     )
     .await?;
@@ -866,6 +968,78 @@ async fn create_flow_access_context(
         ],
         Json(response),
     ))
+}
+
+async fn get_realtime_service_metrics(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    let instance = validate_flow_access_target(
+        state
+            .store
+            .service_instance(ServiceInstanceId(service_instance_id))
+            .await
+            .map_err(ApiError::from_store)?,
+        OrganizationId(organization_id),
+        ServiceInstanceId(service_instance_id),
+    )?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "realtime:GetMetrics",
+        &realtime_service_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| ApiError::Internal)?
+        .as_secs();
+    let signed = state
+        .config
+        .flow_access_signer
+        .sign(
+            FlowAccessInput {
+                organization_id: instance.organization_id,
+                project_id: instance.project_id,
+                service_instance_id: instance.id,
+                principal_id: authorization.principal_id,
+                permissions: BTreeSet::from(["flow.metrics.read".to_owned()]),
+            },
+            now,
+            now + 30,
+            Uuid::now_v7(),
+        )
+        .map_err(|_| ApiError::Internal)?;
+    let url = state
+        .config
+        .flow_internal_endpoint
+        .join("v1/service-overview")
+        .map_err(|_| ApiError::Internal)?;
+    let response = state
+        .flow_client
+        .get(url)
+        .header("x-flow-principal", signed.encoded)
+        .header("x-flow-timestamp", signed.timestamp)
+        .header("x-flow-signature", signed.signature)
+        .send()
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = %error, "Flow metrics request failed");
+            ApiError::RealtimeProviderUnavailable
+        })?;
+    if !response.status().is_success() {
+        tracing::warn!(status = %response.status(), "Flow metrics request was rejected");
+        return Err(ApiError::RealtimeProviderUnavailable);
+    }
+    let metrics = response.json().await.map_err(|error| {
+        tracing::warn!(error = %error, "Flow metrics response was invalid");
+        ApiError::RealtimeProviderUnavailable
+    })?;
+    Ok(Json(metrics))
 }
 
 fn flow_access_response(
@@ -923,6 +1097,7 @@ fn flow_permission_iam_action(permission: &str) -> Option<&'static str> {
         "flow.room.join" => Some("flow:RoomJoin"),
         "flow.turn.issue" => Some("flow:TurnIssue"),
         "flow.signal.connect" => Some("flow:SignalConnect"),
+        "flow.metrics.read" => Some("realtime:GetMetrics"),
         _ => None,
     }
 }
@@ -953,6 +1128,22 @@ fn validate_flow_access_target(
         return Err(ApiError::ServiceInstanceNotReady);
     }
     Ok(instance)
+}
+
+async fn realtime_service(
+    state: &AppState,
+    organization_id: Uuid,
+    service_instance_id: Uuid,
+) -> Result<ServiceInstance, ApiError> {
+    state
+        .store
+        .service_instance(ServiceInstanceId(service_instance_id))
+        .await
+        .map_err(ApiError::from_store)?
+        .filter(|service| {
+            service.organization_id == OrganizationId(organization_id) && service.provider == "flow"
+        })
+        .ok_or(ApiError::NotFound)
 }
 
 #[derive(Default, Deserialize)]
@@ -1343,11 +1534,28 @@ fn organization_resource(organization_id: Uuid, suffix: &str) -> String {
     format!("hc:org:{organization_id}:{suffix}")
 }
 
-fn flow_instance_resource(organization_id: Uuid, service_instance_id: Uuid) -> String {
+fn realtime_service_resource(organization_id: Uuid, service_instance_id: Uuid) -> String {
     organization_resource(
         organization_id,
-        &format!("flow/instance/{service_instance_id}"),
+        &format!("realtime/service/{service_instance_id}"),
     )
+}
+
+fn validate_flow_spec(spec: &FlowSpec) -> Result<(), ApiError> {
+    if spec.max_participants == 0 || spec.max_participants > 100_000 {
+        return Err(ApiError::BadRequest(
+            "max_participants must be between 1 and 100000".into(),
+        ));
+    }
+    if spec.region.trim().is_empty() || spec.region.len() > 64 {
+        return Err(ApiError::BadRequest(
+            "region must contain between 1 and 64 characters".into(),
+        ));
+    }
+    if !spec.metadata.is_object() {
+        return Err(ApiError::BadRequest("metadata must be an object".into()));
+    }
+    Ok(())
 }
 
 fn validate_invitation_ttl(expires_in_hours: i64) -> Result<(), ApiError> {

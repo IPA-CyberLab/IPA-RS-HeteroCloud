@@ -820,6 +820,146 @@ impl Store {
         ServiceInstance::try_from(row)
     }
 
+    pub async fn update_service_instance(
+        &self,
+        organization_id: OrganizationId,
+        id: ServiceInstanceId,
+        principal_id: PrincipalId,
+        name: &str,
+        spec: Value,
+    ) -> Result<ServiceInstance, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        let existing = sqlx::query_as::<_, ServiceRow>(
+            "SELECT id, organization_id, project_id, provider, name, generation,
+                    state, spec, status, created_at, updated_at
+             FROM service_instances
+             WHERE id = $1 AND organization_id = $2 AND provider = 'flow'
+             FOR UPDATE",
+        )
+        .bind(id.0)
+        .bind(organization_id.0)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        if existing.state == "deleting" {
+            return Err(StoreError::Conflict);
+        }
+        let generation = existing
+            .generation
+            .checked_add(1)
+            .ok_or(StoreError::Invariant("service generation overflow"))?;
+        let row = sqlx::query_as::<_, ServiceRow>(
+            "UPDATE service_instances
+             SET name = $3, spec = $4, generation = $5, state = 'updating',
+                 status = '{}'::jsonb, updated_at = now()
+             WHERE id = $1 AND organization_id = $2 AND provider = 'flow'
+             RETURNING id, organization_id, project_id, provider, name, generation,
+                       state, spec, status, created_at, updated_at",
+        )
+        .bind(id.0)
+        .bind(organization_id.0)
+        .bind(name)
+        .bind(spec)
+        .bind(generation)
+        .fetch_one(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "INSERT INTO outbox_events (id, topic, aggregate_id, payload)
+             VALUES ($1, 'service-instance.reconcile', $2, $3)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(id.0)
+        .bind(serde_json::json!({
+            "service_instance_id": id,
+            "organization_id": organization_id,
+            "project_id": ProjectId(existing.project_id),
+            "principal_id": principal_id,
+            "provider": "flow",
+            "generation": generation,
+        }))
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        ServiceInstance::try_from(row)
+    }
+
+    pub async fn begin_delete_service_instance(
+        &self,
+        organization_id: OrganizationId,
+        id: ServiceInstanceId,
+        principal_id: PrincipalId,
+    ) -> Result<ServiceInstance, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        let existing = sqlx::query_as::<_, ServiceRow>(
+            "SELECT id, organization_id, project_id, provider, name, generation,
+                    state, spec, status, created_at, updated_at
+             FROM service_instances
+             WHERE id = $1 AND organization_id = $2 AND provider = 'flow'
+             FOR UPDATE",
+        )
+        .bind(id.0)
+        .bind(organization_id.0)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        if existing.state == "deleting" {
+            transaction.commit().await?;
+            return ServiceInstance::try_from(existing);
+        }
+        let generation = existing
+            .generation
+            .checked_add(1)
+            .ok_or(StoreError::Invariant("service generation overflow"))?;
+        let row = sqlx::query_as::<_, ServiceRow>(
+            "UPDATE service_instances
+             SET generation = $3, state = 'deleting', status = '{}'::jsonb,
+                 updated_at = now()
+             WHERE id = $1 AND organization_id = $2 AND provider = 'flow'
+             RETURNING id, organization_id, project_id, provider, name, generation,
+                       state, spec, status, created_at, updated_at",
+        )
+        .bind(id.0)
+        .bind(organization_id.0)
+        .bind(generation)
+        .fetch_one(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "INSERT INTO outbox_events (id, topic, aggregate_id, payload)
+             VALUES ($1, 'service-instance.delete', $2, $3)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(id.0)
+        .bind(serde_json::json!({
+            "service_instance_id": id,
+            "organization_id": organization_id,
+            "project_id": ProjectId(existing.project_id),
+            "principal_id": principal_id,
+            "provider": "flow",
+            "generation": generation,
+        }))
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        ServiceInstance::try_from(row)
+    }
+
+    pub async fn complete_delete_service_instance(
+        &self,
+        id: ServiceInstanceId,
+        generation: i64,
+    ) -> Result<bool, StoreError> {
+        let result = sqlx::query(
+            "DELETE FROM service_instances
+             WHERE id = $1 AND generation = $2 AND provider = 'flow'
+               AND state = 'deleting'",
+        )
+        .bind(id.0)
+        .bind(generation)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
     pub async fn service_instance(
         &self,
         id: ServiceInstanceId,
@@ -1299,6 +1439,8 @@ impl TryFrom<ServiceRow> for ServiceInstance {
 pub enum StoreError {
     #[error("resource already exists")]
     AlreadyExists,
+    #[error("resource state conflicts with the requested operation")]
+    Conflict,
     #[error("database migration failed: {0}")]
     Migration(#[from] sqlx::migrate::MigrateError),
     #[error("resource was not found")]
