@@ -1,6 +1,7 @@
 pub mod config;
 pub mod error;
 pub mod flow_access;
+pub mod metrics;
 pub mod oidc;
 pub mod routes;
 

@@ -18,12 +18,13 @@ use heterocloud_auth::{
     constant_time_token_eq, csrf_token, generate_token, hash_password, token_hash, verify_password,
 };
 use heterocloud_domain::{
-    FlowSpec, OrganizationId, PolicyDocument, PolicyId, PrincipalId, ProjectId, ServiceInstance,
-    ServiceInstanceId, ServiceState, UserStatus,
+    DEFAULT_FLOW_MAX_ROOMS, FlowSpec, MAX_FLOW_ROOMS, OrganizationId, PolicyDocument, PolicyId,
+    PrincipalId, ProjectId, ServiceInstance, ServiceInstanceId, ServiceState, UserStatus,
 };
 use heterocloud_iam::{AuthorizationRequest, Decision, authorize, semantics_digest};
 use heterocloud_store::{
-    AuditEvent, AuthorizationContext, OidcUser, RegisterWithInvitation, SessionUser, Store,
+    AuditEvent, AuthorizationContext, MAX_REALTIME_METRIC_HISTORY_SAMPLES, OidcUser,
+    RealtimeMetricCollectionTarget, RegisterWithInvitation, SessionUser, Store,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,7 @@ use crate::{
     config::RuntimeConfig,
     error::ApiError,
     flow_access::{FlowAccessInput, SignedFlowAccessContext},
+    metrics::fetch_and_record_realtime_metrics,
     oidc::{
         OIDC_TRANSACTION_COOKIE, OidcCallbackQuery, OidcError, OidcLoginIntent,
         clear_transaction_cookie,
@@ -106,6 +108,10 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route(
             "/organizations/{organization_id}/realtime/services/{service_instance_id}/metrics",
             get(get_realtime_service_metrics),
+        )
+        .route(
+            "/organizations/{organization_id}/projects/{project_id}/realtime/services/{service_instance_id}/metrics/history",
+            get(get_realtime_service_metrics_history),
         )
         .route(
             "/organizations/{organization_id}/audit-events",
@@ -812,7 +818,7 @@ async fn update_realtime_service(
     validate_name(&name)?;
     let spec = match request.spec {
         Some(spec) => spec,
-        None => serde_json::from_value(current.spec).map_err(|_| ApiError::Internal)?,
+        None => deserialize_stored_flow_spec(current.spec)?,
     };
     validate_flow_spec(&spec)?;
     let authorization = authorize_actor(
@@ -975,7 +981,7 @@ async fn get_realtime_service_metrics(
     Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
     jar: CookieJar,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor(&state, &headers, &jar).await?;
     let instance = validate_flow_access_target(
         state
@@ -994,52 +1000,129 @@ async fn get_realtime_service_metrics(
         &realtime_service_resource(organization_id, service_instance_id),
     )
     .await?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| ApiError::Internal)?
-        .as_secs();
-    let signed = state
-        .config
-        .flow_access_signer
-        .sign(
-            FlowAccessInput {
-                organization_id: instance.organization_id,
-                project_id: instance.project_id,
-                service_instance_id: instance.id,
-                principal_id: authorization.principal_id,
-                permissions: BTreeSet::from(["flow.metrics.read".to_owned()]),
-            },
-            now,
-            now + 30,
-            Uuid::now_v7(),
-        )
-        .map_err(|_| ApiError::Internal)?;
-    let url = state
-        .config
-        .flow_internal_endpoint
-        .join("v1/service-overview")
-        .map_err(|_| ApiError::Internal)?;
-    let response = state
-        .flow_client
-        .get(url)
-        .header("x-flow-principal", signed.encoded)
-        .header("x-flow-timestamp", signed.timestamp)
-        .header("x-flow-signature", signed.signature)
-        .send()
-        .await
-        .map_err(|error| {
-            tracing::warn!(error = %error, "Flow metrics request failed");
-            ApiError::RealtimeProviderUnavailable
-        })?;
-    if !response.status().is_success() {
-        tracing::warn!(status = %response.status(), "Flow metrics request was rejected");
-        return Err(ApiError::RealtimeProviderUnavailable);
-    }
-    let metrics = response.json().await.map_err(|error| {
-        tracing::warn!(error = %error, "Flow metrics response was invalid");
-        ApiError::RealtimeProviderUnavailable
-    })?;
+    let target = RealtimeMetricCollectionTarget {
+        service_instance_id: instance.id,
+        organization_id: instance.organization_id,
+        project_id: instance.project_id,
+    };
+    let metrics =
+        fetch_and_record_realtime_metrics(&state, &target, authorization.principal_id).await?;
     Ok(Json(metrics))
+}
+
+#[derive(Deserialize)]
+struct RealtimeMetricHistoryQuery {
+    range: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RealtimeMetricHistoryRange {
+    OneHour,
+    SixHours,
+    OneDay,
+    SevenDays,
+    ThirtyDays,
+}
+
+impl RealtimeMetricHistoryRange {
+    fn parse(value: &str) -> Result<Self, ApiError> {
+        match value {
+            "1h" => Ok(Self::OneHour),
+            "6h" => Ok(Self::SixHours),
+            "24h" => Ok(Self::OneDay),
+            "7d" => Ok(Self::SevenDays),
+            "30d" => Ok(Self::ThirtyDays),
+            _ => Err(ApiError::BadRequest(
+                "range must be one of 1h, 6h, 24h, 7d, or 30d".into(),
+            )),
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::OneHour => "1h",
+            Self::SixHours => "6h",
+            Self::OneDay => "24h",
+            Self::SevenDays => "7d",
+            Self::ThirtyDays => "30d",
+        }
+    }
+
+    const fn duration(self) -> ChronoDuration {
+        match self {
+            Self::OneHour => ChronoDuration::hours(1),
+            Self::SixHours => ChronoDuration::hours(6),
+            Self::OneDay => ChronoDuration::hours(24),
+            Self::SevenDays => ChronoDuration::days(7),
+            Self::ThirtyDays => ChronoDuration::days(30),
+        }
+    }
+
+    const fn step_seconds(self) -> i64 {
+        match self {
+            Self::OneHour => 15,
+            Self::SixHours => 90,
+            Self::OneDay => 360,
+            Self::SevenDays => 2_520,
+            Self::ThirtyDays => 10_800,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct RealtimeMetricHistoryResponse {
+    service_instance_id: ServiceInstanceId,
+    range: &'static str,
+    step_seconds: i64,
+    max_samples: i64,
+    samples: Vec<heterocloud_store::RealtimeMetricHistorySample>,
+}
+
+async fn get_realtime_service_metrics_history(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, project_id, service_instance_id)): Path<(Uuid, Uuid, Uuid)>,
+    Query(query): Query<RealtimeMetricHistoryQuery>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<RealtimeMetricHistoryResponse>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    let instance = validate_flow_access_target(
+        state
+            .store
+            .service_instance(ServiceInstanceId(service_instance_id))
+            .await
+            .map_err(ApiError::from_store)?,
+        OrganizationId(organization_id),
+        ServiceInstanceId(service_instance_id),
+    )?;
+    if instance.project_id != ProjectId(project_id) {
+        return Err(ApiError::NotFound);
+    }
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "realtime:GetMetrics",
+        &realtime_service_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let range = RealtimeMetricHistoryRange::parse(&query.range)?;
+    let samples = state
+        .store
+        .realtime_metric_history(
+            instance.id,
+            Utc::now() - range.duration(),
+            range.step_seconds(),
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(RealtimeMetricHistoryResponse {
+        service_instance_id: instance.id,
+        range: range.label(),
+        step_seconds: range.step_seconds(),
+        max_samples: MAX_REALTIME_METRIC_HISTORY_SAMPLES,
+        samples,
+    }))
 }
 
 fn flow_access_response(
@@ -1541,7 +1624,20 @@ fn realtime_service_resource(organization_id: Uuid, service_instance_id: Uuid) -
     )
 }
 
+fn deserialize_stored_flow_spec(mut value: Value) -> Result<FlowSpec, ApiError> {
+    let object = value.as_object_mut().ok_or(ApiError::Internal)?;
+    object
+        .entry("max_rooms")
+        .or_insert_with(|| json!(DEFAULT_FLOW_MAX_ROOMS));
+    serde_json::from_value(value).map_err(|_| ApiError::Internal)
+}
+
 fn validate_flow_spec(spec: &FlowSpec) -> Result<(), ApiError> {
+    if !(1..=MAX_FLOW_ROOMS).contains(&spec.max_rooms) {
+        return Err(ApiError::BadRequest(format!(
+            "max_rooms must be between 1 and {MAX_FLOW_ROOMS}"
+        )));
+    }
     if spec.max_participants == 0 || spec.max_participants > 100_000 {
         return Err(ApiError::BadRequest(
             "max_participants must be between 1 and 100000".into(),
@@ -1604,7 +1700,8 @@ mod tests {
 
     use chrono::Utc;
     use heterocloud_domain::{
-        OrganizationId, ProjectId, ServiceInstance, ServiceInstanceId, ServiceState,
+        FlowSpec, MAX_FLOW_ROOMS, OrganizationId, ProjectId, ServiceInstance, ServiceInstanceId,
+        ServiceState, TrafficMode,
     };
     use serde_json::{Value, json};
     use uuid::Uuid;
@@ -1612,10 +1709,11 @@ mod tests {
     use crate::error::ApiError;
 
     use super::{
-        CSRF_HEADER, CreateInvitation, INVITATION_MAX_TTL_HOURS, SESSION_COOKIE,
+        CSRF_HEADER, CreateInvitation, INVITATION_MAX_TTL_HOURS, RealtimeMetricHistoryRange,
+        RealtimeMetricHistoryResponse, SESSION_COOKIE, deserialize_stored_flow_spec,
         flow_permission_iam_action, parse_api_key_prefix, validate_flow_access_target,
-        validate_flow_access_ttl, validate_flow_permissions, validate_invitation_ttl,
-        validate_slug,
+        validate_flow_access_ttl, validate_flow_permissions, validate_flow_spec,
+        validate_invitation_ttl, validate_slug,
     };
 
     #[test]
@@ -1629,6 +1727,82 @@ mod tests {
         assert!(validate_slug("realtime-prod").is_ok());
         assert!(validate_slug("-invalid").is_err());
         assert!(validate_slug("Invalid").is_err());
+    }
+
+    #[test]
+    fn flow_room_limit_is_positive_and_old_rows_get_the_conservative_default() {
+        let mut spec = FlowSpec {
+            region: "heteronet-global".into(),
+            traffic_mode: TrafficMode::Forwarded,
+            max_participants: 100,
+            max_rooms: 1,
+            turn_enabled: true,
+            metadata: json!({}),
+        };
+        assert!(validate_flow_spec(&spec).is_ok());
+        spec.max_rooms = 0;
+        assert!(validate_flow_spec(&spec).is_err());
+        spec.max_rooms = MAX_FLOW_ROOMS;
+        assert!(validate_flow_spec(&spec).is_ok());
+        spec.max_rooms = MAX_FLOW_ROOMS + 1;
+        assert!(validate_flow_spec(&spec).is_err());
+
+        let stored = deserialize_stored_flow_spec(json!({
+            "region": "heteronet-global",
+            "traffic_mode": "forwarded",
+            "max_participants": 100,
+            "turn_enabled": true,
+            "metadata": {}
+        }));
+        assert_eq!(stored.ok().map(|spec| spec.max_rooms), Some(100));
+    }
+
+    #[test]
+    fn metric_history_ranges_are_fixed_and_bounded_to_240_buckets() {
+        for (label, duration_seconds, bucket_seconds) in [
+            ("1h", 3_600, 15),
+            ("6h", 21_600, 90),
+            ("24h", 86_400, 360),
+            ("7d", 604_800, 2_520),
+            ("30d", 2_592_000, 10_800),
+        ] {
+            let range = RealtimeMetricHistoryRange::parse(label);
+            assert_eq!(range.as_ref().ok().map(|range| range.label()), Some(label));
+            assert_eq!(
+                range
+                    .as_ref()
+                    .ok()
+                    .map(|range| range.duration().num_seconds()),
+                Some(duration_seconds)
+            );
+            assert_eq!(
+                range.ok().map(RealtimeMetricHistoryRange::step_seconds),
+                Some(bucket_seconds)
+            );
+            assert_eq!(duration_seconds / bucket_seconds, 240);
+        }
+        assert!(RealtimeMetricHistoryRange::parse("2h").is_err());
+    }
+
+    #[test]
+    fn metric_history_response_uses_console_step_seconds_contract() {
+        let response = RealtimeMetricHistoryResponse {
+            service_instance_id: ServiceInstanceId(Uuid::from_u128(7)),
+            range: "1h",
+            step_seconds: 15,
+            max_samples: 240,
+            samples: Vec::new(),
+        };
+        let rendered = serde_json::to_value(response).ok();
+        assert_eq!(
+            rendered.as_ref().map(|value| &value["step_seconds"]),
+            Some(&json!(15))
+        );
+        assert!(
+            rendered
+                .as_ref()
+                .is_some_and(|value| value.get("bucket_seconds").is_none())
+        );
     }
 
     #[test]

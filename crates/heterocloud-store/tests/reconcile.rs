@@ -1,7 +1,8 @@
 use std::{env, error::Error};
 
+use chrono::{Duration, TimeZone, Utc};
 use heterocloud_domain::{OrganizationId, ProjectId, ServiceInstanceId, ServiceState};
-use heterocloud_store::{BootstrapAdmin, Store};
+use heterocloud_store::{BootstrapAdmin, NewRealtimeMetricSample, Store};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -94,6 +95,71 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
     assert_eq!(ready.state, ServiceState::Ready);
     assert_eq!(ready.status["operation_id"], json!(operation_id));
     assert_eq!(ready.status["status"], json!({"phase": "accepted"}));
+
+    let sampled_at = Utc
+        .with_ymd_and_hms(2026, 8, 1, 0, 0, 1)
+        .single()
+        .ok_or("invalid metric test timestamp")?;
+    let sample = NewRealtimeMetricSample {
+        measured_at: sampled_at,
+        active_rooms: 1,
+        concurrent_connections: 2,
+        sfu_participants: 2,
+        p2p_connections: 0,
+        ingress_bytes: 100,
+        egress_bytes: 200,
+        transferred_bytes: 300,
+        turn_allocations: Some(1),
+        room_limit: Some(100),
+    };
+    store
+        .record_realtime_metric_sample(instance.id, sampled_at, &sample)
+        .await?;
+    store
+        .record_realtime_metric_sample(
+            instance.id,
+            sampled_at + Duration::seconds(10),
+            &NewRealtimeMetricSample {
+                measured_at: sampled_at + Duration::seconds(5),
+                active_rooms: 2,
+                ..sample.clone()
+            },
+        )
+        .await?;
+    store
+        .record_realtime_metric_sample(
+            instance.id,
+            sampled_at + Duration::seconds(11),
+            &NewRealtimeMetricSample {
+                measured_at: sampled_at + Duration::seconds(3),
+                active_rooms: 99,
+                ..sample.clone()
+            },
+        )
+        .await?;
+    store
+        .record_realtime_metric_sample(
+            instance.id,
+            sampled_at + Duration::seconds(15),
+            &NewRealtimeMetricSample {
+                measured_at: sampled_at + Duration::seconds(15),
+                active_rooms: 3,
+                ..sample
+            },
+        )
+        .await?;
+    let history = store
+        .realtime_metric_history(instance.id, sampled_at - Duration::seconds(1), 15)
+        .await?;
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].active_rooms, 2);
+    assert_eq!(history[0].room_limit, Some(100));
+    assert_eq!(history[1].active_rooms, 3);
+    assert!(history[0].sampled_at < history[1].sampled_at);
+
+    let targets = store.list_ready_flow_metric_targets().await?;
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].service_instance_id, instance.id);
 
     let non_flow = store
         .create_service_instance(

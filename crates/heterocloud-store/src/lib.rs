@@ -12,6 +12,8 @@ use uuid::Uuid;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
+pub const MAX_REALTIME_METRIC_HISTORY_SAMPLES: i64 = 240;
+
 #[derive(Clone)]
 pub struct Store {
     pool: PgPool,
@@ -771,6 +773,140 @@ impl Store {
         .collect()
     }
 
+    pub async fn list_ready_flow_metric_targets(
+        &self,
+    ) -> Result<Vec<RealtimeMetricCollectionTarget>, StoreError> {
+        let rows = sqlx::query_as::<_, RealtimeMetricCollectionTargetRow>(
+            "SELECT id, organization_id, project_id
+             FROM service_instances
+             WHERE provider = 'flow' AND state = 'ready'
+             ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(RealtimeMetricCollectionTarget::from)
+            .collect())
+    }
+
+    pub async fn record_realtime_metric_sample(
+        &self,
+        service_instance_id: ServiceInstanceId,
+        sampled_at: DateTime<Utc>,
+        sample: &NewRealtimeMetricSample,
+    ) -> Result<(), StoreError> {
+        let result = sqlx::query(
+            "INSERT INTO realtime_metric_samples
+                (service_instance_id, sampled_at, measured_at, active_rooms,
+                 concurrent_connections, sfu_participants, p2p_connections,
+                 ingress_bytes, egress_bytes, transferred_bytes, turn_allocations,
+                 room_limit)
+             SELECT $1,
+                    date_bin(INTERVAL '15 seconds', $2,
+                             TIMESTAMPTZ '1970-01-01 00:00:00+00'),
+                    $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+             FROM service_instances
+             WHERE id = $1 AND provider = 'flow'
+             ON CONFLICT (service_instance_id, sampled_at) DO UPDATE
+             SET measured_at = EXCLUDED.measured_at,
+                 active_rooms = EXCLUDED.active_rooms,
+                 concurrent_connections = EXCLUDED.concurrent_connections,
+                 sfu_participants = EXCLUDED.sfu_participants,
+                 p2p_connections = EXCLUDED.p2p_connections,
+                 ingress_bytes = EXCLUDED.ingress_bytes,
+                 egress_bytes = EXCLUDED.egress_bytes,
+                 transferred_bytes = EXCLUDED.transferred_bytes,
+                 turn_allocations = EXCLUDED.turn_allocations,
+                 room_limit = EXCLUDED.room_limit
+             WHERE EXCLUDED.measured_at >= realtime_metric_samples.measured_at",
+        )
+        .bind(service_instance_id.0)
+        .bind(sampled_at)
+        .bind(sample.measured_at)
+        .bind(sample.active_rooms)
+        .bind(sample.concurrent_connections)
+        .bind(sample.sfu_participants)
+        .bind(sample.p2p_connections)
+        .bind(sample.ingress_bytes)
+        .bind(sample.egress_bytes)
+        .bind(sample.transferred_bytes)
+        .bind(sample.turn_allocations)
+        .bind(sample.room_limit)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS (
+                     SELECT 1 FROM service_instances
+                     WHERE id = $1 AND provider = 'flow'
+                 )",
+            )
+            .bind(service_instance_id.0)
+            .fetch_one(&self.pool)
+            .await?;
+            if !exists {
+                return Err(StoreError::NotFound);
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn realtime_metric_history(
+        &self,
+        service_instance_id: ServiceInstanceId,
+        since: DateTime<Utc>,
+        bucket_seconds: i64,
+    ) -> Result<Vec<RealtimeMetricHistorySample>, StoreError> {
+        if bucket_seconds <= 0 {
+            return Err(StoreError::Invariant(
+                "metric history bucket must be positive",
+            ));
+        }
+        sqlx::query_as::<_, RealtimeMetricHistorySample>(
+            "WITH bucketed AS (
+                 SELECT date_bin(
+                            make_interval(secs => $3::double precision),
+                            sampled_at,
+                            TIMESTAMPTZ '1970-01-01 00:00:00+00'
+                        ) AS bucket_at,
+                        sampled_at AS recorded_at,
+                        measured_at, active_rooms, concurrent_connections,
+                        sfu_participants, p2p_connections, ingress_bytes,
+                        egress_bytes, transferred_bytes, turn_allocations,
+                        room_limit
+                 FROM realtime_metric_samples
+                 WHERE service_instance_id = $1 AND sampled_at >= $2
+             ), latest AS (
+                 SELECT DISTINCT ON (bucket_at)
+                        bucket_at AS sampled_at, measured_at, active_rooms,
+                        concurrent_connections, sfu_participants, p2p_connections,
+                        ingress_bytes, egress_bytes, transferred_bytes,
+                        turn_allocations, room_limit
+                 FROM bucketed
+                 ORDER BY bucket_at, recorded_at DESC
+             ), bounded AS (
+                 SELECT *
+                 FROM latest
+                 ORDER BY sampled_at DESC
+                 LIMIT $4
+             )
+             SELECT sampled_at, measured_at, active_rooms,
+                    concurrent_connections, sfu_participants, p2p_connections,
+                    ingress_bytes, egress_bytes, transferred_bytes,
+                    turn_allocations, room_limit
+             FROM bounded
+             ORDER BY sampled_at",
+        )
+        .bind(service_instance_id.0)
+        .bind(since)
+        .bind(bucket_seconds)
+        .bind(MAX_REALTIME_METRIC_HISTORY_SAMPLES)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StoreError::from)
+    }
+
     pub async fn create_service_instance(
         &self,
         organization_id: OrganizationId,
@@ -1159,6 +1295,42 @@ pub struct AuthorizationContext {
     pub policies: Vec<PolicyDocument>,
 }
 
+#[derive(Clone, Debug)]
+pub struct RealtimeMetricCollectionTarget {
+    pub service_instance_id: ServiceInstanceId,
+    pub organization_id: OrganizationId,
+    pub project_id: ProjectId,
+}
+
+#[derive(Clone, Debug)]
+pub struct NewRealtimeMetricSample {
+    pub measured_at: DateTime<Utc>,
+    pub active_rooms: i64,
+    pub concurrent_connections: i64,
+    pub sfu_participants: i64,
+    pub p2p_connections: i64,
+    pub ingress_bytes: i64,
+    pub egress_bytes: i64,
+    pub transferred_bytes: i64,
+    pub turn_allocations: Option<i64>,
+    pub room_limit: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, sqlx::FromRow)]
+pub struct RealtimeMetricHistorySample {
+    pub sampled_at: DateTime<Utc>,
+    pub measured_at: DateTime<Utc>,
+    pub active_rooms: i64,
+    pub concurrent_connections: i64,
+    pub sfu_participants: i64,
+    pub p2p_connections: i64,
+    pub ingress_bytes: i64,
+    pub egress_bytes: i64,
+    pub transferred_bytes: i64,
+    pub turn_allocations: Option<i64>,
+    pub room_limit: Option<i64>,
+}
+
 pub struct AuditEvent<'a> {
     pub organization_id: Option<OrganizationId>,
     pub principal_id: Option<PrincipalId>,
@@ -1405,6 +1577,23 @@ struct ServiceRow {
     status: Value,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct RealtimeMetricCollectionTargetRow {
+    id: Uuid,
+    organization_id: Uuid,
+    project_id: Uuid,
+}
+
+impl From<RealtimeMetricCollectionTargetRow> for RealtimeMetricCollectionTarget {
+    fn from(row: RealtimeMetricCollectionTargetRow) -> Self {
+        Self {
+            service_instance_id: ServiceInstanceId(row.id),
+            organization_id: OrganizationId(row.organization_id),
+            project_id: ProjectId(row.project_id),
+        }
+    }
 }
 
 impl TryFrom<ServiceRow> for ServiceInstance {

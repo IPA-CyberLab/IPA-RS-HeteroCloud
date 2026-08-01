@@ -202,9 +202,13 @@ pub struct FlowSpec {
     pub region: String,
     pub traffic_mode: TrafficMode,
     pub max_participants: u32,
+    pub max_rooms: u32,
     pub turn_enabled: bool,
     pub metadata: Value,
 }
+
+pub const DEFAULT_FLOW_MAX_ROOMS: u32 = 100;
+pub const MAX_FLOW_ROOMS: u32 = 1_000_000;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -241,7 +245,34 @@ pub enum DomainError {
 
 #[cfg(test)]
 mod tests {
-    use super::{POLICY_VERSION, PolicyDocument, PolicyEffect, PolicyStatement};
+    use serde_json::json;
+
+    use super::{
+        DEFAULT_FLOW_MAX_ROOMS, FlowSpec, POLICY_VERSION, PolicyDocument, PolicyEffect,
+        PolicyStatement,
+    };
+
+    #[test]
+    fn flow_spec_requires_an_explicit_room_limit() {
+        let missing = serde_json::from_value::<FlowSpec>(json!({
+            "region": "heteronet-global",
+            "traffic_mode": "forwarded",
+            "max_participants": 100,
+            "turn_enabled": true,
+            "metadata": {}
+        }));
+        assert!(missing.is_err());
+
+        let spec = serde_json::from_value::<FlowSpec>(json!({
+            "region": "heteronet-global",
+            "traffic_mode": "forwarded",
+            "max_participants": 100,
+            "max_rooms": DEFAULT_FLOW_MAX_ROOMS,
+            "turn_enabled": true,
+            "metadata": {}
+        }));
+        assert_eq!(spec.ok().map(|spec| spec.max_rooms), Some(100));
+    }
 
     #[test]
     fn rejects_middle_wildcards() {
