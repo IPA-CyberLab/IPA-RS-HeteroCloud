@@ -60,9 +60,9 @@ contain only non-secret configuration. Kubernetes Secret encryption at rest
 and least-privilege provider tokens remain deployment requirements.
 
 ExternalDNS is restricted by an exact domain filter, a HeteroCloud label
-selector, A-record type filtering, and a unique TXT owner ID. Cloudflare
-records remain DNS-only by default so non-HTTP RTC and TURN traffic cannot be
-silently routed through an incompatible proxy.
+selector, A-record type filtering, and a unique TXT owner ID. The unified
+`flow.<domain>` RRset remains DNS-only by default so non-HTTP STUN and TURN
+traffic cannot be silently routed through an incompatible HTTP proxy.
 
 ## Authorization
 
@@ -96,9 +96,9 @@ mapping. Each decision is audited before any credential is signed. Access
 contexts are issued only after generation-guarded reconciliation has moved the
 service instance to `ready`.
 
-Secure mode accepts only HTTPS Flow public endpoints. HeteroCloud returns the
-configured concrete endpoint list without converting it into a synthetic
-single-host failover claim.
+Secure mode accepts only HTTPS Flow public endpoints. Production configures
+the single `flow.<domain>` endpoint, backed by the provider-neutral
+multi-address RRset managed by ExternalDNS.
 
 The HeteroNet production API does not listen on every host interface and does
 not use a public Kubernetes LoadBalancer. It binds to the Kubernetes host IP on

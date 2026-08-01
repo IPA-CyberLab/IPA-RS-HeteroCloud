@@ -23,8 +23,11 @@ record model.
 This boundary supports native ExternalDNS providers, cloud workload identity,
 RFC2136, and provider webhooks. Migrating providers changes controller
 configuration and credentials, not HeteroCloud code or service manifests.
-The generated endpoint contains only per-node public names; internal VPN and
-Kubernetes addresses are never published by default.
+The generated endpoint contains node-scoped `cloud-<node>` records and two
+multi-address RRsets: the canonical console domain and `flow.<domain>`. The
+Flow RRset contains every discovered public gateway address and replaces
+separate Flow, RTC, and TURN hostnames. Internal VPN and Kubernetes addresses
+are never published by default.
 
 ## Request path
 
@@ -47,9 +50,8 @@ against that same instance resource. Each allow or deny is audited, and one
 explicit or default deny aborts the whole issuance. The instance must already
 be `ready`; provisioning and error instances cannot mint credentials. The
 project identifier is loaded from the service instance; clients cannot supply
-it. The response carries the configured concrete Flow endpoint list so
-failover does not depend on assuming that one sslip.io hostname has multiple
-healthy address records.
+it. The production response carries the unified `flow.<domain>` endpoint;
+public DNS selects a gateway from its multi-address RRset.
 
 The browser never receives database credentials, provider credentials,
 LiveKit API secrets, or TURN shared secrets.
@@ -114,3 +116,17 @@ it does not create a HeteroNetwork public LoadBalancer or expose port 10443.
 Public HTTPS terminates only at Caddy on port 443. Each public control-plane
 Caddy instance proxies the three HeteroNetwork node IP upstreams on port 8443,
 so losing one API or control-plane node does not require a public bypass port.
+
+Flow uses a different gateway policy. Every Caddy instance serves the same
+`flow.<domain>` host and sends `/rtc` and `/rtc/*` to LiveKit on its local VPN
+address and port 7880, `/v1/signal/*` to local signaling on port 8082, and all
+other public paths to the local Flow API on port 8080. `/internal` is denied at
+the edge. This keeps the selected public gateway and data-plane process on the
+same node.
+
+Each gateway maintains its own public certificate. Flow certificate policies
+disable TLS-ALPN validation and use HTTP-01. If the gateway receiving a
+challenge does not own its token, it forwards the request to the next gateway
+over VPN port 80. The three configurations form a ring. A per-gateway visited
+header terminates an unrecognized token after one complete pass, so malformed
+requests cannot circulate indefinitely.

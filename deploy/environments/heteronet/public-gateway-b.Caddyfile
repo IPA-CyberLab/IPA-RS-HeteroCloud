@@ -60,41 +60,50 @@ cloud-b.heterocloud.mizuame.app {
 	}
 }
 
-flow-b.heterocloud.mizuame.app {
-	handle /internal/* {
+http://flow.heterocloud.mizuame.app {
+	@acme_loop {
+		path /.well-known/acme-challenge/*
+		header X-HeteroCloud-ACME-Visited-B 1
+	}
+
+	handle @acme_loop {
 		respond 404
 	}
 
-	handle /v1/signal/* {
-		reverse_proxy 10.250.0.5:8082 10.250.0.6:8082 10.250.0.4:8082 {
-			lb_policy first
-			health_uri /health/live
-			health_interval 5s
-			health_timeout 2s
-			fail_duration 10s
-			max_fails 2
+	handle /.well-known/acme-challenge/* {
+		reverse_proxy 10.250.0.6:80 {
+			header_up Host {host}
+			header_up X-HeteroCloud-ACME-Visited-B 1
 		}
 	}
 
 	handle {
-		reverse_proxy 10.250.0.5:8080 10.250.0.6:8080 10.250.0.4:8080 {
-			lb_policy first
-			health_uri /health/live
-			health_interval 5s
-			health_timeout 2s
-			fail_duration 10s
-			max_fails 2
-		}
+		redir https://flow.heterocloud.mizuame.app{uri} permanent
 	}
 }
 
-rtc-b.heterocloud.mizuame.app {
-	reverse_proxy 10.250.0.5:7880 10.250.0.6:7880 10.250.0.4:7880 {
-		lb_policy first
-		health_uri /
-		health_interval 5s
-		health_timeout 2s
-		fail_duration 10s
-		max_fails 2
+flow.heterocloud.mizuame.app {
+	tls {
+		issuer acme {
+			disable_tlsalpn_challenge
+		}
+	}
+
+	@internal path /internal /internal/*
+	handle @internal {
+		respond 404
+	}
+
+	@rtc path /rtc /rtc/*
+	handle @rtc {
+		reverse_proxy 10.250.0.5:7880
+	}
+
+	handle /v1/signal/* {
+		reverse_proxy 10.250.0.5:8082
+	}
+
+	handle {
+		reverse_proxy 10.250.0.5:8080
 	}
 }

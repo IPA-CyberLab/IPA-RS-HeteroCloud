@@ -14,7 +14,8 @@ mod external_dns;
 
 pub use external_dns::ReconcileArgs;
 
-const SERVICE_PREFIXES: [&str; 4] = ["cloud", "flow", "rtc", "turn"];
+const NODE_SCOPED_SERVICE_PREFIXES: [&str; 1] = ["cloud"];
+const FLOW_SERVICE_PREFIX: &str = "flow";
 const MAX_BASE_DOMAIN_LENGTH: usize = 230;
 
 #[derive(Debug, Parser)]
@@ -345,10 +346,10 @@ fn validate_addresses(addresses: &[Ipv4Addr], allow_non_public: bool) -> Result<
 }
 
 pub fn build_records(domain: &str, addresses: &[Ipv4Addr], ttl: u32) -> Vec<DnsRecord> {
-    let mut records = Vec::with_capacity(addresses.len() * (SERVICE_PREFIXES.len() + 1));
+    let mut records = Vec::with_capacity(addresses.len() * 3);
     for (index, address) in addresses.iter().enumerate() {
         let node = node_label(index);
-        for service in SERVICE_PREFIXES {
+        for service in NODE_SCOPED_SERVICE_PREFIXES {
             records.push(DnsRecord {
                 record_type: "A",
                 name: format!("{service}-{node}.{domain}"),
@@ -366,6 +367,16 @@ pub fn build_records(domain: &str, addresses: &[Ipv4Addr], ttl: u32) -> Vec<DnsR
             value: *address,
             ttl,
             service: "cloud",
+            node: "cluster".to_owned(),
+        });
+    }
+    for address in addresses {
+        records.push(DnsRecord {
+            record_type: "A",
+            name: format!("{FLOW_SERVICE_PREFIX}.{domain}"),
+            value: *address,
+            ttl,
+            service: FLOW_SERVICE_PREFIX,
             node: "cluster".to_owned(),
         });
     }
@@ -555,21 +566,26 @@ mod tests {
     }
 
     #[test]
-    fn generates_node_scoped_service_records() {
+    fn generates_node_scoped_cloud_and_cluster_scoped_flow_records() {
         let addresses = vec![
             Ipv4Addr::new(163, 220, 236, 51),
             Ipv4Addr::new(163, 220, 236, 52),
             Ipv4Addr::new(163, 220, 236, 53),
         ];
         let records = build_records("hc.example.com", &addresses, 60);
-        assert_eq!(records.len(), 15);
+        assert_eq!(records.len(), 9);
         assert_eq!(records[0].name, "cloud-a.hc.example.com");
-        assert_eq!(records[3].name, "turn-a.hc.example.com");
-        assert_eq!(records[4].name, "cloud-b.hc.example.com");
-        assert_eq!(records[11].name, "turn-c.hc.example.com");
-        assert_eq!(records[12].name, "hc.example.com");
-        assert_eq!(records[13].name, "hc.example.com");
-        assert_eq!(records[14].name, "hc.example.com");
+        assert_eq!(records[1].name, "cloud-b.hc.example.com");
+        assert_eq!(records[2].name, "cloud-c.hc.example.com");
+        assert_eq!(records[3].name, "hc.example.com");
+        assert_eq!(records[5].name, "hc.example.com");
+        assert_eq!(records[6].name, "flow.hc.example.com");
+        assert_eq!(records[8].name, "flow.hc.example.com");
+        assert!(records.iter().all(|record| {
+            !record.name.starts_with("flow-")
+                && !record.name.starts_with("rtc-")
+                && !record.name.starts_with("turn-")
+        }));
     }
 
     #[test]
@@ -596,11 +612,37 @@ mod tests {
     }
 
     #[test]
+    fn verifies_flow_as_one_multi_address_rrset() {
+        let records = build_records(
+            "hc.example.com",
+            &[
+                Ipv4Addr::new(163, 220, 236, 51),
+                Ipv4Addr::new(163, 220, 236, 52),
+                Ipv4Addr::new(163, 220, 236, 53),
+            ],
+            60,
+        );
+        let flow_records = records
+            .into_iter()
+            .filter(|record| record.name == "flow.hc.example.com")
+            .collect::<Vec<_>>();
+        let failures = verify_with(&flow_records, |_| {
+            Ok(vec![
+                IpAddr::V4(Ipv4Addr::new(163, 220, 236, 53)),
+                IpAddr::V4(Ipv4Addr::new(163, 220, 236, 51)),
+                IpAddr::V4(Ipv4Addr::new(163, 220, 236, 52)),
+            ])
+        });
+        assert!(failures.is_empty());
+    }
+
+    #[test]
     fn zone_output_is_ready_for_bulk_import() -> Result<(), Box<dyn std::error::Error>> {
         let addresses = vec![Ipv4Addr::new(163, 220, 236, 51)];
         let records = build_records("hc.example.com", &addresses, 60);
         let output = render_records(&records, OutputFormat::Zone, "hc.example.com", &addresses)?;
         assert!(output.contains("cloud-a.hc.example.com.\t60\tIN\tA\t163.220.236.51"));
+        assert!(output.contains("flow.hc.example.com.\t60\tIN\tA\t163.220.236.51"));
         assert!(output.contains(
             "; heterocloud dns verify --domain hc.example.com --public-ip 163.220.236.51"
         ));

@@ -1180,14 +1180,20 @@ mod tests {
         let endpoints = plan.endpoint["spec"]["endpoints"]
             .as_array()
             .ok_or("endpoints must be an array")?;
-        assert_eq!(endpoints.len(), 13);
+        assert_eq!(endpoints.len(), 5);
         assert_eq!(endpoints[0]["dnsName"], "cloud-a.heterocloud.example.com");
-        assert_eq!(endpoints[6]["dnsName"], "heterocloud.example.com");
+        assert_eq!(endpoints[1]["dnsName"], "cloud-b.heterocloud.example.com");
+        assert_eq!(endpoints[2]["dnsName"], "cloud-c.heterocloud.example.com");
+        assert_eq!(endpoints[3]["dnsName"], "flow.heterocloud.example.com");
         assert_eq!(
-            endpoints[6]["targets"],
+            endpoints[3]["targets"],
             json!(["163.220.236.51", "163.220.236.52", "163.220.236.53"])
         );
-        assert_eq!(endpoints[12]["dnsName"], "turn-c.heterocloud.example.com");
+        assert_eq!(endpoints[4]["dnsName"], "heterocloud.example.com");
+        assert_eq!(
+            endpoints[4]["targets"],
+            json!(["163.220.236.51", "163.220.236.52", "163.220.236.53"])
+        );
         assert_eq!(
             plan.helm_values["labelFilter"],
             "app.kubernetes.io/managed-by=heterocloud"
@@ -1207,7 +1213,7 @@ mod tests {
         let endpoints = plan.endpoint["spec"]["endpoints"]
             .as_array()
             .ok_or("endpoints must be an array")?;
-        assert_eq!(plan.verification_records.len(), 12);
+        assert_eq!(plan.verification_records.len(), 6);
         assert!(
             endpoints
                 .iter()
@@ -1215,13 +1221,14 @@ mod tests {
                 .all(|endpoint| { endpoint["dnsName"] == "heterocloud.example.com" })
         );
         assert_eq!(
-            endpoints[6]["providerSpecific"],
+            endpoints[4]["providerSpecific"],
             json!([{
                 "name": "external-dns.alpha.kubernetes.io/cloudflare-proxied",
                 "value": "true"
             }])
         );
         assert!(endpoints[0].get("providerSpecific").is_none());
+        assert!(endpoints[3].get("providerSpecific").is_none());
         Ok(())
     }
 

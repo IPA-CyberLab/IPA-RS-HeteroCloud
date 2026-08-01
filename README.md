@@ -52,9 +52,10 @@ separate [data-plane access contract](contracts/flow-access/v1/README.md).
 
 ## Public DNS onboarding
 
-The `heterocloud` CLI manages one hostname per public failure domain. It
-discovers the public IPv4 addresses from the HeteroNetwork-backed Flow RTC
-`LoadBalancer` Service by default.
+The `heterocloud` CLI publishes node-scoped `cloud-<node>` management names
+and two cluster-scoped multi-address names: the canonical console domain and
+`flow.<domain>`. It discovers the public IPv4 addresses from the
+HeteroNetwork-backed Flow RTC `LoadBalancer` Service by default.
 
 For automatic DNS, `dns reconcile` installs a pinned ExternalDNS controller
 and applies a provider-neutral `DNSEndpoint`. The provider is an adapter, so
@@ -85,13 +86,16 @@ heterocloud dns reconcile \
 ```
 
 This creates the canonical `heterocloud.mizuame.app` console and identity
-endpoint, plus `cloud-a/b/c`, `flow-a/b/c`, `rtc-a/b/c`, and `turn-a/b/c` as
-DNS A records. In this Cloudflare deployment only the canonical console and
-identity endpoints are proxied; RTC, TURN, and node-specific records remain
-DNS-only because they are not ordinary HTTP traffic. Other providers can use
-their equivalent `--http-edge-property` without changing the desired record
-set. ExternalDNS uses a TXT ownership registry and is restricted to the
-requested domain and HeteroCloud-labelled resources.
+RRset, node-specific `cloud-a/b/c` records, and one
+`flow.heterocloud.mizuame.app` RRset containing every public gateway address.
+The unified Flow name covers HTTPS, WebSocket, LiveKit, STUN, and TURN client
+configuration; the protocol selects the service port. In this Cloudflare
+deployment only the canonical console and identity endpoint is proxied.
+`flow` and node-specific records remain DNS-only because Cloudflare's HTTP
+proxy cannot carry the complete RTC and TURN protocol surface. Other
+providers can use their equivalent `--http-edge-property` without changing
+the desired record set. ExternalDNS uses a TXT ownership registry and is
+restricted to the requested domain and HeteroCloud-labelled resources.
 
 Provider authentication may instead use workload identity or a Secret that
 already exists in the controller namespace:
@@ -164,9 +168,15 @@ zone block. It checks every A record and fails on missing, extra, IPv6, or
 incorrect destinations. `--format table` and `--format json` are available
 for providers that do not accept zone imports.
 
-Per-node names are deliberate: they preserve ordered endpoint failover and
-allow each gateway to obtain its own TLS certificate. Do not collapse them
-into one unmanaged round-robin A record.
+Every public gateway serves the same `flow.<domain>` HTTPS host and routes
+`/rtc` to its local LiveKit process, `/v1/signal/*` to local signaling, and
+other public paths to the local Flow API. Each Caddy instance obtains its own
+certificate. Because an ACME HTTP-01 request can arrive at any address in the
+RRset, unknown challenge tokens are forwarded around a bounded gateway ring
+over HeteroNetwork. TLS-ALPN validation is disabled for this host. Port 80
+must therefore be reachable between adjacent gateway VPN addresses, and all
+gateway Caddyfiles must be deployed before switching DNS to the unified
+RRset.
 
 ## Development
 
@@ -223,7 +233,7 @@ cargo run -p heterocloud-api -- \
   --database-url-file /tmp/heterocloud-database-url \
   --csrf-key-file /tmp/heterocloud-csrf-key \
   --flow-access-secret-file /tmp/heterocloud-flow-access-secret \
-  --flow-public-endpoints https://flow-a.example.test \
+  --flow-public-endpoints https://flow.example.test \
   --public-origin https://heterocloud.example.test \
   --oidc-issuer-url https://id.example.test/realms/heterocloud \
   --oidc-client-id heterocloud-web \
