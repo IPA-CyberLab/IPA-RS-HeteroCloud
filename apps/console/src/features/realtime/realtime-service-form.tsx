@@ -123,6 +123,7 @@ export function RealtimeServiceForm({
             type="number"
             required
             min={1}
+            max={1_000_000}
             step={1}
             value={value.maxRooms}
             disabled={disabled}
