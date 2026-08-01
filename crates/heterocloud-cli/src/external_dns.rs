@@ -159,10 +159,10 @@ pub fn reconcile(args: ReconcileArgs) -> Result<(), CliError> {
         apply_local_credentials(&args, &plan.local_credentials)?;
     }
     if let Some(kubeconfig) = &plan.controller_kubeconfig {
-        apply_manifest(&args.source, kubeconfig)?;
+        apply_manifest(&args.source, kubeconfig, false)?;
     }
     install_external_dns(&args, &plan.helm_values)?;
-    apply_manifest(&args.source, &plan.endpoint)?;
+    apply_manifest(&args.source, &plan.endpoint, true)?;
     restart_controller(&args)?;
 
     if args.no_wait_dns {
@@ -815,7 +815,7 @@ fn apply_namespace(args: &ReconcileArgs) -> Result<(), CliError> {
             }
         }
     });
-    apply_manifest(&args.source, &manifest)
+    apply_manifest(&args.source, &manifest, false)
 }
 
 fn apply_local_credentials(
@@ -961,17 +961,29 @@ fn restart_controller(args: &ReconcileArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-fn apply_manifest(source: &DnsSourceArgs, manifest: &Value) -> Result<(), CliError> {
+fn apply_manifest(
+    source: &DnsSourceArgs,
+    manifest: &Value,
+    force_conflicts: bool,
+) -> Result<(), CliError> {
+    let args = apply_manifest_args(source, force_conflicts);
+    let input = serde_json::to_vec(manifest)?;
+    run_command("kubectl", &args, Some(&input))?;
+    Ok(())
+}
+
+fn apply_manifest_args(source: &DnsSourceArgs, force_conflicts: bool) -> Vec<OsString> {
     let mut args = kubectl_prefix(source);
     args.extend([
         OsString::from("apply"),
         OsString::from("--server-side=true"),
         OsString::from("--field-manager=heterocloud-cli"),
-        OsString::from("--filename=-"),
     ]);
-    let input = serde_json::to_vec(manifest)?;
-    run_command("kubectl", &args, Some(&input))?;
-    Ok(())
+    if force_conflicts {
+        args.push(OsString::from("--force-conflicts"));
+    }
+    args.push(OsString::from("--filename=-"));
+    args
 }
 
 fn kubectl_prefix(source: &DnsSourceArgs) -> Vec<OsString> {
@@ -1071,6 +1083,25 @@ mod tests {
     use super::*;
 
     static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn endpoint_apply_takes_ownership_without_forcing_shared_manifests() {
+        let source = DnsSourceArgs {
+            domain: "heterocloud.example.test".to_owned(),
+            public_ip: Vec::new(),
+            allow_non_public: false,
+            kubeconfig: Some(PathBuf::from("/secure/admin.conf")),
+            context: Some("production".to_owned()),
+            namespace: "heterocloud-flow".to_owned(),
+            service: "heterocloud-flow-livekit-rtc".to_owned(),
+        };
+        let shared = apply_manifest_args(&source, false);
+        let endpoint = apply_manifest_args(&source, true);
+
+        assert!(!shared.contains(&OsString::from("--force-conflicts")));
+        assert!(endpoint.contains(&OsString::from("--force-conflicts")));
+        assert_eq!(endpoint.last(), Some(&OsString::from("--filename=-")));
+    }
 
     struct TemporaryCredential(PathBuf);
 
