@@ -2,11 +2,18 @@
 
 ## Registration and account abuse
 
-Anonymous registration is absent. The first administrator is bootstrapped
-from a root-owned password file, and subsequent users must be admitted by an
-organization invitation flow. Account creation alone must never grant free
-service capacity; quotas and billing eligibility are separate HeteroCloud
-state.
+HeteroCloud's local anonymous registration endpoint is absent. The first
+local administrator is bootstrapped from a root-owned password file, and
+subsequent local users must be admitted by an organization invitation flow.
+An optional Keycloak realm may expose its own self-registration policy. A
+first successful OIDC login creates only a user, personal organization, user
+principal, and owner membership. Account creation alone never grants a
+project, service instance, quota, or billing eligibility.
+
+OIDC identities are keyed by the exact verified `(issuer, subject)` pair.
+HeteroCloud never links an OIDC identity to an existing local or external
+account based only on a matching email address. An email collision rejects
+the new identity instead. OIDC-only users have no password hash.
 
 Organization invitations are single-use and expire within 24 hours. The API
 performs an indexed availability lookup before running Argon2id, then locks
@@ -30,11 +37,18 @@ IP/ASN/device rate limits. SMS alone is not a Sybil defense.
   HMAC CSRF token.
 - Session revocation and expiry are database-backed and consistent across API
   replicas.
+- OIDC uses Authorization Code with S256 PKCE. State, nonce, verifier, and
+  issuance time are held in a five-minute, signed, `HttpOnly`, `SameSite=Lax`
+  cookie. Production cookies are `Secure`.
+- Discovery metadata must report the exact configured issuer. Authorization,
+  token, and JWKS endpoints must remain on that issuer origin. ID tokens are
+  checked against an asymmetric JWKS key for signature, algorithm, issuer,
+  audience, expiry, subject, authorized party, and nonce.
 
 TLS is mandatory on public deployments. Database URLs, CSRF keys, bootstrap
-passwords, TLS private keys, Flow access HMAC secrets, provider signing keys,
-and service credentials must be mounted as Kubernetes Secrets; they are never
-accepted as command-line values.
+passwords, OIDC client secrets, TLS private keys, Flow access HMAC secrets,
+provider signing keys, and service credentials must be mounted as Kubernetes
+Secrets; they are never accepted as command-line values.
 
 DNS provider tokens follow the same rule. The supported credential paths for
 `heterocloud dns reconcile` are a regular local file with mode `0400` or

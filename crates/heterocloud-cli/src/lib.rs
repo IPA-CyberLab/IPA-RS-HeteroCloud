@@ -345,7 +345,7 @@ fn validate_addresses(addresses: &[Ipv4Addr], allow_non_public: bool) -> Result<
 }
 
 pub fn build_records(domain: &str, addresses: &[Ipv4Addr], ttl: u32) -> Vec<DnsRecord> {
-    let mut records = Vec::with_capacity(addresses.len() * SERVICE_PREFIXES.len());
+    let mut records = Vec::with_capacity(addresses.len() * (SERVICE_PREFIXES.len() + 1));
     for (index, address) in addresses.iter().enumerate() {
         let node = node_label(index);
         for service in SERVICE_PREFIXES {
@@ -358,6 +358,16 @@ pub fn build_records(domain: &str, addresses: &[Ipv4Addr], ttl: u32) -> Vec<DnsR
                 node: node.clone(),
             });
         }
+    }
+    for address in addresses {
+        records.push(DnsRecord {
+            record_type: "A",
+            name: domain.to_owned(),
+            value: *address,
+            ttl,
+            service: "cloud",
+            node: "cluster".to_owned(),
+        });
     }
     records
 }
@@ -421,23 +431,32 @@ where
 {
     let mut successes = Vec::new();
     let mut failures = Vec::new();
+    let mut expected_by_name = std::collections::BTreeMap::<String, BTreeSet<IpAddr>>::new();
     for record in records {
-        match lookup(&record.name) {
+        expected_by_name
+            .entry(record.name.clone())
+            .or_default()
+            .insert(IpAddr::V4(record.value));
+    }
+    for (name, expected) in expected_by_name {
+        match lookup(&name) {
             Ok(addresses) => {
                 let actual = addresses.into_iter().collect::<BTreeSet<_>>();
-                let expected = BTreeSet::from([IpAddr::V4(record.value)]);
                 if actual != expected {
                     failures.push(format!(
                         "{} expected {}, resolved {}",
-                        record.name,
-                        record.value,
+                        name,
+                        render_ip_set(&expected),
                         render_ip_set(&actual)
                     ));
                 } else {
-                    successes.push((record.name.clone(), record.value));
+                    successes.extend(expected.iter().filter_map(|address| match address {
+                        IpAddr::V4(address) => Some((name.clone(), *address)),
+                        IpAddr::V6(_) => None,
+                    }));
                 }
             }
-            Err(error) => failures.push(format!("{} lookup failed: {error}", record.name)),
+            Err(error) => failures.push(format!("{name} lookup failed: {error}")),
         }
     }
     (successes, failures)
@@ -543,11 +562,37 @@ mod tests {
             Ipv4Addr::new(163, 220, 236, 53),
         ];
         let records = build_records("hc.example.com", &addresses, 60);
-        assert_eq!(records.len(), 12);
+        assert_eq!(records.len(), 15);
         assert_eq!(records[0].name, "cloud-a.hc.example.com");
         assert_eq!(records[3].name, "turn-a.hc.example.com");
         assert_eq!(records[4].name, "cloud-b.hc.example.com");
         assert_eq!(records[11].name, "turn-c.hc.example.com");
+        assert_eq!(records[12].name, "hc.example.com");
+        assert_eq!(records[13].name, "hc.example.com");
+        assert_eq!(records[14].name, "hc.example.com");
+    }
+
+    #[test]
+    fn verifies_cluster_records_as_one_multi_address_rrset() {
+        let records = build_records(
+            "hc.example.com",
+            &[
+                Ipv4Addr::new(163, 220, 236, 51),
+                Ipv4Addr::new(163, 220, 236, 52),
+            ],
+            60,
+        );
+        let cluster_records = records
+            .into_iter()
+            .filter(|record| record.name == "hc.example.com")
+            .collect::<Vec<_>>();
+        let failures = verify_with(&cluster_records, |_| {
+            Ok(vec![
+                IpAddr::V4(Ipv4Addr::new(163, 220, 236, 52)),
+                IpAddr::V4(Ipv4Addr::new(163, 220, 236, 51)),
+            ])
+        });
+        assert!(failures.is_empty());
     }
 
     #[test]

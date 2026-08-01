@@ -53,7 +53,7 @@ impl Store {
         if let Some(user) = lookup_user_by_email(&mut transaction, input.email).await? {
             transaction.commit().await?;
             return self
-                .session_user(user.user.id)
+                .session_user(user.id)
                 .await?
                 .ok_or(StoreError::Invariant(
                     "bootstrap user exists without an organization membership",
@@ -116,7 +116,7 @@ impl Store {
         let row = sqlx::query_as::<_, UserRow>(
             "SELECT id, email, display_name, password_hash, status, created_at
              FROM users
-             WHERE lower(email) = lower($1)",
+             WHERE lower(email) = lower($1) AND password_hash IS NOT NULL",
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -273,6 +273,106 @@ impl Store {
             ))
     }
 
+    pub async fn find_or_create_oidc_user(
+        &self,
+        input: OidcUser<'_>,
+    ) -> Result<SessionUser, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        let lock_key = format!(
+            "heterocloud-oidc:{}:{}:{}",
+            input.issuer.len(),
+            input.issuer,
+            input.subject
+        );
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(lock_key)
+            .execute(&mut *transaction)
+            .await?;
+
+        let existing_user_id = sqlx::query_scalar::<_, Uuid>(
+            "SELECT user_id
+             FROM user_external_identities
+             WHERE issuer = $1 AND subject = $2",
+        )
+        .bind(input.issuer)
+        .bind(input.subject)
+        .fetch_optional(&mut *transaction)
+        .await?;
+        if let Some(user_id) = existing_user_id {
+            transaction.commit().await?;
+            return self
+                .session_user(UserId(user_id))
+                .await?
+                .ok_or(StoreError::Invariant(
+                    "OIDC identity exists without a complete user membership",
+                ));
+        }
+
+        if lookup_user_by_email(&mut transaction, input.email)
+            .await?
+            .is_some()
+        {
+            return Err(StoreError::AlreadyExists);
+        }
+
+        let user_id = UserId::new();
+        let organization_id = OrganizationId::new();
+        let principal_id = PrincipalId::new();
+        let organization_slug = format!("user-{}", user_id.0.simple());
+        sqlx::query(
+            "INSERT INTO users (id, email, display_name, password_hash, status)
+             VALUES ($1, lower($2), $3, NULL, 'active')",
+        )
+        .bind(user_id.0)
+        .bind(input.email)
+        .bind(input.display_name)
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "INSERT INTO user_external_identities (issuer, subject, user_id)
+             VALUES ($1, $2, $3)",
+        )
+        .bind(input.issuer)
+        .bind(input.subject)
+        .bind(user_id.0)
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query("INSERT INTO organizations (id, slug, name) VALUES ($1, $2, $3)")
+            .bind(organization_id.0)
+            .bind(organization_slug)
+            .bind(input.display_name)
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query(
+            "INSERT INTO principals
+                (id, organization_id, kind, name, user_id, enabled)
+             VALUES ($1, $2, 'user', $3, $4, true)",
+        )
+        .bind(principal_id.0)
+        .bind(organization_id.0)
+        .bind(input.display_name)
+        .bind(user_id.0)
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "INSERT INTO organization_memberships
+                (organization_id, user_id, principal_id, role)
+             VALUES ($1, $2, $3, 'owner')",
+        )
+        .bind(organization_id.0)
+        .bind(user_id.0)
+        .bind(principal_id.0)
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+
+        self.session_user(user_id)
+            .await?
+            .ok_or(StoreError::Invariant(
+                "OIDC registration transaction did not produce a session user",
+            ))
+    }
+
     pub async fn session_user_by_token_hash(
         &self,
         token_hash: &[u8; 32],
@@ -308,7 +408,7 @@ impl Store {
         .bind(user_id.0)
         .fetch_optional(&self.pool)
         .await?
-        .map(PasswordUser::try_from)
+        .map(user_from_row)
         .transpose()?;
         let Some(user) = user else {
             return Ok(None);
@@ -327,10 +427,7 @@ impl Store {
         .into_iter()
         .map(Membership::try_from)
         .collect::<Result<Vec<_>, _>>()?;
-        Ok(Some(SessionUser {
-            user: user.user,
-            memberships,
-        }))
+        Ok(Some(SessionUser { user, memberships }))
     }
 
     pub async fn authorization_context(
@@ -860,7 +957,7 @@ impl Store {
 async fn lookup_user_by_email(
     transaction: &mut Transaction<'_, Postgres>,
     email: &str,
-) -> Result<Option<PasswordUser>, StoreError> {
+) -> Result<Option<User>, StoreError> {
     sqlx::query_as::<_, UserRow>(
         "SELECT id, email, display_name, password_hash, status, created_at
          FROM users WHERE lower(email) = lower($1)",
@@ -868,7 +965,7 @@ async fn lookup_user_by_email(
     .bind(email)
     .fetch_optional(&mut **transaction)
     .await?
-    .map(PasswordUser::try_from)
+    .map(user_from_row)
     .transpose()
 }
 
@@ -885,6 +982,13 @@ pub struct RegisterWithInvitation<'a> {
     pub email: &'a str,
     pub display_name: &'a str,
     pub password_hash: &'a str,
+}
+
+pub struct OidcUser<'a> {
+    pub issuer: &'a str,
+    pub subject: &'a str,
+    pub email: &'a str,
+    pub display_name: &'a str,
 }
 
 #[derive(Clone, Debug)]
@@ -978,7 +1082,7 @@ struct UserRow {
     id: Uuid,
     email: String,
     display_name: String,
-    password_hash: String,
+    password_hash: Option<String>,
     status: String,
     created_at: DateTime<Utc>,
 }
@@ -987,22 +1091,30 @@ impl TryFrom<UserRow> for PasswordUser {
     type Error = StoreError;
 
     fn try_from(row: UserRow) -> Result<Self, Self::Error> {
-        let status = match row.status.as_str() {
-            "active" => UserStatus::Active,
-            "suspended" => UserStatus::Suspended,
-            _ => return Err(StoreError::Invariant("unknown user status")),
-        };
+        let password_hash = row
+            .password_hash
+            .clone()
+            .ok_or(StoreError::Invariant("password user has no password hash"))?;
         Ok(Self {
-            user: User {
-                id: UserId(row.id),
-                email: row.email,
-                display_name: row.display_name,
-                status,
-                created_at: row.created_at,
-            },
-            password_hash: row.password_hash,
+            user: user_from_row(row)?,
+            password_hash,
         })
     }
+}
+
+fn user_from_row(row: UserRow) -> Result<User, StoreError> {
+    let status = match row.status.as_str() {
+        "active" => UserStatus::Active,
+        "suspended" => UserStatus::Suspended,
+        _ => return Err(StoreError::Invariant("unknown user status")),
+    };
+    Ok(User {
+        id: UserId(row.id),
+        email: row.email,
+        display_name: row.display_name,
+        status,
+        created_at: row.created_at,
+    })
 }
 
 #[derive(sqlx::FromRow)]

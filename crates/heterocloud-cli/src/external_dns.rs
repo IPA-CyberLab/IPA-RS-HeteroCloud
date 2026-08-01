@@ -57,6 +57,10 @@ pub struct ReconcileArgs {
     )]
     pub provider_args: Vec<String>,
 
+    /// Provider-specific NAME=VALUE property applied only to the canonical console and identity records.
+    #[arg(long = "http-edge-property", value_name = "NAME=VALUE")]
+    pub http_edge_properties: Vec<String>,
+
     /// Additional non-secret Helm values for a webhook or provider integration.
     #[arg(long = "provider-values", value_name = "PATH")]
     pub provider_values: Vec<PathBuf>,
@@ -130,6 +134,7 @@ struct SecretCredential {
 struct ReconcilePlan {
     domain: String,
     records: Vec<super::DnsRecord>,
+    verification_records: Vec<super::DnsRecord>,
     local_credentials: Vec<LocalCredential>,
     helm_values: Value,
     controller_kubeconfig: Option<Value>,
@@ -167,7 +172,7 @@ pub fn reconcile(args: ReconcileArgs) -> Result<(), CliError> {
         );
         return Ok(());
     }
-    wait_for_dns(&plan.records, args.timeout_seconds)?;
+    wait_for_dns(&plan.verification_records, args.timeout_seconds)?;
     println!("ExternalDNS converged all records for {}.", plan.domain);
     Ok(())
 }
@@ -180,6 +185,7 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
     validate_kubernetes_name(&args.endpoint_name, "DNSEndpoint name")?;
     validate_chart_version(&args.chart_version)?;
     validate_provider_args(&args.provider_args)?;
+    let http_edge_properties = parse_provider_properties(&args.http_edge_properties)?;
     validate_values_files(&args.provider_values)?;
     let node_selector = parse_node_selectors(&args.controller_node_selectors)?;
     let dns_policy = args
@@ -195,6 +201,15 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
 
     let (domain, addresses) = resolve_source(&args.source)?;
     let records = build_records(&domain, &addresses, args.ttl);
+    let verification_records = if http_edge_properties.is_empty() {
+        records.clone()
+    } else {
+        records
+            .iter()
+            .filter(|record| record.name != domain)
+            .cloned()
+            .collect()
+    };
     let local_credentials = parse_local_credentials(&args.credential_files)?;
     let secret_credentials = parse_secret_credentials(&args.credential_secrets)?;
     ensure_unique_environments(&local_credentials, &secret_credentials)?;
@@ -285,15 +300,26 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
             "readOnly": true
         }]);
     }
-    let endpoints = records
-        .iter()
-        .map(|record| {
-            json!({
-                "dnsName": record.name,
-                "recordTTL": record.ttl,
-                "recordType": record.record_type,
-                "targets": [record.value.to_string()]
-            })
+    let mut grouped_targets = BTreeMap::<(String, &'static str, u32), BTreeSet<String>>::new();
+    for record in &records {
+        grouped_targets
+            .entry((record.name.clone(), record.record_type, record.ttl))
+            .or_default()
+            .insert(record.value.to_string());
+    }
+    let endpoints = grouped_targets
+        .into_iter()
+        .map(|((name, record_type, ttl), targets)| {
+            let mut endpoint = json!({
+                "dnsName": name,
+                "recordTTL": ttl,
+                "recordType": record_type,
+                "targets": targets
+            });
+            if !http_edge_properties.is_empty() && endpoint["dnsName"] == domain {
+                endpoint["providerSpecific"] = json!(http_edge_properties);
+            }
+            endpoint
         })
         .collect::<Vec<_>>();
     let endpoint = json!({
@@ -314,6 +340,7 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
     Ok(ReconcilePlan {
         domain,
         records,
+        verification_records,
         local_credentials,
         helm_values,
         controller_kubeconfig,
@@ -455,6 +482,37 @@ fn parse_node_selectors(values: &[String]) -> Result<BTreeMap<String, String>, C
         }
     }
     Ok(selectors)
+}
+
+fn parse_provider_properties(values: &[String]) -> Result<Vec<Value>, CliError> {
+    let mut properties = BTreeMap::new();
+    for value in values {
+        let Some((name, property_value)) = value.split_once('=') else {
+            return Err(CliError::InvalidValue {
+                kind: "HTTP edge provider property",
+                value: value.clone(),
+            });
+        };
+        let valid_name = !name.is_empty()
+            && name.len() <= 253
+            && name.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'/' | b'-' | b'_')
+            });
+        let valid_value = !property_value.is_empty()
+            && property_value.len() <= 1024
+            && !property_value.chars().any(char::is_control);
+        if !valid_name || !valid_value || properties.contains_key(name) {
+            return Err(CliError::InvalidValue {
+                kind: "HTTP edge provider property",
+                value: value.clone(),
+            });
+        }
+        properties.insert(name.to_owned(), property_value.to_owned());
+    }
+    Ok(properties
+        .into_iter()
+        .map(|(name, value)| json!({"name": name, "value": value}))
+        .collect())
 }
 
 fn valid_label_key(value: &str) -> bool {
@@ -1055,6 +1113,7 @@ mod tests {
             credential_files: Vec::new(),
             credential_secrets: Vec::new(),
             provider_args: Vec::new(),
+            http_edge_properties: Vec::new(),
             provider_values: Vec::new(),
             controller_kube_api_server: None,
             controller_node_selectors: Vec::new(),
@@ -1090,15 +1149,48 @@ mod tests {
         let endpoints = plan.endpoint["spec"]["endpoints"]
             .as_array()
             .ok_or("endpoints must be an array")?;
-        assert_eq!(endpoints.len(), 12);
+        assert_eq!(endpoints.len(), 13);
         assert_eq!(endpoints[0]["dnsName"], "cloud-a.heterocloud.example.com");
-        assert_eq!(endpoints[11]["dnsName"], "turn-c.heterocloud.example.com");
+        assert_eq!(endpoints[6]["dnsName"], "heterocloud.example.com");
+        assert_eq!(
+            endpoints[6]["targets"],
+            json!(["163.220.236.51", "163.220.236.52", "163.220.236.53"])
+        );
+        assert_eq!(endpoints[12]["dnsName"], "turn-c.heterocloud.example.com");
         assert_eq!(
             plan.helm_values["labelFilter"],
             "app.kubernetes.io/managed-by=heterocloud"
         );
         assert_eq!(plan.helm_values["policy"], "sync");
         assert_eq!(plan.helm_values["managedRecordTypes"], json!(["A"]));
+        Ok(())
+    }
+
+    #[test]
+    fn http_edge_properties_apply_only_to_cluster_frontends()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut args = base_args("cloudflare");
+        args.http_edge_properties =
+            vec!["external-dns.alpha.kubernetes.io/cloudflare-proxied=true".into()];
+        let plan = build_plan(&args)?;
+        let endpoints = plan.endpoint["spec"]["endpoints"]
+            .as_array()
+            .ok_or("endpoints must be an array")?;
+        assert_eq!(plan.verification_records.len(), 12);
+        assert!(
+            endpoints
+                .iter()
+                .filter(|endpoint| endpoint.get("providerSpecific").is_some())
+                .all(|endpoint| { endpoint["dnsName"] == "heterocloud.example.com" })
+        );
+        assert_eq!(
+            endpoints[6]["providerSpecific"],
+            json!([{
+                "name": "external-dns.alpha.kubernetes.io/cloudflare-proxied",
+                "value": "true"
+            }])
+        );
+        assert!(endpoints[0].get("providerSpecific").is_none());
         Ok(())
     }
 

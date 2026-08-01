@@ -1,5 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Activity, Eye, EyeOff, LoaderCircle, LockKeyhole } from "lucide-react";
+import {
+  Activity,
+  Eye,
+  EyeOff,
+  KeyRound,
+  LoaderCircle,
+  LockKeyhole,
+  UserPlus,
+} from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { FormError } from "@/components/shared/form-error";
@@ -91,6 +99,32 @@ export function LoginPage() {
                 セッション確認APIに接続できません。ログイン時に再試行します。
               </div>
             ) : null}
+
+            <div className="space-y-3">
+              <Button asChild className="w-full" size="lg">
+                <a href="/api/v1/auth/oidc/start">
+                  <KeyRound />
+                  Keycloakでログイン
+                </a>
+              </Button>
+              <Button
+                asChild
+                className="w-full"
+                size="lg"
+                variant="secondary"
+              >
+                <a href="/api/v1/auth/oidc/start?intent=register">
+                  <UserPlus />
+                  アカウントを作成
+                </a>
+              </Button>
+            </div>
+
+            <div className="my-6 flex items-center gap-3" aria-hidden="true">
+              <span className="h-px flex-1 bg-zinc-200" />
+              <span className="text-xs text-zinc-500">ローカルアカウント</span>
+              <span className="h-px flex-1 bg-zinc-200" />
+            </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
               <div className="space-y-2">

@@ -16,6 +16,12 @@ secureCookie: true
 sessionTtlSeconds: 43200
 databaseMaxConnections: 20
 
+oidc:
+  enabled: false
+  issuerUrl: ""
+  clientId: ""
+  publicCallbackUrl: ""
+
 flowAccess:
   issuer: heterocloud
   audience: heterocloud-flow-data
@@ -40,6 +46,8 @@ secrets:
   tlsSecretName: heterocloud-tls
   flowAccessSecretName: heterocloud-flow-access
   flowAccessSecretKey: hmac-secret
+  oidcSecretName: heterocloud-oidc
+  oidcClientSecretKey: client-secret
   providerSigningSecretName: heterocloud-provider-signing
   providerSigningKeyKey: ed25519-private.pem
 
@@ -77,6 +85,10 @@ networkPolicy:
   providerCidrs:
     - 10.96.0.0/12
   providerPort: 8080
+  oidcCidrs:
+    - 0.0.0.0/0
+    - ::/0
+  oidcPort: 443
 
 nodeSelector: {}
 tolerations: []

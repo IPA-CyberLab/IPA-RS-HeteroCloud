@@ -17,6 +17,8 @@ pub enum ApiError {
     Forbidden,
     #[error("internal server error")]
     Internal,
+    #[error("identity provider is unavailable")]
+    IdentityProviderUnavailable,
     #[error("resource not found")]
     NotFound,
     #[error("service instance is not ready")]
@@ -71,6 +73,11 @@ impl IntoResponse for ApiError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
                 "The request could not be completed.",
+            ),
+            Self::IdentityProviderUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "identity_provider_unavailable",
+                "The configured identity provider is temporarily unavailable.",
             ),
             Self::NotFound => (
                 StatusCode::NOT_FOUND,

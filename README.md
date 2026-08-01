@@ -12,6 +12,9 @@ selection, packet forwarding, LiveKit, TURN, or matchmaking.
 ## Current vertical slice
 
 - Invite/bootstrap-only local accounts with Argon2id password hashes.
+- Optional Keycloak OIDC login using Authorization Code with PKCE. Keycloak may
+  provide self-registration without exposing a HeteroCloud anonymous register
+  endpoint.
 - Server-side sessions using an opaque 256-bit cookie and database-backed
   revocation.
 - Origin and CSRF validation on every cookie-authenticated mutation.
@@ -76,14 +79,19 @@ heterocloud dns reconcile \
   --provider cloudflare \
   --credential-file \
     CF_API_TOKEN="$HOME/.config/heterocloud/cloudflare-token" \
+  --http-edge-property \
+    external-dns.alpha.kubernetes.io/cloudflare-proxied=true \
   --kubeconfig /path/to/admin.conf
 ```
 
-This creates `cloud-a/b/c`, `flow-a/b/c`, `rtc-a/b/c`, and `turn-a/b/c` as
-DNS-only A records. Cloudflare proxying is deliberately not enabled because
-the RTC and TURN endpoints are not ordinary HTTP traffic. ExternalDNS uses a
-TXT ownership registry and is restricted to the requested domain and
-HeteroCloud-labelled resources.
+This creates the canonical `heterocloud.mizuame.app` console and identity
+endpoint, plus `cloud-a/b/c`, `flow-a/b/c`, `rtc-a/b/c`, and `turn-a/b/c` as
+DNS A records. In this Cloudflare deployment only the canonical console and
+identity endpoints are proxied; RTC, TURN, and node-specific records remain
+DNS-only because they are not ordinary HTTP traffic. Other providers can use
+their equivalent `--http-edge-property` without changing the desired record
+set. ExternalDNS uses a TXT ownership registry and is restricted to the
+requested domain and HeteroCloud-labelled resources.
 
 Provider authentication may instead use workload identity or a Secret that
 already exists in the controller namespace:
@@ -200,3 +208,39 @@ cargo run -p heterocloud-api -- \
 
 Bootstrap configuration is accepted only as a complete email/password-file
 pair. Remove those settings after the first successful deployment.
+
+## Keycloak OIDC
+
+OIDC is optional. When enabled, configure all four settings together. The
+client secret is accepted only through a file:
+
+```sh
+printf '%s' 'replace-with-keycloak-client-secret' \
+  > /tmp/heterocloud-oidc-client-secret
+chmod 600 /tmp/heterocloud-oidc-client-secret
+
+cargo run -p heterocloud-api -- \
+  --database-url-file /tmp/heterocloud-database-url \
+  --csrf-key-file /tmp/heterocloud-csrf-key \
+  --flow-access-secret-file /tmp/heterocloud-flow-access-secret \
+  --flow-public-endpoints https://flow-a.example.test \
+  --public-origin https://heterocloud.example.test \
+  --oidc-issuer-url https://id.example.test/realms/heterocloud \
+  --oidc-client-id heterocloud-web \
+  --oidc-client-secret-file /tmp/heterocloud-oidc-client-secret \
+  --oidc-public-callback-url \
+    https://heterocloud.example.test/api/v1/auth/oidc/callback
+```
+
+The equivalent environment variables are
+`HETEROCLOUD_OIDC_ISSUER_URL`, `HETEROCLOUD_OIDC_CLIENT_ID`,
+`HETEROCLOUD_OIDC_CLIENT_SECRET_FILE`, and
+`HETEROCLOUD_OIDC_PUBLIC_CALLBACK_URL`. Configure the Keycloak client as a
+confidential OpenID Connect client with Standard Flow enabled and the exact
+callback URL above as a valid redirect URI. Realm self-registration remains a
+Keycloak policy decision.
+
+The browser starts login at `GET /api/v1/auth/oidc/start`. A successful
+callback creates only the user, a personal organization, and its owner
+membership, then issues the existing HeteroCloud server session and redirects
+to `/`. Projects, services, and quota are never created by registration.

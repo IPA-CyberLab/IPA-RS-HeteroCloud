@@ -54,16 +54,45 @@ function unauthenticatedSession() {
   );
 }
 
-describe("招待限定の認証画面", () => {
-  it("通常ログイン画面に登録導線を表示しない", async () => {
+describe("認証画面", () => {
+  it("Keycloakのログインと登録を主導線として表示し、ローカルログインも維持する", async () => {
     unauthenticatedSession();
     renderRoute("/login", <LoginPage />);
 
     expect(
       await screen.findByRole("heading", { name: "ログイン" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Keycloakでログイン" }),
+    ).toHaveAttribute("href", "/api/v1/auth/oidc/start");
+    expect(
+      screen.getByRole("link", { name: "アカウントを作成" }),
+    ).toHaveAttribute(
+      "href",
+      "/api/v1/auth/oidc/start?intent=register",
+    );
+    expect(screen.getByLabelText("メールアドレス")).toBeInTheDocument();
+    expect(screen.getByLabelText("パスワード")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ログイン" })).toBeInTheDocument();
     expect(document.querySelector('a[href="/register"]')).not.toBeInTheDocument();
-    expect(screen.queryByText("アカウントを登録")).not.toBeInTheDocument();
+  });
+
+  it("現在URLの任意クエリをOIDC開始URLへ渡さない", async () => {
+    unauthenticatedSession();
+    renderRoute(
+      "/login?redirect_uri=https://attacker.example&intent=register",
+      <LoginPage />,
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Keycloakでログイン" }),
+    ).toHaveAttribute("href", "/api/v1/auth/oidc/start");
+    expect(
+      screen.getByRole("link", { name: "アカウントを作成" }),
+    ).toHaveAttribute(
+      "href",
+      "/api/v1/auth/oidc/start?intent=register",
+    );
   });
 
   it("招待トークンがなければ登録フォームを表示しない", () => {

@@ -1,10 +1,17 @@
 replicaCount: 3
 hostNetwork: true
 
-publicOrigin: https://cloud-a.heterocloud.mizuame.app
+publicOrigin: https://heterocloud.mizuame.app
 additionalOrigins:
+  - https://cloud-a.heterocloud.mizuame.app
   - https://cloud-b.heterocloud.mizuame.app
   - https://cloud-c.heterocloud.mizuame.app
+
+oidc:
+  enabled: true
+  issuerUrl: https://heterocloud.mizuame.app/id/realms/heterocloud
+  clientId: heterocloud-web
+  publicCallbackUrl: https://heterocloud.mizuame.app/api/v1/auth/oidc/callback
 
 flowAccess:
   issuer: heterocloud

@@ -8,7 +8,7 @@ use chrono::{Duration, Utc};
 use heterocloud_api::flow_access::FlowAccessSigner;
 use heterocloud_api::{app, config::RuntimeConfig, routes::AppState};
 use heterocloud_domain::OrganizationId;
-use heterocloud_store::{BootstrapAdmin, RegisterWithInvitation, Store, StoreError};
+use heterocloud_store::{BootstrapAdmin, OidcUser, RegisterWithInvitation, Store, StoreError};
 use secrecy::SecretString;
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
@@ -118,6 +118,66 @@ async fn registration_checks_invitation_before_hashing_and_consumes_it_once()
             .await?;
     assert_eq!(used_count, 1);
 
+    let oidc_user = store
+        .find_or_create_oidc_user(OidcUser {
+            issuer: "https://idp.example.test/realms/heterocloud",
+            subject: "oidc-subject-1",
+            email: "oidc-user@example.test",
+            display_name: "OIDC User",
+        })
+        .await?;
+    assert_eq!(oidc_user.memberships.len(), 1);
+    assert_eq!(oidc_user.memberships[0].role, "owner");
+    assert!(
+        store
+            .list_projects(oidc_user.memberships[0].organization_id)
+            .await?
+            .is_empty()
+    );
+    assert!(
+        store
+            .password_user_by_email("oidc-user@example.test")
+            .await?
+            .is_none()
+    );
+    let returning_oidc_user = store
+        .find_or_create_oidc_user(OidcUser {
+            issuer: "https://idp.example.test/realms/heterocloud",
+            subject: "oidc-subject-1",
+            email: "changed-claim@example.test",
+            display_name: "Changed Claim",
+        })
+        .await?;
+    assert_eq!(returning_oidc_user.user.id, oidc_user.user.id);
+    assert_eq!(returning_oidc_user.user.email, "oidc-user@example.test");
+    assert!(matches!(
+        store
+            .find_or_create_oidc_user(OidcUser {
+                issuer: "https://idp.example.test/realms/other",
+                subject: "different-subject",
+                email: "oidc-user@example.test",
+                display_name: "Must Not Link",
+            })
+            .await,
+        Err(StoreError::AlreadyExists)
+    ));
+    assert!(matches!(
+        store
+            .find_or_create_oidc_user(OidcUser {
+                issuer: "https://idp.example.test/realms/heterocloud",
+                subject: "local-email-subject",
+                email: "api-owner@example.test",
+                display_name: "Must Not Link Local",
+            })
+            .await,
+        Err(StoreError::AlreadyExists)
+    ));
+    let external_identity_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM user_external_identities")
+            .fetch_one(store.pool())
+            .await?;
+    assert_eq!(external_identity_count, 1);
+
     Ok(())
 }
 
@@ -158,6 +218,7 @@ async fn test_state() -> Result<Option<(Store, Arc<AppState>)>, Box<dyn Error>> 
                 SecretString::from("test-flow-access-secret-at-least-32-bytes"),
             )?,
             flow_public_endpoints: vec![Url::parse("http://flow.example.test")?],
+            oidc: None,
         },
         registration_limiter: Arc::new(Semaphore::new(2)),
     });

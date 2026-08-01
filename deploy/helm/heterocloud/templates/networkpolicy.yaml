@@ -42,6 +42,16 @@ spec:
       ports:
         - port: {{ .Values.networkPolicy.providerPort }}
           protocol: TCP
+    {{- if .Values.oidc.enabled }}
+    - to:
+        {{- range .Values.networkPolicy.oidcCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.networkPolicy.oidcPort }}
+          protocol: TCP
+    {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

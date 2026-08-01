@@ -10,7 +10,10 @@ use thiserror::Error;
 use tokio::fs;
 use url::Url;
 
-use crate::flow_access::{FlowAccessError, FlowAccessSigner};
+use crate::{
+    flow_access::{FlowAccessError, FlowAccessSigner},
+    oidc::{OidcConfig, OidcConfigError},
+};
 
 #[derive(Clone, Debug, Parser)]
 #[command(version, about = "HeteroCloud control-plane API")]
@@ -90,6 +93,18 @@ pub struct Config {
     #[arg(long, env = "HETEROCLOUD_TLS_KEY_FILE")]
     pub tls_key_file: Option<PathBuf>,
 
+    #[arg(long, env = "HETEROCLOUD_OIDC_ISSUER_URL")]
+    pub oidc_issuer_url: Option<Url>,
+
+    #[arg(long, env = "HETEROCLOUD_OIDC_CLIENT_ID")]
+    pub oidc_client_id: Option<String>,
+
+    #[arg(long, env = "HETEROCLOUD_OIDC_CLIENT_SECRET_FILE")]
+    pub oidc_client_secret_file: Option<PathBuf>,
+
+    #[arg(long, env = "HETEROCLOUD_OIDC_PUBLIC_CALLBACK_URL")]
+    pub oidc_public_callback_url: Option<Url>,
+
     #[arg(long, env = "HETEROCLOUD_BOOTSTRAP_EMAIL")]
     pub bootstrap_email: Option<String>,
 
@@ -127,6 +142,7 @@ pub struct RuntimeConfig {
     pub csrf_key: SecretString,
     pub flow_access_signer: FlowAccessSigner,
     pub flow_public_endpoints: Vec<Url>,
+    pub oidc: Option<OidcConfig>,
 }
 
 impl Config {
@@ -145,6 +161,16 @@ impl Config {
         let bootstrap_password = match &self.bootstrap_password_file {
             Some(path) => Some(read_secret(path).await?),
             None => None,
+        };
+        let oidc_client_secret = match (
+            &self.oidc_issuer_url,
+            &self.oidc_client_id,
+            &self.oidc_client_secret_file,
+            &self.oidc_public_callback_url,
+        ) {
+            (None, None, None, None) => None,
+            (Some(_), Some(_), Some(path), Some(_)) => Some(read_secret(path).await?),
+            _ => return Err(ConfigError::IncompleteOidc),
         };
         if self.bootstrap_email.is_some() != bootstrap_password.is_some() {
             return Err(ConfigError::IncompleteBootstrap);
@@ -167,6 +193,7 @@ impl Config {
             csrf_key,
             flow_access_secret,
             bootstrap_password,
+            oidc_client_secret,
         })
     }
 
@@ -174,6 +201,7 @@ impl Config {
         &self,
         csrf_key: SecretString,
         flow_access_secret: SecretString,
+        oidc_client_secret: Option<SecretString>,
     ) -> Result<RuntimeConfig, ConfigError> {
         validate_flow_public_endpoints(&self.flow_public_endpoints, self.secure_cookie)?;
         let mut allowed_origins = vec![self.public_origin.origin().ascii_serialization()];
@@ -189,6 +217,24 @@ impl Config {
                 flow_public_endpoints.push(endpoint.clone());
             }
         }
+        let oidc = match (
+            &self.oidc_issuer_url,
+            &self.oidc_client_id,
+            oidc_client_secret,
+            &self.oidc_public_callback_url,
+        ) {
+            (None, None, None, None) => None,
+            (Some(issuer), Some(client_id), Some(client_secret), Some(callback)) => {
+                Some(OidcConfig::new(
+                    issuer.clone(),
+                    client_id.clone(),
+                    client_secret,
+                    callback.clone(),
+                    !self.secure_cookie,
+                )?)
+            }
+            _ => return Err(ConfigError::IncompleteOidc),
+        };
         Ok(RuntimeConfig {
             public_origin: self.public_origin.clone(),
             allowed_origins,
@@ -201,6 +247,7 @@ impl Config {
                 flow_access_secret,
             )?,
             flow_public_endpoints,
+            oidc,
         })
     }
 }
@@ -210,6 +257,7 @@ pub struct LoadedSecrets {
     pub csrf_key: SecretString,
     pub flow_access_secret: SecretString,
     pub bootstrap_password: Option<SecretString>,
+    pub oidc_client_secret: Option<SecretString>,
 }
 
 async fn read_secret(path: &Path) -> Result<SecretString, ConfigError> {
@@ -280,8 +328,14 @@ pub enum ConfigError {
     IncompleteBootstrap,
     #[error("TLS certificate and key files must be configured together")]
     IncompleteTls,
+    #[error(
+        "OIDC issuer, client ID, client secret file, and public callback URL must be configured together"
+    )]
+    IncompleteOidc,
     #[error(transparent)]
     FlowAccess(#[from] FlowAccessError),
+    #[error(transparent)]
+    Oidc(#[from] OidcConfigError),
     #[error("Flow public endpoints must be absolute HTTP(S) URLs")]
     InvalidFlowPublicEndpoint,
     #[error("between one and sixteen Flow public endpoints are required")]

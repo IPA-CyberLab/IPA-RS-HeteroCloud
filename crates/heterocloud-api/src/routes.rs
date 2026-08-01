@@ -8,7 +8,7 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, header},
-    response::IntoResponse,
+    response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
@@ -23,7 +23,7 @@ use heterocloud_domain::{
 };
 use heterocloud_iam::{AuthorizationRequest, Decision, authorize, semantics_digest};
 use heterocloud_store::{
-    AuditEvent, AuthorizationContext, RegisterWithInvitation, SessionUser, Store,
+    AuditEvent, AuthorizationContext, OidcUser, RegisterWithInvitation, SessionUser, Store,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,10 @@ use crate::{
     config::RuntimeConfig,
     error::ApiError,
     flow_access::{FlowAccessInput, SignedFlowAccessContext},
+    oidc::{
+        OIDC_TRANSACTION_COOKIE, OidcCallbackQuery, OidcError, OidcLoginIntent,
+        clear_transaction_cookie,
+    },
 };
 
 const SESSION_COOKIE: &str = "hc_session";
@@ -55,6 +59,8 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route("/health/ready", get(ready))
         .route("/auth/login", post(login))
         .route("/auth/register", post(register))
+        .route("/auth/oidc/start", get(oidc_start))
+        .route("/auth/oidc/callback", get(oidc_callback))
         .route("/auth/session", get(session))
         .route("/auth/logout", post(logout))
         .route("/organizations", get(list_organizations))
@@ -214,6 +220,78 @@ async fn register(
         .await
         .map_err(ApiError::from_store)?;
     issue_session(&state, jar, session_user).await
+}
+
+async fn oidc_start(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<OidcStartQuery>,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, ApiError> {
+    let oidc = state.config.oidc.as_ref().ok_or(ApiError::NotFound)?;
+    let start = oidc
+        .begin_login(
+            &state.config.csrf_key,
+            state.config.secure_cookie,
+            query.intent.unwrap_or(OidcLoginIntent::Authenticate),
+        )
+        .await
+        .map_err(oidc_api_error)?;
+    Ok((
+        jar.add(start.transaction_cookie),
+        Redirect::to(start.authorization_url.as_str()),
+    ))
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OidcStartQuery {
+    intent: Option<OidcLoginIntent>,
+}
+
+async fn oidc_callback(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<OidcCallbackQuery>,
+    jar: CookieJar,
+) -> Response {
+    let transaction_cookie = jar
+        .get(OIDC_TRANSACTION_COOKIE)
+        .map(|cookie| cookie.value().to_owned());
+    let jar = jar.remove(clear_transaction_cookie(state.config.secure_cookie));
+    let result = async {
+        let oidc = state.config.oidc.as_ref().ok_or(ApiError::NotFound)?;
+        let identity = oidc
+            .complete_login(
+                &query,
+                transaction_cookie.as_deref(),
+                &state.config.csrf_key,
+            )
+            .await
+            .map_err(oidc_api_error)?;
+        if !EmailAddress::is_valid(&identity.email) {
+            return Err(ApiError::Unauthorized);
+        }
+        validate_name(&identity.display_name)?;
+        let session_user = state
+            .store
+            .find_or_create_oidc_user(OidcUser {
+                issuer: &identity.issuer,
+                subject: &identity.subject,
+                email: &identity.email,
+                display_name: &identity.display_name,
+            })
+            .await
+            .map_err(ApiError::from_store)?;
+        if session_user.user.status != UserStatus::Active {
+            return Err(ApiError::Unauthorized);
+        }
+        let (cookie, _) = create_session_cookie(&state, session_user.user.id).await?;
+        Ok::<_, ApiError>((jar.clone().add(cookie), Redirect::to("/")).into_response())
+    }
+    .await;
+    match result {
+        Ok(response) => response,
+        Err(error) => (jar, error).into_response(),
+    }
 }
 
 async fn session(
@@ -925,13 +1003,24 @@ async fn issue_session(
     jar: CookieJar,
     session_user: SessionUser,
 ) -> Result<(CookieJar, Json<SessionResponse>), ApiError> {
+    let (cookie, csrf) = create_session_cookie(state, session_user.user.id).await?;
+    Ok((
+        jar.add(cookie),
+        Json(SessionResponse::new(session_user, csrf)),
+    ))
+}
+
+async fn create_session_cookie(
+    state: &AppState,
+    user_id: heterocloud_domain::UserId,
+) -> Result<(Cookie<'static>, SecretString), ApiError> {
     let token = generate_token().map_err(|_| ApiError::Internal)?;
     let digest = token_hash(token.expose_secret());
     let expires_at = Utc::now()
         + ChronoDuration::from_std(state.config.session_ttl).map_err(|_| ApiError::Internal)?;
     state
         .store
-        .create_session(session_user.user.id, &digest, expires_at)
+        .create_session(user_id, &digest, expires_at)
         .await
         .map_err(ApiError::from_store)?;
     let csrf = csrf_token(token.expose_secret(), &state.config.csrf_key)
@@ -941,10 +1030,18 @@ async fn issue_session(
         state.config.secure_cookie,
         state.config.session_ttl.as_secs(),
     );
-    Ok((
-        jar.add(cookie),
-        Json(SessionResponse::new(session_user, csrf)),
-    ))
+    Ok((cookie, csrf))
+}
+
+fn oidc_api_error(error: OidcError) -> ApiError {
+    match error {
+        OidcError::InvalidRequest => {
+            ApiError::BadRequest("Invalid or expired OIDC login transaction.".into())
+        }
+        OidcError::AuthorizationRejected | OidcError::InvalidToken => ApiError::Unauthorized,
+        OidcError::ProviderUnavailable => ApiError::IdentityProviderUnavailable,
+        OidcError::Internal => ApiError::Internal,
+    }
 }
 
 async fn authenticated_session(

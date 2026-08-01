@@ -47,7 +47,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    let runtime = config.runtime(secrets.csrf_key, secrets.flow_access_secret)?;
+    let runtime = config.runtime(
+        secrets.csrf_key,
+        secrets.flow_access_secret,
+        secrets.oidc_client_secret,
+    )?;
     let state = Arc::new(AppState {
         store,
         config: runtime,

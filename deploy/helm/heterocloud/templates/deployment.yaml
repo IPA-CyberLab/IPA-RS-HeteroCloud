@@ -79,6 +79,12 @@ spec:
             - --secure-cookie={{ .Values.secureCookie }}
             - --session-ttl-seconds={{ .Values.sessionTtlSeconds }}
             - --database-max-connections={{ .Values.databaseMaxConnections }}
+            {{- if .Values.oidc.enabled }}
+            - --oidc-issuer-url={{ required "oidc.issuerUrl is required" .Values.oidc.issuerUrl }}
+            - --oidc-client-id={{ required "oidc.clientId is required" .Values.oidc.clientId }}
+            - --oidc-client-secret-file=/var/run/secrets/oidc/client-secret
+            - --oidc-public-callback-url={{ required "oidc.publicCallbackUrl is required" .Values.oidc.publicCallbackUrl }}
+            {{- end }}
             - --console-dir=/opt/heterocloud/console
             - --tls-cert-file=/var/run/secrets/tls/tls.crt
             - --tls-key-file=/var/run/secrets/tls/tls.key
@@ -129,6 +135,11 @@ spec:
             - name: flow-access
               mountPath: /var/run/secrets/flow-access
               readOnly: true
+            {{- if .Values.oidc.enabled }}
+            - name: oidc
+              mountPath: /var/run/secrets/oidc
+              readOnly: true
+            {{- end }}
             - name: tmp
               mountPath: /tmp
       volumes:
@@ -156,6 +167,15 @@ spec:
             items:
               - key: {{ .Values.secrets.flowAccessSecretKey }}
                 path: hmac-secret
+        {{- if .Values.oidc.enabled }}
+        - name: oidc
+          secret:
+            secretName: {{ .Values.secrets.oidcSecretName }}
+            defaultMode: 0400
+            items:
+              - key: {{ .Values.secrets.oidcClientSecretKey }}
+                path: client-secret
+        {{- end }}
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi

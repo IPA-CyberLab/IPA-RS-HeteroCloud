@@ -1,3 +1,50 @@
+(heterocloud_frontend) {
+	@realm path /id/realms/heterocloud /id/realms/heterocloud/*
+	@resources path /resources/* /robots.txt
+
+	handle @realm {
+		uri strip_prefix /id
+		reverse_proxy http://127.0.0.1:18079 {
+			header_up Host {host}
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-Host {host}
+			header_up X-Forwarded-Port 443
+		}
+	}
+
+	handle @resources {
+		reverse_proxy http://127.0.0.1:18079 {
+			header_up Host {host}
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-Host {host}
+			header_up X-Forwarded-Port 443
+		}
+	}
+
+	handle {
+		reverse_proxy https://10.250.0.4:8443 https://10.250.0.5:8443 https://10.250.0.6:8443 {
+			lb_policy first
+			health_uri /api/v1/health/live
+			health_interval 5s
+			health_timeout 2s
+			fail_duration 10s
+			max_fails 2
+			transport http {
+				tls_insecure_skip_verify
+			}
+		}
+	}
+}
+
+http://heterocloud.mizuame.app {
+	import heterocloud_frontend
+}
+
+heterocloud.mizuame.app {
+	tls internal
+	import heterocloud_frontend
+}
+
 cloud-a.heterocloud.mizuame.app {
 	reverse_proxy https://10.250.0.4:8443 https://10.250.0.5:8443 https://10.250.0.6:8443 {
 		lb_policy first
