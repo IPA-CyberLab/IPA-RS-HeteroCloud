@@ -57,6 +57,8 @@ For automatic DNS, `dns reconcile` installs a pinned ExternalDNS controller
 and applies a provider-neutral `DNSEndpoint`. The provider is an adapter, so
 the same desired records work with Cloudflare, AWS, Google, RFC2136, or an
 ExternalDNS webhook without putting provider API calls in HeteroCloud.
+The command requires Helm 3, `kubectl`, and cluster permissions to manage a
+namespace, the ExternalDNS CRD, and its RBAC resources.
 
 For Cloudflare, create an API token limited to `Zone:Read` and `DNS:Edit` for
 the parent zone. Store it without a trailing newline in a private file; do not

@@ -342,7 +342,7 @@ fn canonical_credential_path(path: &Path) -> Result<PathBuf, CliError> {
     #[cfg(unix)]
     {
         let mode = metadata.permissions().mode() & 0o777;
-        if mode & 0o077 != 0 {
+        if !matches!(mode, 0o400 | 0o600) {
             return Err(CliError::UnsafeCredentialMode {
                 path: path.to_path_buf(),
                 mode,
@@ -762,9 +762,36 @@ fn wait_for_dns(records: &[super::DnsRecord], timeout_seconds: u64) -> Result<()
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
+    use std::{
+        net::Ipv4Addr,
+        sync::atomic::{AtomicU64, Ordering},
+    };
 
     use super::*;
+
+    static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    struct TemporaryCredential(PathBuf);
+
+    impl TemporaryCredential {
+        #[cfg(unix)]
+        fn create(contents: &str, mode: u32) -> io::Result<Self> {
+            let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "heterocloud-credential-test-{}-{sequence}",
+                std::process::id()
+            ));
+            fs::write(&path, contents)?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode))?;
+            Ok(Self(path))
+        }
+    }
+
+    impl Drop for TemporaryCredential {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
 
     fn base_args(provider: &str) -> ReconcileArgs {
         ReconcileArgs {
@@ -860,5 +887,46 @@ mod tests {
         malformed.provider = "cloudflare".into();
         malformed.provider_args = vec!["cloudflare-proxied".into()];
         assert!(build_plan(&malformed).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn credential_contents_never_enter_rendered_values() -> Result<(), Box<dyn std::error::Error>> {
+        let credential = TemporaryCredential::create("sensitive-test-token", 0o600)?;
+        let mut args = base_args("cloudflare");
+        args.credential_files = vec![format!("CF_API_TOKEN={}", credential.0.display())];
+
+        let plan = build_plan(&args)?;
+        let rendered = serde_json::to_string(&plan.helm_values)?;
+        assert!(!rendered.contains("sensitive-test-token"));
+        assert_eq!(
+            plan.helm_values["env"],
+            json!([{
+                "name": "CF_API_TOKEN",
+                "valueFrom": {"secretKeyRef": {
+                    "name": "heterocloud-dns-provider",
+                    "key": "CF_API_TOKEN"
+                }}
+            }])
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn credential_file_mode_must_be_read_write_or_read_only_for_owner()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for mode in [0o400, 0o600] {
+            let credential = TemporaryCredential::create("test-token", mode)?;
+            assert!(canonical_credential_path(&credential.0).is_ok());
+        }
+        for mode in [0o200, 0o700, 0o640, 0o604] {
+            let credential = TemporaryCredential::create("test-token", mode)?;
+            assert!(matches!(
+                canonical_credential_path(&credential.0),
+                Err(CliError::UnsafeCredentialMode { .. })
+            ));
+        }
+        Ok(())
     }
 }
