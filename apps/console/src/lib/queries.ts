@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
+import type { RealtimeMetricsRange } from "@/lib/api-types";
 
 export const organizationsQueryOptions = queryOptions({
   queryKey: ["organizations"],
@@ -67,6 +68,38 @@ export function realtimeServiceMetricsQueryOptions(
     ],
     queryFn: ({ signal }) =>
       api.realtime.services.metrics(organizationId, serviceId, signal),
+    refetchInterval: 15_000,
+    staleTime: 5_000,
+  });
+}
+
+export function realtimeServiceMetricHistoryQueryOptions(
+  organizationId: string,
+  projectId: string,
+  serviceId: string,
+  range: RealtimeMetricsRange,
+) {
+  return queryOptions({
+    queryKey: [
+      "organizations",
+      organizationId,
+      "projects",
+      projectId,
+      "realtime",
+      "services",
+      serviceId,
+      "metrics",
+      "history",
+      range,
+    ],
+    queryFn: ({ signal }) =>
+      api.realtime.services.metricsHistory(
+        organizationId,
+        projectId,
+        serviceId,
+        range,
+        signal,
+      ),
     refetchInterval: 15_000,
     staleTime: 5_000,
   });

@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   ArrowUpFromLine,
   Gauge,
-  Infinity as InfinityIcon,
   LoaderCircle,
   Pencil,
   RadioTower,
@@ -33,15 +32,21 @@ import {
 } from "@/components/ui/dialog";
 import { useActiveOrganization } from "@/features/organizations/organization-context";
 import { api, getApiErrorMessage } from "@/lib/api-client";
-import type { RealtimeService } from "@/lib/api-types";
+import type {
+  RealtimeMetricsRange,
+  RealtimeService,
+  RealtimeServiceMetricSample,
+} from "@/lib/api-types";
 import {
   projectsQueryOptions,
+  realtimeServiceMetricHistoryQueryOptions,
   realtimeServiceMetricsQueryOptions,
   realtimeServiceQueryOptions,
 } from "@/lib/queries";
 import { formatDateTime, formatNumber } from "@/lib/utils";
 import { AccessCredentialDialog } from "./access-credential-dialog";
 import { RealtimeEndpoints } from "./realtime-endpoints";
+import { RealtimeMetricChart } from "./realtime-metric-chart";
 import {
   RealtimeServiceForm,
   type RealtimeServiceFormValue,
@@ -53,6 +58,14 @@ import {
   transferredBytes,
 } from "./realtime-service-utils";
 
+const metricRanges: { value: RealtimeMetricsRange; label: string }[] = [
+  { value: "1h", label: "1時間" },
+  { value: "6h", label: "6時間" },
+  { value: "24h", label: "24時間" },
+  { value: "7d", label: "7日" },
+  { value: "30d", label: "30日" },
+];
+
 function formValue(service: RealtimeService): RealtimeServiceFormValue {
   return {
     projectId: service.project_id,
@@ -60,6 +73,7 @@ function formValue(service: RealtimeService): RealtimeServiceFormValue {
     region: service.spec.region,
     trafficMode: service.spec.traffic_mode,
     maxParticipants: service.spec.max_participants,
+    maxRooms: service.spec.max_rooms,
     turnEnabled: service.spec.turn_enabled,
   };
 }
@@ -78,6 +92,19 @@ export function RealtimeServiceDetailPage() {
     ...realtimeServiceMetricsQueryOptions(organizationId, serviceId),
     enabled: Boolean(serviceId) && service.data?.state === "ready",
   });
+  const [metricsRange, setMetricsRange] = useState<RealtimeMetricsRange>("24h");
+  const metricHistory = useQuery({
+    ...realtimeServiceMetricHistoryQueryOptions(
+      organizationId,
+      service.data?.project_id ?? "",
+      serviceId,
+      metricsRange,
+    ),
+    enabled:
+      Boolean(serviceId) &&
+      Boolean(service.data?.project_id) &&
+      service.data?.state === "ready",
+  });
   const projects = useQuery(projectsQueryOptions(organizationId));
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -91,6 +118,7 @@ export function RealtimeServiceDetailPage() {
           region: value.region,
           traffic_mode: value.trafficMode,
           max_participants: value.maxParticipants,
+          max_rooms: value.maxRooms,
           turn_enabled: value.turnEnabled,
           metadata: service.data?.spec.metadata ?? {},
         },
@@ -130,7 +158,11 @@ export function RealtimeServiceDetailPage() {
   };
 
   const refresh = async () => {
-    await Promise.all([service.refetch(), metrics.refetch()]);
+    await Promise.all([
+      service.refetch(),
+      metrics.refetch(),
+      metricHistory.refetch(),
+    ]);
   };
 
   if (!serviceId) {
@@ -194,6 +226,44 @@ export function RealtimeServiceDetailPage() {
       icon: Gauge,
     },
   ];
+  const historySamples = metricHistory.data?.samples ?? [];
+  const historyCharts: {
+    label: string;
+    value: (sample: RealtimeServiceMetricSample) => number;
+    formatValue: (value: number) => string;
+    color: string;
+  }[] = [
+    {
+      label: "アクティブルーム",
+      value: (sample) => sample.active_rooms,
+      formatValue: (value) => formatNumber(value),
+      color: "#047857",
+    },
+    {
+      label: "同時接続",
+      value: (sample) => sample.concurrent_connections,
+      formatValue: (value) => formatNumber(value),
+      color: "#0369a1",
+    },
+    {
+      label: "Ingress",
+      value: (sample) => sample.ingress_bytes,
+      formatValue: formatBytes,
+      color: "#b45309",
+    },
+    {
+      label: "Egress",
+      value: (sample) => sample.egress_bytes,
+      formatValue: formatBytes,
+      color: "#be123c",
+    },
+    {
+      label: "転送量",
+      value: (sample) => sample.transferred_bytes,
+      formatValue: formatBytes,
+      color: "#52525b",
+    },
+  ];
 
   return (
     <div className="space-y-6">
@@ -202,7 +272,7 @@ export function RealtimeServiceDetailPage() {
         className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-800 hover:underline"
       >
         <ArrowLeft className="size-4" />
-        リアルタイム通信サービス
+        Flow
       </Link>
 
       <PageHeader
@@ -298,7 +368,7 @@ export function RealtimeServiceDetailPage() {
 
       <section
         className="grid border border-zinc-200 bg-white sm:grid-cols-2 xl:grid-cols-5"
-        aria-label="リアルタイムメトリクス"
+        aria-label="Flowメトリクス"
       >
         {metricItems.map((metric, index) => {
           const Icon = metric.icon;
@@ -327,13 +397,78 @@ export function RealtimeServiceDetailPage() {
 
       {metrics.isError ? (
         <div className="flex items-center justify-between border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-          <span>リアルタイムメトリクスを取得できませんでした。</span>
+          <span>Flowメトリクスを取得できませんでした。</span>
           <Button variant="secondary" size="sm" onClick={() => void metrics.refetch()}>
             <RefreshCw />
             再試行
           </Button>
         </div>
       ) : null}
+
+      <section aria-labelledby="metrics-history-heading" className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 id="metrics-history-heading" className="text-sm font-semibold text-zinc-950">
+              モニタリング
+            </h2>
+            <p className="mt-1 text-xs text-zinc-500">
+              アクティブルーム、接続数、通信量の履歴
+            </p>
+          </div>
+          <div
+            className="grid w-full grid-cols-5 overflow-hidden rounded-[6px] border border-zinc-300 bg-white sm:w-auto"
+            role="group"
+            aria-label="メトリクスの表示期間"
+          >
+            {metricRanges.map((range) => {
+              const selected = metricsRange === range.value;
+              return (
+                <button
+                  key={range.value}
+                  type="button"
+                  aria-pressed={selected}
+                  className={`h-8 border-l border-zinc-300 px-2 text-xs font-medium first:border-l-0 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-600 sm:min-w-14 ${
+                    selected
+                      ? "bg-zinc-900 text-white"
+                      : "bg-white text-zinc-700 hover:bg-zinc-50"
+                  }`}
+                  onClick={() => setMetricsRange(range.value)}
+                >
+                  {range.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {metricHistory.isError ? (
+          <div className="flex items-center justify-between border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+            <span>メトリクス履歴を取得できませんでした。</span>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void metricHistory.refetch()}
+            >
+              <RefreshCw />
+              再試行
+            </Button>
+          </div>
+        ) : null}
+
+        <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+          {historyCharts.map((chart) => (
+            <RealtimeMetricChart
+              key={chart.label}
+              label={chart.label}
+              samples={historySamples}
+              value={chart.value}
+              formatValue={chart.formatValue}
+              color={chart.color}
+              loading={metricHistory.isPending}
+            />
+          ))}
+        </div>
+      </section>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(22rem,0.8fr)]">
         <section className="overflow-hidden border border-zinc-200 bg-white">
@@ -372,11 +507,8 @@ export function RealtimeServiceDetailPage() {
               </dd>
             </div>
             <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <dt className="text-zinc-500">ルーム数</dt>
-              <dd className="flex items-center gap-1.5 font-medium">
-                <InfinityIcon className="size-4" />
-                無制限
-              </dd>
+              <dt className="text-zinc-500">ルーム上限</dt>
+              <dd className="font-medium">{formatNumber(item.spec.max_rooms)}</dd>
             </div>
             <div className="flex items-center justify-between gap-4 px-4 py-3">
               <dt className="text-zinc-500">同時参加者上限</dt>

@@ -100,6 +100,7 @@ export function RealtimeServicesPage() {
           region: value.region,
           traffic_mode: value.trafficMode,
           max_participants: value.maxParticipants,
+          max_rooms: value.maxRooms,
           turn_enabled: value.turnEnabled,
           metadata: {},
         },
@@ -251,7 +252,7 @@ export function RealtimeServicesPage() {
   };
 
   if (services.isPending || projects.isPending) {
-    return <PageLoading label="リアルタイム通信サービスを読み込んでいます" />;
+    return <PageLoading label="Flowを読み込んでいます" />;
   }
 
   if (services.isError || projects.isError) {
@@ -279,7 +280,7 @@ export function RealtimeServicesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="リアルタイム通信サービス"
+        title="Flow"
         description={`${activeOrganization.organization_name} のWebRTC、LiveKit、STUN、TURN基盤を管理します。`}
         actions={
           <div className="flex items-center gap-2">
@@ -308,7 +309,7 @@ export function RealtimeServicesPage() {
               </DialogTrigger>
               <DialogContent className="max-w-xl">
                 <DialogHeader>
-                  <DialogTitle>リアルタイム通信サービスを作成</DialogTitle>
+                  <DialogTitle>Flowを作成</DialogTitle>
                   <DialogDescription>
                     プロジェクトと通信モードを指定します。
                   </DialogDescription>
@@ -391,7 +392,7 @@ export function RealtimeServicesPage() {
         data={serviceItems}
         getRowId={(service) => service.id}
         searchPlaceholder="名前、プロジェクト、リージョン、状態で検索"
-        emptyTitle="リアルタイム通信サービスがありません"
+        emptyTitle="Flowがありません"
         emptyDescription="プロジェクトを選択してサービスを作成してください。"
       />
     </div>

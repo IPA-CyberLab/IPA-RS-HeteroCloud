@@ -107,7 +107,7 @@ export function OverviewPage() {
       to: "/projects",
     },
     {
-      label: "リアルタイム通信",
+      label: "Flow",
       value: serviceItems.length,
       icon: RadioTower,
       to: "/realtime/services",
@@ -128,7 +128,7 @@ export function OverviewPage() {
 
   const serviceLinks = [
     {
-      title: "リアルタイム通信サービス",
+      title: "Flow",
       description: "WebRTC、LiveKit、STUN、TURN",
       to: "/realtime/services",
       icon: RadioTower,
@@ -243,7 +243,7 @@ export function OverviewPage() {
 
       <section aria-labelledby="operations-heading">
         <h2 id="operations-heading" className="mb-3 text-sm font-semibold text-zinc-900">
-          リアルタイム通信の稼働状況
+          Flowの稼働状況
         </h2>
         <div className="grid border border-zinc-200 bg-white sm:grid-cols-2 xl:grid-cols-4">
           {[
@@ -294,7 +294,7 @@ export function OverviewPage() {
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,0.8fr)]">
         <section className="overflow-hidden border border-zinc-200 bg-white">
           <div className="flex items-center justify-between border-b border-zinc-200 bg-zinc-50 px-4 py-3">
-            <h2 className="text-sm font-semibold">最近のリアルタイム通信サービス</h2>
+            <h2 className="text-sm font-semibold">最近のFlow</h2>
             <Button asChild variant="ghost" size="sm">
               <Link to="/realtime/services">すべて表示</Link>
             </Button>

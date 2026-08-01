@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api-client";
@@ -32,6 +33,7 @@ const service: RealtimeService = {
     region: "heteronet-global",
     traffic_mode: "forwarded",
     max_participants: 500,
+    max_rooms: 100,
     turn_enabled: true,
     metadata: {},
   },
@@ -52,7 +54,7 @@ describe("RealtimeServiceDetailPage", () => {
       ingress_bytes: 1_250_000,
       egress_bytes: 2_500_000,
       transferred_bytes: 3_750_000,
-      room_limit: null,
+      room_limit: 100,
       endpoints: {
         api: ["https://api.realtime.example.com"],
         signaling: ["wss://signal.realtime.example.com"],
@@ -60,6 +62,28 @@ describe("RealtimeServiceDetailPage", () => {
         stun: ["stun:turn.realtime.example.com:3478"],
         turn: ["turns:turn.realtime.example.com:5349"],
       },
+    });
+    vi.spyOn(api.realtime.services, "metricsHistory").mockResolvedValue({
+      range: "24h",
+      step_seconds: 900,
+      samples: [
+        {
+          sampled_at: "2026-08-01T08:45:00Z",
+          active_rooms: 10,
+          concurrent_connections: 40,
+          ingress_bytes: 800_000,
+          egress_bytes: 1_600_000,
+          transferred_bytes: 2_400_000,
+        },
+        {
+          sampled_at: "2026-08-01T09:00:00Z",
+          active_rooms: 11,
+          concurrent_connections: 42,
+          ingress_bytes: 900_000,
+          egress_bytes: 1_800_000,
+          transferred_bytes: 2_700_000,
+        },
+      ],
     });
     vi.spyOn(api.projects, "list").mockResolvedValue({
       items: [
@@ -74,7 +98,8 @@ describe("RealtimeServiceDetailPage", () => {
     });
   });
 
-  it("実メトリクス、実エンドポイント、無制限ルームと同時参加者上限を表示する", async () => {
+  it("現在値、履歴グラフ、エンドポイント、ルーム上限を表示する", async () => {
+    const user = userEvent.setup();
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
@@ -103,8 +128,40 @@ describe("RealtimeServiceDetailPage", () => {
     expect(screen.getByText("1.25 MB")).toBeInTheDocument();
     expect(screen.getByText("2.5 MB")).toBeInTheDocument();
     expect(screen.getByText("3.75 MB")).toBeInTheDocument();
-    expect(screen.getByText("無制限")).toBeInTheDocument();
+    expect(screen.getByText("100")).toBeInTheDocument();
     expect(screen.getByText("500")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("img", { name: /アクティブルームの推移/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /同時接続の推移/ })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Ingressの推移/ })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Egressの推移/ })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /転送量の推移/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "24時間" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(api.realtime.services.metricsHistory).toHaveBeenCalledWith(
+      service.organization_id,
+      service.project_id,
+      service.id,
+      "24h",
+      expect.any(AbortSignal),
+    );
+    await user.click(screen.getByRole("button", { name: "7日" }));
+    expect(screen.getByRole("button", { name: "7日" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await waitFor(() =>
+      expect(api.realtime.services.metricsHistory).toHaveBeenCalledWith(
+        service.organization_id,
+        service.project_id,
+        service.id,
+        "7d",
+        expect.any(AbortSignal),
+      ),
+    );
     expect(
       screen.getByText("wss://livekit.realtime.example.com"),
     ).toBeInTheDocument();

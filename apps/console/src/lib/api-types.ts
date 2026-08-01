@@ -134,6 +134,7 @@ export interface RealtimeServiceSpec {
   region: string;
   traffic_mode: TrafficMode;
   max_participants: number;
+  max_rooms: number;
   turn_enabled: boolean;
   metadata: Record<string, unknown>;
 }
@@ -180,8 +181,25 @@ export interface RealtimeServiceMetrics {
   measured_at: string;
   sfu_participants: number;
   p2p_connections: number;
-  room_limit: null;
+  room_limit: number | null;
   endpoints: RealtimeServiceEndpoints;
+}
+
+export type RealtimeMetricsRange = "1h" | "6h" | "24h" | "7d" | "30d";
+
+export interface RealtimeServiceMetricSample {
+  sampled_at: string;
+  active_rooms: number;
+  concurrent_connections: number;
+  ingress_bytes: number;
+  egress_bytes: number;
+  transferred_bytes: number;
+}
+
+export interface RealtimeServiceMetricHistory {
+  range: RealtimeMetricsRange;
+  step_seconds: number;
+  samples: RealtimeServiceMetricSample[];
 }
 
 export interface CreateRealtimeAccessCredentialRequest {

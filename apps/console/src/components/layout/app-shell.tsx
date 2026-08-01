@@ -51,7 +51,7 @@ export function AppShell() {
   const title =
     routeTitles[location.pathname] ??
     (location.pathname.startsWith("/realtime/services/")
-      ? "リアルタイム通信サービス / 詳細"
+      ? "Flow / 詳細"
       : "HeteroCloud");
   return (
     <div className="min-h-screen bg-[#f7f8fa] text-zinc-900">

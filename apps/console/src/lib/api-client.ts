@@ -18,7 +18,9 @@ import type {
   Project,
   RealtimeAccessCredential,
   RealtimeService,
+  RealtimeServiceMetricHistory,
   RealtimeServiceMetrics,
+  RealtimeMetricsRange,
   RegisterRequest,
   Session,
   UpdateRealtimeServiceRequest,
@@ -377,6 +379,20 @@ export class HeteroCloudApiClient {
             organizationId,
             `realtime/services/${encodeURIComponent(serviceId)}/metrics`,
           ),
+          { signal },
+        ),
+      metricsHistory: (
+        organizationId: string,
+        projectId: string,
+        serviceId: string,
+        range: RealtimeMetricsRange,
+        signal?: AbortSignal,
+      ) =>
+        this.request<RealtimeServiceMetricHistory>(
+          `${organizationPath(
+            organizationId,
+            `projects/${encodeURIComponent(projectId)}/realtime/services/${encodeURIComponent(serviceId)}/metrics/history`,
+          )}${queryString({ range })}`,
           { signal },
         ),
     },

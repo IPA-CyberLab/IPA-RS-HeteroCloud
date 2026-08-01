@@ -43,7 +43,7 @@ export const navigationSections: NavigationSection[] = [
     label: "サービス",
     items: [
       {
-        label: "リアルタイム通信",
+        label: "Flow",
         to: "/realtime/services",
         icon: RadioTower,
       },
@@ -65,7 +65,7 @@ export const routeTitles: Record<string, string> = {
   "/iam/principals": "IAM / プリンシパル",
   "/iam/policies": "IAM / ポリシー",
   "/iam/bindings": "IAM / バインディング",
-  "/realtime/services": "リアルタイム通信サービス",
+  "/realtime/services": "Flow",
   "/audit-logs": "監査ログ",
   "/settings": "設定",
 };

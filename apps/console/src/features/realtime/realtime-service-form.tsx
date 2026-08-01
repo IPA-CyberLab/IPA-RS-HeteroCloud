@@ -19,6 +19,7 @@ export interface RealtimeServiceFormValue {
   region: string;
   trafficMode: TrafficMode;
   maxParticipants: number;
+  maxRooms: number;
   turnEnabled: boolean;
 }
 
@@ -31,12 +32,17 @@ interface RealtimeServiceFormProps {
   children: React.ReactNode;
 }
 
+function positiveInteger(value: number): number {
+  return Number.isFinite(value) ? Math.max(1, Math.trunc(value)) : 1;
+}
+
 export const defaultRealtimeServiceFormValue: RealtimeServiceFormValue = {
   projectId: "",
   name: "",
   region: "heteronet-global",
   trafficMode: "forwarded",
   maxParticipants: 100,
+  maxRooms: 100,
   turnEnabled: true,
 };
 
@@ -77,7 +83,7 @@ export function RealtimeServiceForm({
         />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-3">
         <div className="space-y-2">
           <Label>リージョン</Label>
           <Select
@@ -102,13 +108,28 @@ export function RealtimeServiceForm({
             required
             min={1}
             max={100_000}
+            step={1}
             value={value.maxParticipants}
             disabled={disabled}
             onChange={(event) =>
               update("maxParticipants", event.currentTarget.valueAsNumber || 1)
             }
           />
-          <p className="text-xs text-zinc-500">ルーム数は無制限</p>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="realtime-max-rooms">ルーム上限</Label>
+          <Input
+            id="realtime-max-rooms"
+            type="number"
+            required
+            min={1}
+            step={1}
+            value={value.maxRooms}
+            disabled={disabled}
+            onChange={(event) =>
+              update("maxRooms", positiveInteger(event.currentTarget.valueAsNumber))
+            }
+          />
         </div>
       </div>
 

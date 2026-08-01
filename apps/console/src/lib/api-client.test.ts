@@ -191,7 +191,7 @@ describe("HeteroCloudApiClient", () => {
     ]);
   });
 
-  it("リアルタイム通信サービスの管理API契約を使う", async () => {
+  it("Flowの管理API契約を使う", async () => {
     const serviceId = "0198a121-ffbd-70c2-a3c8-c65516d7b8fb";
     const service = {
       id: serviceId,
@@ -205,6 +205,7 @@ describe("HeteroCloudApiClient", () => {
         region: "heteronet-global",
         traffic_mode: "forwarded",
         max_participants: 500,
+        max_rooms: 100,
         turn_enabled: true,
         metadata: {},
       },
@@ -216,6 +217,22 @@ describe("HeteroCloudApiClient", () => {
       async (input: string | URL | Request, init?: RequestInit) => {
         const path = String(input);
         if (path.endsWith("/auth/session")) return jsonResponse(session);
+        if (path.includes("/metrics/history?range=")) {
+          return jsonResponse({
+            range: "24h",
+            step_seconds: 900,
+            samples: [
+              {
+                sampled_at: "2026-08-01T09:00:00Z",
+                active_rooms: 2,
+                concurrent_connections: 8,
+                ingress_bytes: 1000,
+                egress_bytes: 2000,
+                transferred_bytes: 3000,
+              },
+            ],
+          });
+        }
         if (path.endsWith("/metrics")) {
           return jsonResponse({
             measured_at: "2026-08-01T09:00:00Z",
@@ -226,7 +243,7 @@ describe("HeteroCloudApiClient", () => {
             ingress_bytes: 1000,
             egress_bytes: 2000,
             transferred_bytes: 3000,
-            room_limit: null,
+            room_limit: 100,
             endpoints: {
               api: ["https://api.example.com"],
               signaling: ["wss://signal.example.com"],
@@ -276,21 +293,30 @@ describe("HeteroCloudApiClient", () => {
       },
     );
     await client.realtime.services.metrics(organizationId, serviceId);
+    await client.realtime.services.metricsHistory(
+      organizationId,
+      service.project_id,
+      serviceId,
+      "24h",
+    );
 
     const calls = vi.mocked(fetcher).mock.calls.slice(1);
     const base = `/api/v1/organizations/${organizationId}/realtime/services/${serviceId}`;
+    const history = `/api/v1/organizations/${organizationId}/projects/${service.project_id}/realtime/services/${serviceId}/metrics/history?range=24h`;
     expect(calls.map(([url]) => String(url))).toEqual([
       base,
       base,
       base,
       `${base}/access-credentials`,
       `${base}/metrics`,
+      history,
     ]);
     expect(calls.map(([, options]) => options?.method ?? "GET")).toEqual([
       "GET",
       "PATCH",
       "DELETE",
       "POST",
+      "GET",
       "GET",
     ]);
     expect(JSON.parse(String(calls[1][1]?.body))).toEqual({
