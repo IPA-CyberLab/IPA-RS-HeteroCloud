@@ -85,20 +85,6 @@ the RTC and TURN endpoints are not ordinary HTTP traffic. ExternalDNS uses a
 TXT ownership registry and is restricted to the requested domain and
 HeteroCloud-labelled resources.
 
-From a Mac with the token stored at the path above, the production cluster can
-be bootstrapped in one command. The script verifies the release checksum,
-migrates only the reserved HeteroCloud A names on first installation, applies
-ExternalDNS, waits for DNS convergence, and removes its remote temporary files:
-
-```sh
-./scripts/apply-cloudflare-dns-from-macos.sh
-```
-
-It connects to `mizuame@163.220.236.51` by default and prompts for remote
-`sudo`. Set `HETEROCLOUD_SSH_KEY=/path/to/key` when the key is not available
-through the SSH agent. `HETEROCLOUD_DNS_REMOTE_HOST` and
-`HETEROCLOUD_CF_TOKEN_FILE` override the other local defaults.
-
 Provider authentication may instead use workload identity or a Secret that
 already exists in the controller namespace:
 
