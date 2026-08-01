@@ -1,19 +1,19 @@
 replicaCount: 3
 hostNetwork: true
 
-publicOrigin: https://cloud-a.163-220-236-51.sslip.io
+publicOrigin: https://cloud-a.heterocloud.mizuame.app
 additionalOrigins:
-  - https://cloud-b.163-220-236-52.sslip.io
-  - https://cloud-c.163-220-236-53.sslip.io
+  - https://cloud-b.heterocloud.mizuame.app
+  - https://cloud-c.heterocloud.mizuame.app
 
 flowAccess:
   issuer: heterocloud
   audience: heterocloud-flow-data
 
 flowPublicEndpoints:
-  - https://flow-a.163-220-236-51.sslip.io
-  - https://flow-b.163-220-236-52.sslip.io
-  - https://flow-c.163-220-236-53.sslip.io
+  - https://flow-a.heterocloud.mizuame.app
+  - https://flow-b.heterocloud.mizuame.app
+  - https://flow-c.heterocloud.mizuame.app
 
 secrets:
   flowAccessSecretName: heterocloud-flow-access

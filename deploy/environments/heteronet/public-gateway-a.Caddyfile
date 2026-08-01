@@ -1,4 +1,4 @@
-cloud-a.163-220-236-51.sslip.io {
+cloud-a.heterocloud.mizuame.app {
 	reverse_proxy https://10.250.0.4:8443 https://10.250.0.5:8443 https://10.250.0.6:8443 {
 		lb_policy first
 		health_uri /api/v1/health/live
@@ -12,7 +12,7 @@ cloud-a.163-220-236-51.sslip.io {
 	}
 }
 
-flow-a.163-220-236-51.sslip.io {
+flow-a.heterocloud.mizuame.app {
 	handle /internal/* {
 		respond 404
 	}
@@ -40,13 +40,8 @@ flow-a.163-220-236-51.sslip.io {
 	}
 }
 
-rtc-a.163-220-236-51.sslip.io {
-	reverse_proxy 10.250.0.4:7880 10.250.0.5:7880 10.250.0.6:7880 {
-		lb_policy first
-		health_uri /
-		health_interval 5s
-		health_timeout 2s
-		fail_duration 10s
-		max_fails 2
+rtc-a.heterocloud.mizuame.app {
+	reverse_proxy https://rtc-b.heterocloud.mizuame.app {
+		header_up Host {upstream_hostport}
 	}
 }
