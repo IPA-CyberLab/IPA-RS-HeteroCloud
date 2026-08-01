@@ -165,7 +165,7 @@ describe("HeteroCloudApiClient", () => {
     await client.projects.list(organizationId);
     await client.iam.principals.list(organizationId);
     await client.iam.policies.list(organizationId);
-    await client.flow.instances.list(organizationId);
+    await client.realtime.services.list(organizationId);
     await client.auditEvents.list(organizationId, 500);
     await client.iam.bindings.create(organizationId, {
       principal_id: "0198a11f-3bf3-7310-bd79-e27183663d05",
@@ -184,11 +184,129 @@ describe("HeteroCloudApiClient", () => {
       `${prefix}/projects`,
       `${prefix}/iam/principals`,
       `${prefix}/iam/policies`,
-      `${prefix}/flow/instances`,
+      `${prefix}/realtime/services`,
       `${prefix}/audit-events?limit=500`,
       `${prefix}/iam/bindings`,
       `${prefix}/invitations`,
     ]);
+  });
+
+  it("リアルタイム通信サービスの管理API契約を使う", async () => {
+    const serviceId = "0198a121-ffbd-70c2-a3c8-c65516d7b8fb";
+    const service = {
+      id: serviceId,
+      organization_id: organizationId,
+      project_id: "0198a11b-b519-7177-b6fd-bb131b5fb9e6",
+      provider: "flow",
+      name: "realtime-production",
+      generation: 2,
+      state: "ready",
+      spec: {
+        region: "heteronet-global",
+        traffic_mode: "forwarded",
+        max_participants: 500,
+        turn_enabled: true,
+        metadata: {},
+      },
+      status: {},
+      created_at: "2026-08-01T08:00:00Z",
+      updated_at: "2026-08-01T09:00:00Z",
+    };
+    const fetcher = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const path = String(input);
+        if (path.endsWith("/auth/session")) return jsonResponse(session);
+        if (path.endsWith("/metrics")) {
+          return jsonResponse({
+            measured_at: "2026-08-01T09:00:00Z",
+            active_rooms: 2,
+            concurrent_connections: 8,
+            sfu_participants: 6,
+            p2p_connections: 2,
+            ingress_bytes: 1000,
+            egress_bytes: 2000,
+            transferred_bytes: 3000,
+            room_limit: null,
+            endpoints: {
+              api: ["https://api.example.com"],
+              signaling: ["wss://signal.example.com"],
+              livekit: ["wss://livekit.example.com"],
+              stun: ["stun:turn.example.com:3478"],
+              turn: ["turn:turn.example.com:3478"],
+            },
+          });
+        }
+        if (path.endsWith("/access-credentials")) {
+          return jsonResponse({
+            context_id: "0198a122-ffbd-70c2-a3c8-c65516d7b8fb",
+            headers: {
+              "x-flow-principal": "principal-value",
+              "x-flow-timestamp": "1754038800",
+              "x-flow-signature": "signature-value",
+            },
+            endpoints: ["https://flow.example.com"],
+            issued_at: 1754038800,
+            expires_at: 1754042400,
+            organization_id: organizationId,
+            project_id: service.project_id,
+            service_instance_id: serviceId,
+            principal_id: session.memberships[0].principal_id,
+          });
+        }
+        return jsonResponse(
+          init?.method === "DELETE" ? { ...service, state: "deleting" } : service,
+          init?.method === "DELETE" ? 202 : 200,
+        );
+      },
+    ) as unknown as typeof fetch;
+    const client = new HeteroCloudApiClient("/api/v1", fetcher);
+
+    await client.auth.session();
+    await client.realtime.services.get(organizationId, serviceId);
+    await client.realtime.services.update(organizationId, serviceId, {
+      name: "realtime-primary",
+    });
+    await client.realtime.services.delete(organizationId, serviceId);
+    await client.realtime.services.issueAccessCredential(
+      organizationId,
+      serviceId,
+      {
+        permissions: ["flow.room.join", "flow.metrics.read"],
+        expires_in_seconds: 3600,
+      },
+    );
+    await client.realtime.services.metrics(organizationId, serviceId);
+
+    const calls = vi.mocked(fetcher).mock.calls.slice(1);
+    const base = `/api/v1/organizations/${organizationId}/realtime/services/${serviceId}`;
+    expect(calls.map(([url]) => String(url))).toEqual([
+      base,
+      base,
+      base,
+      `${base}/access-credentials`,
+      `${base}/metrics`,
+    ]);
+    expect(calls.map(([, options]) => options?.method ?? "GET")).toEqual([
+      "GET",
+      "PATCH",
+      "DELETE",
+      "POST",
+      "GET",
+    ]);
+    expect(JSON.parse(String(calls[1][1]?.body))).toEqual({
+      name: "realtime-primary",
+    });
+    expect(JSON.parse(String(calls[3][1]?.body))).toEqual({
+      permissions: ["flow.room.join", "flow.metrics.read"],
+      expires_in_seconds: 3600,
+    });
+    calls
+      .filter(([, options]) => ["PATCH", "DELETE", "POST"].includes(options?.method ?? ""))
+      .forEach(([, options]) => {
+        expect(new Headers(options?.headers).get("x-heterocloud-csrf")).toBe(
+          session.csrf_token,
+        );
+      });
   });
 
   it("セッション取得前のcookie mutationを送信しない", async () => {

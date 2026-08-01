@@ -3,21 +3,25 @@ import type {
   BindingResponse,
   CollectionResponse,
   CreateBindingRequest,
-  CreateFlowInstanceRequest,
   CreateInvitationRequest,
   CreatePolicyRequest,
   CreateProjectRequest,
+  CreateRealtimeAccessCredentialRequest,
+  CreateRealtimeServiceRequest,
   CreateServiceAccountRequest,
   ErrorEnvelope,
-  FlowInstance,
   IamPolicy,
   InvitationResponse,
   LoginRequest,
   Organization,
   Principal,
   Project,
+  RealtimeAccessCredential,
+  RealtimeService,
+  RealtimeServiceMetrics,
   RegisterRequest,
   Session,
+  UpdateRealtimeServiceRequest,
 } from "@/lib/api-types";
 
 const API_BASE_URL = "/api/v1";
@@ -289,29 +293,91 @@ export class HeteroCloudApiClient {
       ),
   };
 
-  readonly flow = {
-    instances: {
+  readonly realtime = {
+    services: {
       list: (
         organizationId: string,
         projectId?: string,
         signal?: AbortSignal,
       ) =>
-        this.request<CollectionResponse<FlowInstance>>(
-          `${organizationPath(organizationId, "flow/instances")}${queryString({
+        this.request<CollectionResponse<RealtimeService>>(
+          `${organizationPath(organizationId, "realtime/services")}${queryString({
             project_id: projectId,
           })}`,
           { signal },
         ),
       create: (
         organizationId: string,
-        input: CreateFlowInstanceRequest,
+        input: CreateRealtimeServiceRequest,
       ) =>
-        this.request<FlowInstance>(
-          organizationPath(organizationId, "flow/instances"),
+        this.request<RealtimeService>(
+          organizationPath(organizationId, "realtime/services"),
           {
             method: "POST",
             body: input,
           },
+        ),
+      get: (
+        organizationId: string,
+        serviceId: string,
+        signal?: AbortSignal,
+      ) =>
+        this.request<RealtimeService>(
+          organizationPath(
+            organizationId,
+            `realtime/services/${encodeURIComponent(serviceId)}`,
+          ),
+          { signal },
+        ),
+      update: (
+        organizationId: string,
+        serviceId: string,
+        input: UpdateRealtimeServiceRequest,
+      ) =>
+        this.request<RealtimeService>(
+          organizationPath(
+            organizationId,
+            `realtime/services/${encodeURIComponent(serviceId)}`,
+          ),
+          {
+            method: "PATCH",
+            body: input,
+          },
+        ),
+      delete: (organizationId: string, serviceId: string) =>
+        this.request<RealtimeService>(
+          organizationPath(
+            organizationId,
+            `realtime/services/${encodeURIComponent(serviceId)}`,
+          ),
+          { method: "DELETE" },
+        ),
+      issueAccessCredential: (
+        organizationId: string,
+        serviceId: string,
+        input: CreateRealtimeAccessCredentialRequest,
+      ) =>
+        this.request<RealtimeAccessCredential>(
+          organizationPath(
+            organizationId,
+            `realtime/services/${encodeURIComponent(serviceId)}/access-credentials`,
+          ),
+          {
+            method: "POST",
+            body: input,
+          },
+        ),
+      metrics: (
+        organizationId: string,
+        serviceId: string,
+        signal?: AbortSignal,
+      ) =>
+        this.request<RealtimeServiceMetrics>(
+          organizationPath(
+            organizationId,
+            `realtime/services/${encodeURIComponent(serviceId)}/metrics`,
+          ),
+          { signal },
         ),
     },
   };

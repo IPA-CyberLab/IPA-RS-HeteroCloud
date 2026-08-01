@@ -41,9 +41,14 @@ const IamPoliciesPage = lazy(() =>
     default: module.IamPoliciesPage,
   })),
 );
-const FlowInstancesPage = lazy(() =>
-  import("@/features/flow/flow-instances-page").then((module) => ({
-    default: module.FlowInstancesPage,
+const RealtimeServicesPage = lazy(() =>
+  import("@/features/realtime/realtime-services-page").then((module) => ({
+    default: module.RealtimeServicesPage,
+  })),
+);
+const RealtimeServiceDetailPage = lazy(() =>
+  import("@/features/realtime/realtime-service-detail-page").then((module) => ({
+    default: module.RealtimeServiceDetailPage,
   })),
 );
 const AuditLogsPage = lazy(() =>
@@ -136,12 +141,23 @@ export function App() {
                   </LazyPage>
                 }
               />
-              <Route path="/flow" element={<Navigate to="/flow/instances" replace />} />
               <Route
-                path="/flow/instances"
+                path="/realtime"
+                element={<Navigate to="/realtime/services" replace />}
+              />
+              <Route
+                path="/realtime/services"
                 element={
                   <LazyPage>
-                    <FlowInstancesPage />
+                    <RealtimeServicesPage />
+                  </LazyPage>
+                }
+              />
+              <Route
+                path="/realtime/services/:serviceId"
+                element={
+                  <LazyPage>
+                    <RealtimeServiceDetailPage />
                   </LazyPage>
                 }
               />

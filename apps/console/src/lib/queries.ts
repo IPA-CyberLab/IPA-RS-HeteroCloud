@@ -27,11 +27,48 @@ export function iamPoliciesQueryOptions(organizationId: string) {
   });
 }
 
-export function flowInstancesQueryOptions(organizationId: string) {
+export function realtimeServicesQueryOptions(organizationId: string) {
   return queryOptions({
-    queryKey: ["organizations", organizationId, "flow", "instances"],
+    queryKey: ["organizations", organizationId, "realtime", "services"],
     queryFn: ({ signal }) =>
-      api.flow.instances.list(organizationId, undefined, signal),
+      api.realtime.services.list(organizationId, undefined, signal),
+  });
+}
+
+export function realtimeServiceQueryOptions(
+  organizationId: string,
+  serviceId: string,
+) {
+  return queryOptions({
+    queryKey: [
+      "organizations",
+      organizationId,
+      "realtime",
+      "services",
+      serviceId,
+    ],
+    queryFn: ({ signal }) =>
+      api.realtime.services.get(organizationId, serviceId, signal),
+  });
+}
+
+export function realtimeServiceMetricsQueryOptions(
+  organizationId: string,
+  serviceId: string,
+) {
+  return queryOptions({
+    queryKey: [
+      "organizations",
+      organizationId,
+      "realtime",
+      "services",
+      serviceId,
+      "metrics",
+    ],
+    queryFn: ({ signal }) =>
+      api.realtime.services.metrics(organizationId, serviceId, signal),
+    refetchInterval: 15_000,
+    staleTime: 5_000,
   });
 }
 

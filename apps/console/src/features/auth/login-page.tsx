@@ -65,7 +65,7 @@ export function LoginPage() {
             クラウドリソースとアクセス権限を一か所で管理
           </p>
           <p className="mt-3 text-sm leading-7 text-zinc-400">
-            組織、プロジェクト、IAM、Flowインスタンスの運用状況を確認できます。
+            組織、プロジェクト、IAM、リアルタイム通信サービスの運用状況を確認できます。
           </p>
         </div>
         <p className="text-xs text-zinc-500">HeteroCloud Console</p>

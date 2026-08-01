@@ -130,7 +130,7 @@ export type ServiceState =
   | "deleting"
   | "error";
 
-export interface FlowSpec {
+export interface RealtimeServiceSpec {
   region: string;
   traffic_mode: TrafficMode;
   max_participants: number;
@@ -138,7 +138,15 @@ export interface FlowSpec {
   metadata: Record<string, unknown>;
 }
 
-export interface FlowInstance {
+export interface RealtimeServiceEndpoints {
+  api: string[];
+  signaling: string[];
+  livekit: string[];
+  stun: string[];
+  turn: string[];
+}
+
+export interface RealtimeService {
   id: string;
   organization_id: string;
   project_id: string;
@@ -146,16 +154,51 @@ export interface FlowInstance {
   name: string;
   generation: number;
   state: ServiceState;
-  spec: FlowSpec;
+  spec: RealtimeServiceSpec;
   status: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
 
-export interface CreateFlowInstanceRequest {
+export interface CreateRealtimeServiceRequest {
   project_id: string;
   name: string;
-  spec: FlowSpec;
+  spec: RealtimeServiceSpec;
+}
+
+export interface UpdateRealtimeServiceRequest {
+  name?: string;
+  spec?: RealtimeServiceSpec;
+}
+
+export interface RealtimeServiceMetrics {
+  active_rooms: number;
+  concurrent_connections: number;
+  ingress_bytes: number;
+  egress_bytes: number;
+  transferred_bytes: number;
+  measured_at: string;
+  sfu_participants: number;
+  p2p_connections: number;
+  room_limit: null;
+  endpoints: RealtimeServiceEndpoints;
+}
+
+export interface CreateRealtimeAccessCredentialRequest {
+  permissions: string[];
+  expires_in_seconds?: number;
+}
+
+export interface RealtimeAccessCredential {
+  context_id: string;
+  organization_id: string;
+  project_id: string;
+  service_instance_id: string;
+  principal_id: string;
+  issued_at: string | number;
+  expires_at: string | number;
+  headers: Record<string, string>;
+  endpoints: string[];
 }
 
 export type AuditDecision = "allow" | "deny" | "error";

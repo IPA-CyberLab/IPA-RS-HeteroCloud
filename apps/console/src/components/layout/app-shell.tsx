@@ -48,7 +48,11 @@ export function AppShell() {
     onError: (error) => setLogoutError(getApiErrorMessage(error)),
   });
 
-  const title = routeTitles[location.pathname] ?? "HeteroCloud";
+  const title =
+    routeTitles[location.pathname] ??
+    (location.pathname.startsWith("/realtime/services/")
+      ? "リアルタイム通信サービス / 詳細"
+      : "HeteroCloud");
   return (
     <div className="min-h-screen bg-[#f7f8fa] text-zinc-900">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 lg:block">

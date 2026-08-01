@@ -6,9 +6,9 @@ import {
   Gauge,
   KeyRound,
   Link2,
+  RadioTower,
   Settings,
   Users,
-  Workflow,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -42,7 +42,11 @@ export const navigationSections: NavigationSection[] = [
   {
     label: "サービス",
     items: [
-      { label: "Flow インスタンス", to: "/flow/instances", icon: Workflow },
+      {
+        label: "リアルタイム通信",
+        to: "/realtime/services",
+        icon: RadioTower,
+      },
     ],
   },
   {
@@ -61,7 +65,7 @@ export const routeTitles: Record<string, string> = {
   "/iam/principals": "IAM / プリンシパル",
   "/iam/policies": "IAM / ポリシー",
   "/iam/bindings": "IAM / バインディング",
-  "/flow/instances": "Flow / インスタンス",
+  "/realtime/services": "リアルタイム通信サービス",
   "/audit-logs": "監査ログ",
   "/settings": "設定",
 };
