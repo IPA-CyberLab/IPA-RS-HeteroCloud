@@ -111,12 +111,12 @@ describe("RealtimeServiceDetailPage", () => {
       <QueryClientProvider client={queryClient}>
         <MemoryRouter
           initialEntries={[
-            `/realtime/services/${service.id}`,
+            `/flow/services/${service.id}`,
           ]}
         >
           <Routes>
             <Route
-              path="/realtime/services/:serviceId"
+              path="/flow/services/:serviceId"
               element={<RealtimeServiceDetailPage />}
             />
           </Routes>

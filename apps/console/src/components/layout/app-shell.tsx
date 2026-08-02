@@ -50,7 +50,7 @@ export function AppShell() {
 
   const title =
     routeTitles[location.pathname] ??
-    (location.pathname.startsWith("/realtime/services/")
+    (location.pathname.startsWith("/flow/services/")
       ? "Flow / 詳細"
       : "HeteroCloud");
   return (

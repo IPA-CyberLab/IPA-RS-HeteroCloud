@@ -142,11 +142,7 @@ export function App() {
                 }
               />
               <Route
-                path="/realtime"
-                element={<Navigate to="/realtime/services" replace />}
-              />
-              <Route
-                path="/realtime/services"
+                path="/flow/services"
                 element={
                   <LazyPage>
                     <RealtimeServicesPage />
@@ -154,7 +150,7 @@ export function App() {
                 }
               />
               <Route
-                path="/realtime/services/:serviceId"
+                path="/flow/services/:serviceId"
                 element={
                   <LazyPage>
                     <RealtimeServiceDetailPage />

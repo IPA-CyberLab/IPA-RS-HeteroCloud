@@ -110,7 +110,7 @@ export function OverviewPage() {
       label: "Flow",
       value: serviceItems.length,
       icon: RadioTower,
-      to: "/realtime/services",
+      to: "/flow/services",
     },
     {
       label: "IAMプリンシパル",
@@ -130,7 +130,7 @@ export function OverviewPage() {
     {
       title: "Flow",
       description: "WebRTC、LiveKit、STUN、TURN",
-      to: "/realtime/services",
+      to: "/flow/services",
       icon: RadioTower,
     },
     {
@@ -296,7 +296,7 @@ export function OverviewPage() {
           <div className="flex items-center justify-between border-b border-zinc-200 bg-zinc-50 px-4 py-3">
             <h2 className="text-sm font-semibold">最近のFlow</h2>
             <Button asChild variant="ghost" size="sm">
-              <Link to="/realtime/services">すべて表示</Link>
+              <Link to="/flow/services">すべて表示</Link>
             </Button>
           </div>
           {serviceItems.length === 0 ? (
@@ -320,7 +320,7 @@ export function OverviewPage() {
                     <TableRow key={serviceItem.id}>
                       <TableCell>
                         <Link
-                          to={`/realtime/services/${serviceItem.id}`}
+                          to={`/flow/services/${serviceItem.id}`}
                           className="font-medium text-emerald-800 hover:underline"
                         >
                           {serviceItem.name}

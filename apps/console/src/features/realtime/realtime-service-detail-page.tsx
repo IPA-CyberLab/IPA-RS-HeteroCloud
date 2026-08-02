@@ -158,7 +158,7 @@ export function RealtimeServiceDetailPage() {
       await queryClient.invalidateQueries({
         queryKey: ["organizations", organizationId, "realtime", "services"],
       });
-      navigate("/realtime/services", { replace: true });
+      navigate("/flow/services", { replace: true });
     },
   });
 
@@ -287,7 +287,7 @@ export function RealtimeServiceDetailPage() {
   return (
     <div className="space-y-6">
       <Link
-        to="/realtime/services"
+        to="/flow/services"
         className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-800 hover:underline"
       >
         <ArrowLeft className="size-4" />

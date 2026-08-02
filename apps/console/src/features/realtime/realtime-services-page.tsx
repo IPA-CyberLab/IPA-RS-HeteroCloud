@@ -139,7 +139,7 @@ export function RealtimeServicesPage() {
             </span>
             <div className="min-w-0">
               <Link
-                to={`/realtime/services/${row.original.id}`}
+                to={`/flow/services/${row.original.id}`}
                 className="font-medium text-emerald-800 hover:underline"
               >
                 {row.original.name}
@@ -232,7 +232,7 @@ export function RealtimeServicesPage() {
         cell: ({ row }) => (
           <Button asChild variant="ghost" size="icon">
             <Link
-              to={`/realtime/services/${row.original.id}`}
+              to={`/flow/services/${row.original.id}`}
               title={`${row.original.name}の詳細`}
               aria-label={`${row.original.name}の詳細`}
             >
@@ -396,7 +396,7 @@ export function RealtimeServicesPage() {
         columns={columns}
         data={serviceItems}
         getRowId={(service) => service.id}
-        onRowClick={(service) => navigate(`/realtime/services/${service.id}`)}
+        onRowClick={(service) => navigate(`/flow/services/${service.id}`)}
         getRowAriaLabel={(service) => `${service.name}の詳細を開く`}
         searchPlaceholder="名前、プロジェクト、リージョン、状態で検索"
         emptyTitle="Flowがありません"

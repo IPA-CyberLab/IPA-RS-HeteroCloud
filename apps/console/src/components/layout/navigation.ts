@@ -44,7 +44,7 @@ export const navigationSections: NavigationSection[] = [
     items: [
       {
         label: "Flow",
-        to: "/realtime/services",
+        to: "/flow/services",
         icon: RadioTower,
       },
     ],
@@ -65,7 +65,7 @@ export const routeTitles: Record<string, string> = {
   "/iam/principals": "IAM / プリンシパル",
   "/iam/policies": "IAM / ポリシー",
   "/iam/bindings": "IAM / バインディング",
-  "/realtime/services": "Flow",
+  "/flow/services": "Flow",
   "/audit-logs": "監査ログ",
   "/settings": "設定",
 };
