@@ -8,17 +8,10 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
-  ChevronLeft,
-  ChevronRight,
-  Search,
-} from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Search } from "lucide-react";
 import { useState } from "react";
 import { EmptyState } from "@/components/shared/empty-state";
-import { Button } from "@/components/ui/button";
+import { TablePagination } from "@/components/shared/table-pagination";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -80,8 +73,6 @@ export function DataTable<TData>({
   const filteredCount = table.getFilteredRowModel().rows.length;
   const pageIndex = table.getState().pagination.pageIndex;
   const pageSize = table.getState().pagination.pageSize;
-  const firstRow = filteredCount === 0 ? 0 : pageIndex * pageSize + 1;
-  const lastRow = Math.min((pageIndex + 1) * pageSize, filteredCount);
 
   return (
     <section className="overflow-hidden border border-zinc-200 bg-white">
@@ -190,42 +181,15 @@ export function DataTable<TData>({
         </Table>
       )}
 
-      <div
-        className={cn(
-          "flex min-h-14 items-center justify-between gap-4 border-t border-zinc-200 px-4 py-2",
-          filteredCount === 0 && "hidden",
-        )}
-      >
-        <span className="text-xs text-zinc-500">
-          {formatNumber(firstRow)}–{formatNumber(lastRow)} /{" "}
-          {formatNumber(filteredCount)}
-        </span>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            title="前のページ"
-            aria-label="前のページ"
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}
-          >
-            <ChevronLeft />
-          </Button>
-          <span className="min-w-16 text-center text-xs text-zinc-600">
-            {pageIndex + 1} / {table.getPageCount()}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            title="次のページ"
-            aria-label="次のページ"
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}
-          >
-            <ChevronRight />
-          </Button>
-        </div>
-      </div>
+      {filteredCount > 0 ? (
+        <TablePagination
+          pageIndex={pageIndex}
+          pageCount={table.getPageCount()}
+          pageSize={pageSize}
+          totalItems={filteredCount}
+          onPageChange={table.setPageIndex}
+        />
+      ) : null}
     </section>
   );
 }

@@ -9,9 +9,10 @@ import {
   RefreshCw,
   RotateCw,
 } from "lucide-react";
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FormError } from "@/components/shared/form-error";
+import { TablePagination } from "@/components/shared/table-pagination";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -60,6 +61,8 @@ type SecretResult = {
 };
 
 type ResourceStatus = "active" | "expired" | "revoked";
+
+const ACCESS_CONTEXT_PAGE_SIZE = 10;
 
 const permissionLabels = new Map<string, string>(
   realtimePermissions.map((permission) => [permission.value, permission.label]),
@@ -160,6 +163,31 @@ export function DeveloperCredentialsSection({
     useState<RealtimeDeveloperCredential | null>(null);
   const [revokeContextTarget, setRevokeContextTarget] =
     useState<RealtimeAccessContext | null>(null);
+  const [accessContextPage, setAccessContextPage] = useState(0);
+
+  const accessContextItems = contexts.data?.items ?? [];
+  const accessContextPageCount = Math.max(
+    1,
+    Math.ceil(accessContextItems.length / ACCESS_CONTEXT_PAGE_SIZE),
+  );
+  const resolvedAccessContextPage = Math.min(
+    accessContextPage,
+    accessContextPageCount - 1,
+  );
+  const visibleAccessContexts = accessContextItems.slice(
+    resolvedAccessContextPage * ACCESS_CONTEXT_PAGE_SIZE,
+    (resolvedAccessContextPage + 1) * ACCESS_CONTEXT_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setAccessContextPage((current) =>
+      Math.min(current, accessContextPageCount - 1),
+    );
+  }, [accessContextPageCount]);
+
+  useEffect(() => {
+    setAccessContextPage(0);
+  }, [organizationId, serviceId]);
 
   const invalidateCredentials = () =>
     queryClient.invalidateQueries({ queryKey: credentialsOptions.queryKey });
@@ -558,7 +586,7 @@ export function DeveloperCredentialsSection({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {contexts.data.items.map((context) => {
+                {visibleAccessContexts.map((context) => {
                   const status = resourceStatus(
                     context.expires_at,
                     context.revoked_at,
@@ -607,6 +635,13 @@ export function DeveloperCredentialsSection({
                 })}
               </TableBody>
             </Table>
+            <TablePagination
+              pageIndex={resolvedAccessContextPage}
+              pageCount={accessContextPageCount}
+              pageSize={ACCESS_CONTEXT_PAGE_SIZE}
+              totalItems={accessContextItems.length}
+              onPageChange={setAccessContextPage}
+            />
           </div>
         )}
       </section>

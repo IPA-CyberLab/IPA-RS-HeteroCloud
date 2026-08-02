@@ -254,6 +254,35 @@ describe("DeveloperCredentialsSection", () => {
     );
   });
 
+  it("発行済み短期アクセスを10件ずつページ表示する", async () => {
+    const user = userEvent.setup();
+    const accessContexts = Array.from({ length: 12 }, (_, index) => ({
+      ...activeContext,
+      context_id: `context-${index + 1}`,
+      principal_id: `principal-${index + 1}`,
+    }));
+    vi.mocked(api.realtime.services.listAccessContexts).mockResolvedValue({
+      items: accessContexts,
+    });
+    renderSection();
+
+    expect(await screen.findByText("principal-1")).toBeInTheDocument();
+    expect(screen.getByText("principal-10")).toBeInTheDocument();
+    expect(screen.queryByText("principal-11")).not.toBeInTheDocument();
+    expect(screen.getByText("1–10 / 12")).toBeInTheDocument();
+    expect(screen.getByText("1 / 2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "前のページ" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "次のページ" }));
+
+    expect(screen.queryByText("principal-1")).not.toBeInTheDocument();
+    expect(screen.getByText("principal-11")).toBeInTheDocument();
+    expect(screen.getByText("principal-12")).toBeInTheDocument();
+    expect(screen.getByText("11–12 / 12")).toBeInTheDocument();
+    expect(screen.getByText("2 / 2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "次のページ" })).toBeDisabled();
+  });
+
   it("サービスが準備未完了でも既存認証情報を失効できる", async () => {
     vi.mocked(api.realtime.services.listDeveloperCredentials).mockResolvedValue({
       items: [developerCredential],
