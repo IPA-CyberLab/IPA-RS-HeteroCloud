@@ -7,6 +7,9 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub const PROVIDER_TOKEN_TTL_SECONDS: i64 = 60;
+pub const PRINCIPAL_CONTEXT_REVOKE_ACTION: &str = "principal-context.revoke";
+pub const PRINCIPAL_CONTEXT_REVOCATION_GRACE_SECONDS: i64 = 15;
+pub type PrincipalContextId = Uuid;
 const _: () = assert!(PROVIDER_TOKEN_TTL_SECONDS <= 60);
 
 pub struct ProviderSigner {
@@ -100,6 +103,12 @@ pub struct ReconcileRequest {
     pub spec: Value,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrincipalContextRevocationRequest {
+    pub expires_at: i64,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AcceptedOperation {
     pub operation_id: Uuid,
@@ -117,7 +126,10 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
-    use super::AcceptedOperation;
+    use super::{
+        AcceptedOperation, PRINCIPAL_CONTEXT_REVOCATION_GRACE_SECONDS,
+        PRINCIPAL_CONTEXT_REVOKE_ACTION, PrincipalContextRevocationRequest,
+    };
 
     #[test]
     fn accepted_operation_requires_provider_status() -> Result<(), Box<dyn std::error::Error>> {
@@ -134,6 +146,27 @@ mod tests {
         assert!(
             serde_json::from_value::<AcceptedOperation>(json!({
                 "operation_id": operation_id
+            }))
+            .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn principal_context_revocation_contract_is_stable() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(PRINCIPAL_CONTEXT_REVOKE_ACTION, "principal-context.revoke");
+        assert_eq!(PRINCIPAL_CONTEXT_REVOCATION_GRACE_SECONDS, 15);
+        let payload = PrincipalContextRevocationRequest {
+            expires_at: 1_785_480_300,
+        };
+        assert_eq!(
+            serde_json::to_value(payload)?,
+            json!({"expires_at": 1_785_480_300_i64})
+        );
+        assert!(
+            serde_json::from_value::<PrincipalContextRevocationRequest>(json!({
+                "expires_at": 1_785_480_300_i64,
+                "context_id": Uuid::nil()
             }))
             .is_err()
         );

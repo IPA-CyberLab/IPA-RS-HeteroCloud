@@ -227,6 +227,39 @@ export interface RealtimeAccessCredential {
   };
 }
 
+export interface RealtimeDeveloperCredential {
+  id: string;
+  name: string;
+  prefix: string;
+  permissions: string[];
+  expires_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+export interface CreateRealtimeDeveloperCredentialRequest {
+  name: string;
+  expires_in_days: number;
+  permissions: string[];
+}
+
+export interface RealtimeDeveloperCredentialSecret
+  extends RealtimeDeveloperCredential {
+  credential: string;
+  mint_endpoint: string;
+}
+
+export interface RealtimeAccessContext {
+  context_id: string;
+  credential_id: string | null;
+  principal_id: string;
+  permissions: string[];
+  issued_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+}
+
 export type AuditDecision = "allow" | "deny" | "error";
 
 export interface AuditEvent {

@@ -11,6 +11,20 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.6
+        env:
+          POSTGRES_USER: heterocloud
+          POSTGRES_PASSWORD: heterocloud-test-password
+          POSTGRES_DB: heterocloud_test_release
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U heterocloud -d heterocloud_test_release"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
 
@@ -23,6 +37,18 @@ jobs:
 
       - run: cargo fmt --all -- --check
       - run: cargo test --workspace --locked
+      - name: PostgreSQL integration tests
+        env:
+          TEST_DATABASE_URL: postgres://heterocloud:heterocloud-test-password@127.0.0.1:5432/heterocloud_test_release
+        run: |
+          HETEROCLOUD_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+            cargo test --locked -p heterocloud-api --test registration
+          HETEROCLOUD_FLOW_CREDENTIAL_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+            cargo test --locked -p heterocloud-api --test flow_developer_credentials
+          HETEROCLOUD_STORE_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+            cargo test --locked -p heterocloud-store --test reconcile
+          HETEROCLOUD_STORE_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+            cargo test --locked -p heterocloud-store --test flow_credentials
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - uses: leanprover/lean-action@v1

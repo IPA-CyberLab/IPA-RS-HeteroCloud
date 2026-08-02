@@ -7,6 +7,7 @@ import type {
   CreatePolicyRequest,
   CreateProjectRequest,
   CreateRealtimeAccessCredentialRequest,
+  CreateRealtimeDeveloperCredentialRequest,
   CreateRealtimeServiceRequest,
   CreateServiceAccountRequest,
   ErrorEnvelope,
@@ -17,6 +18,9 @@ import type {
   Principal,
   Project,
   RealtimeAccessCredential,
+  RealtimeAccessContext,
+  RealtimeDeveloperCredential,
+  RealtimeDeveloperCredentialSecret,
   RealtimeService,
   RealtimeServiceMetricHistory,
   RealtimeServiceMetrics,
@@ -368,6 +372,78 @@ export class HeteroCloudApiClient {
             method: "POST",
             body: input,
           },
+        ),
+      listDeveloperCredentials: (
+        organizationId: string,
+        serviceId: string,
+        signal?: AbortSignal,
+      ) =>
+        this.request<CollectionResponse<RealtimeDeveloperCredential>>(
+          organizationPath(
+            organizationId,
+            `realtime/services/${encodeURIComponent(serviceId)}/developer-credentials`,
+          ),
+          { signal },
+        ),
+      createDeveloperCredential: (
+        organizationId: string,
+        serviceId: string,
+        input: CreateRealtimeDeveloperCredentialRequest,
+      ) =>
+        this.request<RealtimeDeveloperCredentialSecret>(
+          organizationPath(
+            organizationId,
+            `realtime/services/${encodeURIComponent(serviceId)}/developer-credentials`,
+          ),
+          { method: "POST", body: input },
+        ),
+      rotateDeveloperCredential: (
+        organizationId: string,
+        serviceId: string,
+        credentialId: string,
+      ) =>
+        this.request<RealtimeDeveloperCredentialSecret>(
+          organizationPath(
+            organizationId,
+            `realtime/services/${encodeURIComponent(serviceId)}/developer-credentials/${encodeURIComponent(credentialId)}/rotate`,
+          ),
+          { method: "POST", body: {} },
+        ),
+      revokeDeveloperCredential: (
+        organizationId: string,
+        serviceId: string,
+        credentialId: string,
+      ) =>
+        this.request<void>(
+          organizationPath(
+            organizationId,
+            `realtime/services/${encodeURIComponent(serviceId)}/developer-credentials/${encodeURIComponent(credentialId)}`,
+          ),
+          { method: "DELETE" },
+        ),
+      listAccessContexts: (
+        organizationId: string,
+        serviceId: string,
+        signal?: AbortSignal,
+      ) =>
+        this.request<CollectionResponse<RealtimeAccessContext>>(
+          organizationPath(
+            organizationId,
+            `realtime/services/${encodeURIComponent(serviceId)}/access-contexts`,
+          ),
+          { signal },
+        ),
+      revokeAccessContext: (
+        organizationId: string,
+        serviceId: string,
+        contextId: string,
+      ) =>
+        this.request<void>(
+          organizationPath(
+            organizationId,
+            `realtime/services/${encodeURIComponent(serviceId)}/access-contexts/${encodeURIComponent(contextId)}`,
+          ),
+          { method: "DELETE" },
         ),
       metrics: (
         organizationId: string,

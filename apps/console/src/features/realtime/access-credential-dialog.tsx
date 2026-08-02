@@ -103,15 +103,17 @@ export function AccessCredentialDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button disabled={disabled}>
+        <Button variant="secondary" disabled={disabled}>
           <KeyRound />
-          認証情報を発行
+          テスト用短期アクセス
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle>短期アクセス認証情報</DialogTitle>
-          <DialogDescription>{serviceName}</DialogDescription>
+          <DialogTitle>短期アクセスを手動発行</DialogTitle>
+          <DialogDescription>
+            {serviceName} の動作確認用です。開発者連携には開発者認証情報を使用します。
+          </DialogDescription>
         </DialogHeader>
 
         {credential ? (

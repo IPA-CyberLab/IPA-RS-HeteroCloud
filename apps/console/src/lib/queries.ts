@@ -105,6 +105,52 @@ export function realtimeServiceMetricHistoryQueryOptions(
   });
 }
 
+export function realtimeDeveloperCredentialsQueryOptions(
+  organizationId: string,
+  serviceId: string,
+) {
+  return queryOptions({
+    queryKey: [
+      "organizations",
+      organizationId,
+      "realtime",
+      "services",
+      serviceId,
+      "developer-credentials",
+    ],
+    queryFn: ({ signal }) =>
+      api.realtime.services.listDeveloperCredentials(
+        organizationId,
+        serviceId,
+        signal,
+      ),
+  });
+}
+
+export function realtimeAccessContextsQueryOptions(
+  organizationId: string,
+  serviceId: string,
+) {
+  return queryOptions({
+    queryKey: [
+      "organizations",
+      organizationId,
+      "realtime",
+      "services",
+      serviceId,
+      "access-contexts",
+    ],
+    queryFn: ({ signal }) =>
+      api.realtime.services.listAccessContexts(
+        organizationId,
+        serviceId,
+        signal,
+      ),
+    refetchInterval: 15_000,
+    staleTime: 5_000,
+  });
+}
+
 export function auditEventsQueryOptions(organizationId: string) {
   return queryOptions({
     queryKey: ["organizations", organizationId, "audit-events"],

@@ -89,12 +89,23 @@ dedicated file readable only by the API process owner or its dedicated runtime
 group, and is not the Ed25519 key used by the provider worker. Responses
 containing signed headers are marked `Cache-Control: no-store`.
 
-`flow:IssueAccessContext` is necessary but cannot delegate permissions by
-itself. Each requested Flow permission requires its fixed instance-scoped IAM
-action, and the existing explicit-deny/default-deny semantics apply to every
-mapping. Each decision is audited before any credential is signed. Access
-contexts are issued only after generation-guarded reconciliation has moved the
-service instance to `ready`.
+Long-lived `hcf_...` developer credentials are scoped to one Flow service,
+store only a SHA-256 hash, expire within 365 days, and carry an explicit
+permission ceiling. The complete secret is returned only at creation or
+rotation and must remain on the application backend. Developer mint and
+revoke audit records contain the credential ID but never its secret, hash, or
+prefix. Revocation or rotation transactionally revokes every active child
+context.
+
+`realtime:IssueAccessCredential` is necessary but cannot delegate permissions
+by itself. Each requested Flow permission requires its fixed instance-scoped
+IAM action, and the existing explicit-deny/default-deny semantics apply to
+every mapping. Each decision is audited before any credential is signed.
+Access contexts are persisted before issuance and are issued only after
+generation-guarded reconciliation has moved the service instance to `ready`.
+Flow checks shared PostgreSQL revocation state on every REST request and at
+P2P signaling authentication and heartbeat. Credential-status failures are
+fail-closed.
 
 Secure mode accepts only HTTPS Flow public endpoints. Production configures
 the single `flow.<domain>` endpoint, backed by the provider-neutral

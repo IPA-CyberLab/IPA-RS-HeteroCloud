@@ -13,6 +13,9 @@ use uuid::Uuid;
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
 pub const MAX_REALTIME_METRIC_HISTORY_SAMPLES: i64 = 240;
+pub const MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE: i64 = 100;
+pub const MAX_FLOW_DEVELOPER_CREDENTIALS_PER_SERVICE: i64 = 100;
+pub const MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE: i64 = 100;
 
 #[derive(Clone)]
 pub struct Store {
@@ -907,6 +910,563 @@ impl Store {
         .map_err(StoreError::from)
     }
 
+    pub async fn create_flow_developer_credential(
+        &self,
+        input: NewFlowDeveloperCredential<'_>,
+    ) -> Result<FlowDeveloperCredentialRecord, StoreError> {
+        if input.permissions.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(StoreError::Conflict);
+        }
+        let mut transaction = self.pool.begin().await?;
+        let service_exists = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id
+             FROM service_instances
+             WHERE id = $1 AND organization_id = $2 AND provider = 'flow'
+             FOR UPDATE",
+        )
+        .bind(input.service_instance_id.0)
+        .bind(input.organization_id.0)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .is_some();
+        if !service_exists {
+            return Err(StoreError::NotFound);
+        }
+        let active_count = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)
+             FROM flow_developer_credentials
+             WHERE service_instance_id = $1
+               AND revoked_at IS NULL
+               AND expires_at > now()",
+        )
+        .bind(input.service_instance_id.0)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if active_count >= MAX_FLOW_DEVELOPER_CREDENTIALS_PER_SERVICE {
+            return Err(StoreError::Conflict);
+        }
+        let row = sqlx::query_as::<_, FlowDeveloperCredentialRecord>(
+            "INSERT INTO flow_developer_credentials
+                (id, organization_id, service_instance_id, created_by, name,
+                 prefix, secret_hash, permissions, expires_at, created_at)
+             SELECT $1, $2, $3, p.id, $5, $6, $7, $8, $9, $10
+             FROM principals p
+             WHERE p.id = $4 AND p.organization_id = $2 AND p.enabled = true
+             RETURNING id, name, prefix, permissions, expires_at, last_used_at,
+                       revoked_at, created_at",
+        )
+        .bind(Uuid::now_v7())
+        .bind(input.organization_id.0)
+        .bind(input.service_instance_id.0)
+        .bind(input.created_by.0)
+        .bind(input.name)
+        .bind(input.prefix)
+        .bind(input.secret_hash.as_slice())
+        .bind(input.permissions.to_vec())
+        .bind(input.expires_at)
+        .bind(input.created_at)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        transaction.commit().await?;
+        Ok(row)
+    }
+
+    pub async fn list_flow_developer_credentials(
+        &self,
+        organization_id: OrganizationId,
+        service_instance_id: ServiceInstanceId,
+        limit: i64,
+    ) -> Result<Vec<FlowDeveloperCredentialRecord>, StoreError> {
+        sqlx::query_as::<_, FlowDeveloperCredentialRecord>(
+            "SELECT c.id, c.name, c.prefix, c.permissions, c.expires_at,
+                    c.last_used_at, c.revoked_at, c.created_at
+             FROM flow_developer_credentials c
+             JOIN service_instances s ON s.id = c.service_instance_id
+             WHERE c.organization_id = $1
+               AND c.service_instance_id = $2
+               AND s.organization_id = $1
+               AND s.provider = 'flow'
+             ORDER BY c.created_at DESC, c.id DESC
+             LIMIT $3",
+        )
+        .bind(organization_id.0)
+        .bind(service_instance_id.0)
+        .bind(limit.clamp(1, MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StoreError::from)
+    }
+
+    pub async fn flow_developer_credential(
+        &self,
+        organization_id: OrganizationId,
+        service_instance_id: ServiceInstanceId,
+        credential_id: Uuid,
+    ) -> Result<Option<FlowDeveloperCredentialRecord>, StoreError> {
+        sqlx::query_as::<_, FlowDeveloperCredentialRecord>(
+            "SELECT id, name, prefix, permissions, expires_at, last_used_at,
+                    revoked_at, created_at
+             FROM flow_developer_credentials
+             WHERE id = $1 AND organization_id = $2 AND service_instance_id = $3",
+        )
+        .bind(credential_id)
+        .bind(organization_id.0)
+        .bind(service_instance_id.0)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::from)
+    }
+
+    pub async fn revoke_flow_developer_credential(
+        &self,
+        organization_id: OrganizationId,
+        service_instance_id: ServiceInstanceId,
+        credential_id: Uuid,
+        principal_id: PrincipalId,
+    ) -> Result<FlowDeveloperCredentialRevocation, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        let scope = sqlx::query_as::<_, FlowDeveloperCredentialMutationScopeRow>(
+            "SELECT c.id AS credential_id, c.revoked_at, c.organization_id,
+                    c.service_instance_id, s.project_id, s.generation
+             FROM flow_developer_credentials c
+             JOIN service_instances s ON s.id = c.service_instance_id
+             WHERE c.id = $1 AND c.organization_id = $2
+               AND c.service_instance_id = $3 AND s.provider = 'flow'
+             FOR UPDATE OF c",
+        )
+        .bind(credential_id)
+        .bind(organization_id.0)
+        .bind(service_instance_id.0)
+        .fetch_optional(&mut *transaction)
+        .await?;
+        let Some(scope) = scope else {
+            transaction.commit().await?;
+            return Ok(FlowDeveloperCredentialRevocation {
+                credential_revoked: false,
+                contexts_revoked: 0,
+            });
+        };
+        let credential_revoked = scope.revoked_at.is_none();
+        if credential_revoked {
+            sqlx::query("UPDATE flow_developer_credentials SET revoked_at = now() WHERE id = $1")
+                .bind(credential_id)
+                .execute(&mut *transaction)
+                .await?;
+        }
+        let contexts_revoked =
+            cascade_flow_developer_credential_contexts(&mut transaction, &scope, principal_id)
+                .await?;
+        transaction.commit().await?;
+        Ok(FlowDeveloperCredentialRevocation {
+            credential_revoked,
+            contexts_revoked,
+        })
+    }
+
+    pub async fn rotate_flow_developer_credential(
+        &self,
+        organization_id: OrganizationId,
+        service_instance_id: ServiceInstanceId,
+        credential_id: Uuid,
+        prefix: &str,
+        secret_hash: &[u8; 32],
+        principal_id: PrincipalId,
+    ) -> Result<FlowDeveloperCredentialRotation, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        let scope = sqlx::query_as::<_, FlowDeveloperCredentialMutationScopeRow>(
+            "SELECT c.id AS credential_id, c.revoked_at, c.organization_id,
+                    c.service_instance_id, s.project_id, s.generation
+             FROM flow_developer_credentials c
+             JOIN service_instances s ON s.id = c.service_instance_id
+             WHERE c.id = $1 AND c.organization_id = $2
+               AND c.service_instance_id = $3 AND c.revoked_at IS NULL
+               AND c.expires_at > now() AND s.provider = 'flow'
+             FOR UPDATE OF c",
+        )
+        .bind(credential_id)
+        .bind(organization_id.0)
+        .bind(service_instance_id.0)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(StoreError::Conflict)?;
+        let row = sqlx::query_as::<_, FlowDeveloperCredentialRecord>(
+            "UPDATE flow_developer_credentials
+             SET prefix = $4, secret_hash = $5, last_used_at = NULL
+             WHERE id = $1 AND organization_id = $2 AND service_instance_id = $3
+             RETURNING id, name, prefix, permissions, expires_at, last_used_at,
+                       revoked_at, created_at",
+        )
+        .bind(credential_id)
+        .bind(organization_id.0)
+        .bind(service_instance_id.0)
+        .bind(prefix)
+        .bind(secret_hash.as_slice())
+        .fetch_one(&mut *transaction)
+        .await?;
+        let contexts_revoked =
+            cascade_flow_developer_credential_contexts(&mut transaction, &scope, principal_id)
+                .await?;
+        transaction.commit().await?;
+        Ok(FlowDeveloperCredentialRotation {
+            credential: row,
+            contexts_revoked,
+        })
+    }
+
+    pub async fn record_flow_access_context(
+        &self,
+        input: &NewFlowAccessContext<'_>,
+    ) -> Result<(), StoreError> {
+        let result = sqlx::query(
+            "INSERT INTO flow_access_contexts
+                (context_id, organization_id, project_id, service_instance_id,
+                 credential_id, principal_id, permissions, issued_at, expires_at)
+             SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
+             FROM service_instances s
+             WHERE s.id = $4 AND s.organization_id = $2 AND s.project_id = $3
+               AND s.provider = 'flow' AND s.state = 'ready'",
+        )
+        .bind(input.context_id)
+        .bind(input.organization_id.0)
+        .bind(input.project_id.0)
+        .bind(input.service_instance_id.0)
+        .bind(input.credential_id)
+        .bind(input.principal_id.0)
+        .bind(input.permissions.to_vec())
+        .bind(input.issued_at)
+        .bind(input.expires_at)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() != 1 {
+            return Err(StoreError::Conflict);
+        }
+        Ok(())
+    }
+
+    pub async fn mint_flow_access_context_with_developer_credential(
+        &self,
+        input: &DeveloperCredentialMint<'_>,
+    ) -> Result<DeveloperCredentialMintOutcome, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        let row = sqlx::query_as::<_, DeveloperCredentialMintRow>(
+            "SELECT c.id AS credential_id, c.created_by, c.organization_id,
+                    c.service_instance_id, c.permissions, s.project_id,
+                    s.state AS service_state, s.spec AS service_spec
+             FROM flow_developer_credentials c
+             JOIN service_instances s ON s.id = c.service_instance_id
+             WHERE c.prefix = $1 AND c.secret_hash = $2
+               AND c.revoked_at IS NULL AND c.expires_at > now()
+               AND s.provider = 'flow'
+             FOR UPDATE OF c",
+        )
+        .bind(input.prefix)
+        .bind(input.secret_hash.as_slice())
+        .fetch_optional(&mut *transaction)
+        .await?;
+        let Some(row) = row else {
+            transaction.rollback().await?;
+            return Ok(DeveloperCredentialMintOutcome::InvalidCredential);
+        };
+        if row.service_state != "ready" {
+            transaction.rollback().await?;
+            return Ok(DeveloperCredentialMintOutcome::ServiceInstanceNotReady);
+        }
+        if !input
+            .permissions
+            .iter()
+            .all(|permission| row.permissions.contains(permission))
+        {
+            transaction.rollback().await?;
+            return Ok(DeveloperCredentialMintOutcome::PermissionDenied);
+        }
+        sqlx::query(
+            "INSERT INTO flow_access_contexts
+                (context_id, organization_id, project_id, service_instance_id,
+                 credential_id, principal_id, permissions, issued_at, expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        )
+        .bind(input.context_id)
+        .bind(row.organization_id)
+        .bind(row.project_id)
+        .bind(row.service_instance_id)
+        .bind(row.credential_id)
+        .bind(input.principal_id.0)
+        .bind(input.permissions.to_vec())
+        .bind(input.issued_at)
+        .bind(input.expires_at)
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query("UPDATE flow_developer_credentials SET last_used_at = now() WHERE id = $1")
+            .bind(row.credential_id)
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query(
+            "INSERT INTO audit_events
+                (organization_id, principal_id, request_id, action, resource,
+                 decision, reason, metadata)
+             VALUES ($1, $2, $3, 'realtime:MintAccessCredential', $4,
+                     'allow', 'developer_credential_scope', $5)",
+        )
+        .bind(row.organization_id)
+        .bind(row.created_by)
+        .bind(input.context_id.to_string())
+        .bind(format!(
+            "hc:org:{}:realtime/service/{}",
+            row.organization_id, row.service_instance_id
+        ))
+        .bind(serde_json::json!({
+            "authentication": {
+                "actor": "flow_developer_credential",
+                "credential_id": row.credential_id,
+            },
+            "context_id": input.context_id,
+            "service_instance_id": ServiceInstanceId(row.service_instance_id),
+            "issued_principal_id": input.principal_id,
+            "permissions": input.permissions,
+            "expires_at": input.expires_at,
+        }))
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(DeveloperCredentialMintOutcome::Issued(
+            DeveloperCredentialMintScope {
+                credential_id: row.credential_id,
+                organization_id: OrganizationId(row.organization_id),
+                project_id: ProjectId(row.project_id),
+                service_instance_id: ServiceInstanceId(row.service_instance_id),
+                service_spec: row.service_spec,
+            },
+        ))
+    }
+
+    pub async fn list_flow_access_contexts(
+        &self,
+        organization_id: OrganizationId,
+        service_instance_id: ServiceInstanceId,
+        limit: i64,
+    ) -> Result<Vec<FlowAccessContextRecord>, StoreError> {
+        sqlx::query_as::<_, FlowAccessContextRecord>(
+            "SELECT c.context_id, c.credential_id, c.principal_id, c.permissions,
+                    c.issued_at, c.expires_at, c.revoked_at
+             FROM flow_access_contexts c
+             JOIN service_instances s ON s.id = c.service_instance_id
+             WHERE c.organization_id = $1 AND c.service_instance_id = $2
+               AND s.organization_id = $1 AND s.provider = 'flow'
+             ORDER BY c.issued_at DESC, c.context_id DESC
+             LIMIT $3",
+        )
+        .bind(organization_id.0)
+        .bind(service_instance_id.0)
+        .bind(limit.clamp(1, MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StoreError::from)
+    }
+
+    pub async fn list_flow_access_contexts_for_developer_credential(
+        &self,
+        prefix: &str,
+        secret_hash: &[u8; 32],
+        limit: i64,
+    ) -> Result<Option<Vec<FlowAccessContextRecord>>, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        let credential_id = sqlx::query_scalar::<_, Uuid>(
+            "SELECT c.id
+             FROM flow_developer_credentials c
+             JOIN service_instances s ON s.id = c.service_instance_id
+             WHERE c.prefix = $1 AND c.secret_hash = $2
+               AND c.revoked_at IS NULL AND c.expires_at > now()
+               AND s.provider = 'flow'
+             FOR UPDATE OF c",
+        )
+        .bind(prefix)
+        .bind(secret_hash.as_slice())
+        .fetch_optional(&mut *transaction)
+        .await?;
+        let Some(credential_id) = credential_id else {
+            transaction.rollback().await?;
+            return Ok(None);
+        };
+        let items = sqlx::query_as::<_, FlowAccessContextRecord>(
+            "SELECT context_id, credential_id, principal_id, permissions,
+                    issued_at, expires_at, revoked_at
+             FROM flow_access_contexts
+             WHERE credential_id = $1
+             ORDER BY issued_at DESC, context_id DESC
+             LIMIT $2",
+        )
+        .bind(credential_id)
+        .bind(limit.clamp(1, MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE))
+        .fetch_all(&mut *transaction)
+        .await?;
+        sqlx::query("UPDATE flow_developer_credentials SET last_used_at = now() WHERE id = $1")
+            .bind(credential_id)
+            .execute(&mut *transaction)
+            .await?;
+        transaction.commit().await?;
+        Ok(Some(items))
+    }
+
+    pub async fn revoke_flow_access_context_with_developer_credential(
+        &self,
+        prefix: &str,
+        secret_hash: &[u8; 32],
+        context_id: Uuid,
+    ) -> Result<Option<bool>, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        let credential = sqlx::query_as::<_, DeveloperCredentialContextScopeRow>(
+            "SELECT c.id AS credential_id, c.created_by, c.organization_id,
+                    c.service_instance_id, s.project_id, s.generation
+             FROM flow_developer_credentials c
+             JOIN service_instances s ON s.id = c.service_instance_id
+             WHERE c.prefix = $1 AND c.secret_hash = $2
+               AND c.revoked_at IS NULL AND c.expires_at > now()
+               AND s.provider = 'flow'
+             FOR UPDATE OF c",
+        )
+        .bind(prefix)
+        .bind(secret_hash.as_slice())
+        .fetch_optional(&mut *transaction)
+        .await?;
+        let Some(credential) = credential else {
+            transaction.rollback().await?;
+            return Ok(None);
+        };
+        let context = sqlx::query_as::<_, DeveloperCredentialContextRevocationRow>(
+            "SELECT principal_id, expires_at, revoked_at
+             FROM flow_access_contexts
+             WHERE context_id = $1 AND credential_id = $2
+               AND organization_id = $3 AND service_instance_id = $4
+             FOR UPDATE",
+        )
+        .bind(context_id)
+        .bind(credential.credential_id)
+        .bind(credential.organization_id)
+        .bind(credential.service_instance_id)
+        .fetch_optional(&mut *transaction)
+        .await?;
+        let changed = context
+            .as_ref()
+            .is_some_and(|context| context.revoked_at.is_none());
+        if let Some(context) = context
+            .as_ref()
+            .filter(|context| context.revoked_at.is_none())
+        {
+            sqlx::query("UPDATE flow_access_contexts SET revoked_at = now() WHERE context_id = $1")
+                .bind(context_id)
+                .execute(&mut *transaction)
+                .await?;
+            sqlx::query(
+                "INSERT INTO outbox_events (id, topic, aggregate_id, payload)
+                 VALUES ($1, 'principal-context.revoke', $2, $3)",
+            )
+            .bind(Uuid::now_v7())
+            .bind(context_id)
+            .bind(serde_json::json!({
+                "context_id": context_id,
+                "service_instance_id": ServiceInstanceId(credential.service_instance_id),
+                "organization_id": OrganizationId(credential.organization_id),
+                "project_id": ProjectId(credential.project_id),
+                "principal_id": PrincipalId(credential.created_by),
+                "provider": "flow",
+                "generation": credential.generation,
+                "expires_at": context.expires_at.timestamp(),
+            }))
+            .execute(&mut *transaction)
+            .await?;
+        }
+        sqlx::query("UPDATE flow_developer_credentials SET last_used_at = now() WHERE id = $1")
+            .bind(credential.credential_id)
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query(
+            "INSERT INTO audit_events
+                (organization_id, principal_id, request_id, action, resource,
+                 decision, reason, metadata)
+             VALUES ($1, $2, $3, 'realtime:RevokeAccessContext', $4,
+                     'allow', 'developer_credential_scope', $5)",
+        )
+        .bind(credential.organization_id)
+        .bind(credential.created_by)
+        .bind(Uuid::now_v7().to_string())
+        .bind(format!(
+            "hc:org:{}:realtime/service/{}",
+            credential.organization_id, credential.service_instance_id
+        ))
+        .bind(serde_json::json!({
+            "authentication": {
+                "actor": "flow_developer_credential",
+                "credential_id": credential.credential_id,
+            },
+            "context_id": context_id,
+            "service_instance_id": ServiceInstanceId(credential.service_instance_id),
+            "context_principal_id": context
+                .as_ref()
+                .map(|context| PrincipalId(context.principal_id)),
+            "revoked_now": changed,
+        }))
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(Some(changed))
+    }
+
+    pub async fn revoke_flow_access_context(
+        &self,
+        organization_id: OrganizationId,
+        service_instance_id: ServiceInstanceId,
+        context_id: Uuid,
+        principal_id: PrincipalId,
+    ) -> Result<bool, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        let row = sqlx::query_as::<_, FlowAccessContextRevocationRow>(
+            "SELECT c.expires_at, c.revoked_at, s.project_id, s.generation
+             FROM flow_access_contexts c
+             JOIN service_instances s ON s.id = c.service_instance_id
+             WHERE c.context_id = $1 AND c.organization_id = $2
+               AND c.service_instance_id = $3 AND s.provider = 'flow'
+             FOR UPDATE OF c",
+        )
+        .bind(context_id)
+        .bind(organization_id.0)
+        .bind(service_instance_id.0)
+        .fetch_optional(&mut *transaction)
+        .await?;
+        let Some(row) = row else {
+            transaction.commit().await?;
+            return Ok(false);
+        };
+        if row.revoked_at.is_some() {
+            transaction.commit().await?;
+            return Ok(false);
+        }
+        sqlx::query("UPDATE flow_access_contexts SET revoked_at = now() WHERE context_id = $1")
+            .bind(context_id)
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query(
+            "INSERT INTO outbox_events (id, topic, aggregate_id, payload)
+             VALUES ($1, 'principal-context.revoke', $2, $3)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(context_id)
+        .bind(serde_json::json!({
+            "context_id": context_id,
+            "service_instance_id": service_instance_id,
+            "organization_id": organization_id,
+            "project_id": ProjectId(row.project_id),
+            "principal_id": principal_id,
+            "provider": "flow",
+            "generation": row.generation,
+            "expires_at": row.expires_at.timestamp(),
+        }))
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(true)
+    }
+
     pub async fn create_service_instance(
         &self,
         organization_id: OrganizationId,
@@ -1230,6 +1790,70 @@ impl Store {
     }
 }
 
+async fn cascade_flow_developer_credential_contexts(
+    transaction: &mut Transaction<'_, Postgres>,
+    scope: &FlowDeveloperCredentialMutationScopeRow,
+    principal_id: PrincipalId,
+) -> Result<u64, StoreError> {
+    let contexts = sqlx::query_as::<_, FlowCredentialActiveContextRow>(
+        "SELECT context_id, expires_at
+         FROM flow_access_contexts
+         WHERE credential_id = $1 AND organization_id = $2
+           AND service_instance_id = $3 AND revoked_at IS NULL
+           AND expires_at > now()
+         ORDER BY context_id
+         FOR UPDATE",
+    )
+    .bind(scope.credential_id)
+    .bind(scope.organization_id)
+    .bind(scope.service_instance_id)
+    .fetch_all(&mut **transaction)
+    .await?;
+    if contexts.is_empty() {
+        return Ok(0);
+    }
+    let context_ids = contexts
+        .iter()
+        .map(|context| context.context_id)
+        .collect::<Vec<_>>();
+    let context_count = u64::try_from(contexts.len())
+        .map_err(|_| StoreError::Invariant("developer credential cascade count overflow"))?;
+    let updated = sqlx::query(
+        "UPDATE flow_access_contexts
+         SET revoked_at = now()
+         WHERE context_id = ANY($1) AND revoked_at IS NULL",
+    )
+    .bind(&context_ids)
+    .execute(&mut **transaction)
+    .await?;
+    if updated.rows_affected() != context_count {
+        return Err(StoreError::Invariant(
+            "developer credential context cascade lost a locked row",
+        ));
+    }
+    for context in &contexts {
+        sqlx::query(
+            "INSERT INTO outbox_events (id, topic, aggregate_id, payload)
+             VALUES ($1, 'principal-context.revoke', $2, $3)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(context.context_id)
+        .bind(serde_json::json!({
+            "context_id": context.context_id,
+            "service_instance_id": ServiceInstanceId(scope.service_instance_id),
+            "organization_id": OrganizationId(scope.organization_id),
+            "project_id": ProjectId(scope.project_id),
+            "principal_id": principal_id,
+            "provider": "flow",
+            "generation": scope.generation,
+            "expires_at": context.expires_at.timestamp(),
+        }))
+        .execute(&mut **transaction)
+        .await?;
+    }
+    Ok(context_count)
+}
+
 async fn lookup_user_by_email(
     transaction: &mut Transaction<'_, Postgres>,
     email: &str,
@@ -1314,6 +1938,92 @@ pub struct NewRealtimeMetricSample {
     pub transferred_bytes: i64,
     pub turn_allocations: Option<i64>,
     pub room_limit: Option<i64>,
+}
+
+pub struct NewFlowDeveloperCredential<'a> {
+    pub organization_id: OrganizationId,
+    pub service_instance_id: ServiceInstanceId,
+    pub created_by: PrincipalId,
+    pub name: &'a str,
+    pub prefix: &'a str,
+    pub secret_hash: &'a [u8; 32],
+    pub permissions: &'a [String],
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, sqlx::FromRow)]
+pub struct FlowDeveloperCredentialRecord {
+    pub id: Uuid,
+    pub name: String,
+    pub prefix: String,
+    pub permissions: Vec<String>,
+    pub expires_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FlowDeveloperCredentialRevocation {
+    pub credential_revoked: bool,
+    pub contexts_revoked: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FlowDeveloperCredentialRotation {
+    pub credential: FlowDeveloperCredentialRecord,
+    pub contexts_revoked: u64,
+}
+
+pub struct NewFlowAccessContext<'a> {
+    pub context_id: Uuid,
+    pub organization_id: OrganizationId,
+    pub project_id: ProjectId,
+    pub service_instance_id: ServiceInstanceId,
+    pub credential_id: Option<Uuid>,
+    pub principal_id: PrincipalId,
+    pub permissions: &'a [String],
+    pub issued_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+pub struct DeveloperCredentialMint<'a> {
+    pub prefix: &'a str,
+    pub secret_hash: &'a [u8; 32],
+    pub context_id: Uuid,
+    pub principal_id: PrincipalId,
+    pub permissions: &'a [String],
+    pub issued_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug)]
+pub enum DeveloperCredentialMintOutcome {
+    Issued(DeveloperCredentialMintScope),
+    InvalidCredential,
+    PermissionDenied,
+    ServiceInstanceNotReady,
+}
+
+#[derive(Clone, Debug)]
+pub struct DeveloperCredentialMintScope {
+    pub credential_id: Uuid,
+    pub organization_id: OrganizationId,
+    pub project_id: ProjectId,
+    pub service_instance_id: ServiceInstanceId,
+    pub service_spec: Value,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, sqlx::FromRow)]
+pub struct FlowAccessContextRecord {
+    pub context_id: Uuid,
+    pub credential_id: Option<Uuid>,
+    pub principal_id: Uuid,
+    pub permissions: Vec<String>,
+    pub issued_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub revoked_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, sqlx::FromRow)]
@@ -1584,6 +2294,59 @@ struct RealtimeMetricCollectionTargetRow {
     id: Uuid,
     organization_id: Uuid,
     project_id: Uuid,
+}
+
+#[derive(sqlx::FromRow)]
+struct DeveloperCredentialMintRow {
+    credential_id: Uuid,
+    created_by: Uuid,
+    organization_id: Uuid,
+    project_id: Uuid,
+    service_instance_id: Uuid,
+    permissions: Vec<String>,
+    service_state: String,
+    service_spec: Value,
+}
+
+#[derive(sqlx::FromRow)]
+struct FlowAccessContextRevocationRow {
+    expires_at: DateTime<Utc>,
+    revoked_at: Option<DateTime<Utc>>,
+    project_id: Uuid,
+    generation: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct DeveloperCredentialContextScopeRow {
+    credential_id: Uuid,
+    created_by: Uuid,
+    organization_id: Uuid,
+    project_id: Uuid,
+    service_instance_id: Uuid,
+    generation: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct DeveloperCredentialContextRevocationRow {
+    principal_id: Uuid,
+    expires_at: DateTime<Utc>,
+    revoked_at: Option<DateTime<Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct FlowDeveloperCredentialMutationScopeRow {
+    credential_id: Uuid,
+    revoked_at: Option<DateTime<Utc>>,
+    organization_id: Uuid,
+    project_id: Uuid,
+    service_instance_id: Uuid,
+    generation: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct FlowCredentialActiveContextRow {
+    context_id: Uuid,
+    expires_at: DateTime<Utc>,
 }
 
 impl From<RealtimeMetricCollectionTargetRow> for RealtimeMetricCollectionTarget {

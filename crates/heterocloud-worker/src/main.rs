@@ -1,11 +1,15 @@
 use std::{
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use clap::Parser;
 use heterocloud_domain::{OrganizationId, PrincipalId, ProjectId, ServiceInstanceId};
-use heterocloud_provider::{AcceptedOperation, ProviderContext, ProviderSigner, ReconcileRequest};
+use heterocloud_provider::{
+    AcceptedOperation, PRINCIPAL_CONTEXT_REVOCATION_GRACE_SECONDS, PRINCIPAL_CONTEXT_REVOKE_ACTION,
+    PrincipalContextId, PrincipalContextRevocationRequest, ProviderContext, ProviderSigner,
+    ReconcileRequest,
+};
 use heterocloud_store::{OutboxEvent, Store};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
@@ -165,6 +169,12 @@ async fn deliver(
     flow_endpoint: &Url,
     event: &OutboxEvent,
 ) -> Result<(), WorkerError> {
+    if event.topic == PRINCIPAL_CONTEXT_REVOKE_ACTION {
+        let payload: PrincipalContextRevocationPayload =
+            serde_json::from_value(event.payload.clone())?;
+        return deliver_principal_context_revocation(client, signer, flow_endpoint, event, payload)
+            .await;
+    }
     if !matches!(
         event.topic.as_str(),
         "service-instance.reconcile" | "service-instance.delete"
@@ -257,6 +267,79 @@ async fn deliver(
     Ok(())
 }
 
+async fn deliver_principal_context_revocation(
+    client: &reqwest::Client,
+    signer: &ProviderSigner,
+    flow_endpoint: &Url,
+    event: &OutboxEvent,
+    payload: PrincipalContextRevocationPayload,
+) -> Result<(), WorkerError> {
+    if payload.provider != "flow"
+        || payload.context_id != event.aggregate_id
+        || payload.generation <= 0
+    {
+        return Err(WorkerError::InvalidPayload);
+    }
+    let now = i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| WorkerError::InvalidClock)?
+            .as_secs(),
+    )
+    .map_err(|_| WorkerError::InvalidClock)?;
+    if principal_context_revocation_expired(payload.expires_at, now) {
+        info!(
+            context_id = %payload.context_id,
+            expires_at = payload.expires_at,
+            "expired principal context revocation was dropped"
+        );
+        return Ok(());
+    }
+    let signed = signer.sign(ProviderContext {
+        principal_id: payload.principal_id,
+        organization_id: payload.organization_id,
+        project_id: payload.project_id,
+        service_instance_id: payload.service_instance_id,
+        action: PRINCIPAL_CONTEXT_REVOKE_ACTION.to_owned(),
+        generation: payload.generation,
+    })?;
+    let response = client
+        .put(principal_context_revocation_url(
+            flow_endpoint,
+            payload.service_instance_id,
+            payload.context_id,
+        ))
+        .bearer_auth(signed.token)
+        .header("idempotency-key", event.id.to_string())
+        .json(&PrincipalContextRevocationRequest {
+            expires_at: payload.expires_at,
+        })
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(WorkerError::ProviderStatus(response.status().as_u16()));
+    }
+    Ok(())
+}
+
+fn principal_context_revocation_expired(expires_at: i64, now: i64) -> bool {
+    expires_at.saturating_add(PRINCIPAL_CONTEXT_REVOCATION_GRACE_SECONDS) <= now
+}
+
+fn principal_context_revocation_url(
+    flow_endpoint: &Url,
+    service_instance_id: ServiceInstanceId,
+    context_id: PrincipalContextId,
+) -> Url {
+    let mut url = flow_endpoint.clone();
+    url.set_path(&format!(
+        "/internal/v1/service-instances/{service_instance_id}/principal-contexts/{context_id}/revocation"
+    ));
+    url.set_query(None);
+    url.set_fragment(None);
+    url
+}
+
 #[derive(Deserialize)]
 struct ReconcilePayload {
     service_instance_id: ServiceInstanceId,
@@ -265,6 +348,19 @@ struct ReconcilePayload {
     principal_id: PrincipalId,
     provider: String,
     generation: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrincipalContextRevocationPayload {
+    context_id: PrincipalContextId,
+    service_instance_id: ServiceInstanceId,
+    organization_id: OrganizationId,
+    project_id: ProjectId,
+    principal_id: PrincipalId,
+    provider: String,
+    generation: i64,
+    expires_at: i64,
 }
 
 async fn read_secret(path: &Path) -> Result<SecretString, WorkerError> {
@@ -319,6 +415,8 @@ async fn shutdown_signal() {
 
 #[derive(Debug, Error)]
 enum WorkerError {
+    #[error("system clock cannot be represented as Unix seconds")]
+    InvalidClock,
     #[error("secret file is invalid")]
     InvalidSecret,
     #[error("provider payload is invalid")]
@@ -345,4 +443,115 @@ enum WorkerError {
     Request(#[from] reqwest::Error),
     #[error(transparent)]
     Url(#[from] url::ParseError),
+}
+
+#[cfg(test)]
+mod tests {
+    use heterocloud_domain::{OrganizationId, PrincipalId, ProjectId, ServiceInstanceId};
+    use heterocloud_provider::{
+        PRINCIPAL_CONTEXT_REVOKE_ACTION, PrincipalContextId, ProviderSigner,
+    };
+    use heterocloud_store::OutboxEvent;
+    use serde_json::json;
+    use url::Url;
+
+    use super::{
+        PrincipalContextRevocationPayload, deliver_principal_context_revocation,
+        principal_context_revocation_expired, principal_context_revocation_url,
+    };
+
+    const TEST_ED25519_PRIVATE_KEY: &[u8] = b"-----BEGIN PRIVATE KEY-----\n\
+MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
+-----END PRIVATE KEY-----\n";
+
+    #[test]
+    fn revocation_uses_exact_provider_action_and_rooted_path()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let service_id = ServiceInstanceId(PrincipalContextId::from_u128(1));
+        let context_id = PrincipalContextId::from_u128(2);
+        let base = Url::parse("https://flow.example.test/stale/path?query=1#fragment")?;
+        assert_eq!(PRINCIPAL_CONTEXT_REVOKE_ACTION, "principal-context.revoke");
+        assert_eq!(
+            principal_context_revocation_url(&base, service_id, context_id).as_str(),
+            format!(
+                "https://flow.example.test/internal/v1/service-instances/{service_id}/principal-contexts/{context_id}/revocation"
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn revocation_outbox_payload_is_bounded_to_the_command_contract()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let payload = json!({
+            "context_id": PrincipalContextId::from_u128(1),
+            "service_instance_id": PrincipalContextId::from_u128(2),
+            "organization_id": PrincipalContextId::from_u128(3),
+            "project_id": PrincipalContextId::from_u128(4),
+            "principal_id": PrincipalContextId::from_u128(5),
+            "provider": "flow",
+            "generation": 7,
+            "expires_at": 1_785_480_300_i64,
+        });
+        let decoded: PrincipalContextRevocationPayload = serde_json::from_value(payload.clone())?;
+        assert_eq!(decoded.context_id, PrincipalContextId::from_u128(1));
+        assert_eq!(decoded.expires_at, 1_785_480_300);
+        let mut unknown = payload;
+        unknown["credential"] = json!("must-never-enter-the-outbox");
+        assert!(serde_json::from_value::<PrincipalContextRevocationPayload>(unknown).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn revocation_delivery_covers_flow_clock_skew() {
+        assert!(!principal_context_revocation_expired(100, 100));
+        assert!(!principal_context_revocation_expired(100, 114));
+        assert!(principal_context_revocation_expired(100, 115));
+    }
+
+    #[tokio::test]
+    async fn expired_revocation_succeeds_without_contacting_flow()
+    -> Result<(), Box<dyn std::error::Error>> {
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            rustls::crypto::ring::default_provider()
+                .install_default()
+                .map_err(|_| "failed to install the Rustls Ring provider")?;
+        }
+        let signer = ProviderSigner::from_ed25519_pem(
+            "heterocloud",
+            "heterocloud-flow",
+            "test-key",
+            TEST_ED25519_PRIVATE_KEY,
+        )?;
+        let client = reqwest::Client::builder()
+            .tls_certs_only(Vec::<reqwest::tls::Certificate>::new())
+            .connect_timeout(std::time::Duration::from_millis(10))
+            .build()?;
+        let context_id = PrincipalContextId::from_u128(1);
+        let event = OutboxEvent {
+            id: PrincipalContextId::from_u128(2),
+            topic: PRINCIPAL_CONTEXT_REVOKE_ACTION.into(),
+            aggregate_id: context_id,
+            payload: json!({}),
+            attempts: 1,
+        };
+        deliver_principal_context_revocation(
+            &client,
+            &signer,
+            &Url::parse("http://127.0.0.1:1/")?,
+            &event,
+            PrincipalContextRevocationPayload {
+                context_id,
+                service_instance_id: ServiceInstanceId(PrincipalContextId::from_u128(3)),
+                organization_id: OrganizationId(PrincipalContextId::from_u128(4)),
+                project_id: ProjectId(PrincipalContextId::from_u128(5)),
+                principal_id: PrincipalId(PrincipalContextId::from_u128(6)),
+                provider: "flow".into(),
+                generation: 1,
+                expires_at: 1,
+            },
+        )
+        .await?;
+        Ok(())
+    }
 }

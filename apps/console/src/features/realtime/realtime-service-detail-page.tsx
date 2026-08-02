@@ -47,6 +47,7 @@ import {
 } from "@/lib/queries";
 import { formatDateTime, formatNumber } from "@/lib/utils";
 import { AccessCredentialDialog } from "./access-credential-dialog";
+import { DeveloperCredentialsSection } from "./developer-credentials-section";
 import { RealtimeEndpoints } from "./realtime-endpoints";
 import { RealtimeMetricChart } from "./realtime-metric-chart";
 import {
@@ -582,6 +583,12 @@ export function RealtimeServiceDetailPage() {
           </dl>
         </section>
       </div>
+
+      <DeveloperCredentialsSection
+        organizationId={organizationId}
+        serviceId={item.id}
+        disabled={item.state !== "ready"}
+      />
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="max-w-xl">

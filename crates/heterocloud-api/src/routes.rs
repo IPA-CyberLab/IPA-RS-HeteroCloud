@@ -1,18 +1,14 @@
-use std::{
-    collections::BTreeSet,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{collections::BTreeSet, sync::Arc};
 
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use email_address::EmailAddress;
 use heterocloud_auth::{
     constant_time_token_eq, csrf_token, generate_token, hash_password, token_hash, verify_password,
@@ -26,8 +22,11 @@ use heterocloud_domain::{
 };
 use heterocloud_iam::{AuthorizationRequest, Decision, authorize, semantics_digest};
 use heterocloud_store::{
-    AuditEvent, AuthorizationContext, MAX_REALTIME_METRIC_HISTORY_SAMPLES, OidcUser,
-    RealtimeMetricCollectionTarget, RegisterWithInvitation, SessionUser, Store,
+    AuditEvent, AuthorizationContext, DeveloperCredentialMint, DeveloperCredentialMintOutcome,
+    FlowDeveloperCredentialRecord, MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE,
+    MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE, MAX_REALTIME_METRIC_HISTORY_SAMPLES,
+    NewFlowAccessContext, NewFlowDeveloperCredential, OidcUser, RealtimeMetricCollectionTarget,
+    RegisterWithInvitation, SessionUser, Store,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -106,7 +105,41 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/organizations/{organization_id}/realtime/services/{service_instance_id}/access-credentials",
-            post(create_realtime_access_credential),
+            post(create_realtime_access_credential)
+                .layer(DefaultBodyLimit::max(FLOW_CREDENTIAL_BODY_LIMIT_BYTES)),
+        )
+        .route(
+            "/organizations/{organization_id}/realtime/services/{service_instance_id}/developer-credentials",
+            get(list_realtime_developer_credentials)
+                .post(create_realtime_developer_credential)
+                .layer(DefaultBodyLimit::max(FLOW_CREDENTIAL_BODY_LIMIT_BYTES)),
+        )
+        .route(
+            "/organizations/{organization_id}/realtime/services/{service_instance_id}/developer-credentials/{credential_id}",
+            axum::routing::delete(revoke_realtime_developer_credential),
+        )
+        .route(
+            "/organizations/{organization_id}/realtime/services/{service_instance_id}/developer-credentials/{credential_id}/rotate",
+            post(rotate_realtime_developer_credential)
+                .layer(DefaultBodyLimit::max(FLOW_CREDENTIAL_BODY_LIMIT_BYTES)),
+        )
+        .route(
+            "/organizations/{organization_id}/realtime/services/{service_instance_id}/access-contexts",
+            get(list_realtime_access_contexts),
+        )
+        .route(
+            "/organizations/{organization_id}/realtime/services/{service_instance_id}/access-contexts/{context_id}",
+            axum::routing::delete(revoke_realtime_access_context),
+        )
+        .route(
+            "/flow/v1/access-credentials",
+            get(list_developer_access_contexts)
+                .post(create_developer_access_credential)
+                .layer(DefaultBodyLimit::max(FLOW_CREDENTIAL_BODY_LIMIT_BYTES)),
+        )
+        .route(
+            "/flow/v1/access-credentials/{context_id}",
+            axum::routing::delete(revoke_developer_access_context),
         )
         .route(
             "/organizations/{organization_id}/realtime/services/{service_instance_id}/metrics",
@@ -947,13 +980,9 @@ async fn create_realtime_access_credential(
         .await?;
     }
 
-    let issued_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| ApiError::Internal)?
-        .as_secs();
-    let expires_at = issued_at
-        .checked_add(expires_in_seconds)
-        .ok_or(ApiError::Internal)?;
+    let (issued_at, expires_at, issued_at_time, expires_at_time) =
+        flow_access_window(expires_in_seconds)?;
+    let context_id = Uuid::now_v7();
     let signed = state
         .config
         .flow_access_signer
@@ -967,9 +996,30 @@ async fn create_realtime_access_credential(
             },
             issued_at,
             expires_at,
-            Uuid::now_v7(),
+            context_id,
         )
         .map_err(|_| ApiError::Internal)?;
+    let stored_permissions = signed
+        .context
+        .permissions
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    state
+        .store
+        .record_flow_access_context(&NewFlowAccessContext {
+            context_id,
+            organization_id: instance.organization_id,
+            project_id: instance.project_id,
+            service_instance_id: instance.id,
+            credential_id: None,
+            principal_id: authorization.principal_id,
+            permissions: &stored_permissions,
+            issued_at: issued_at_time,
+            expires_at: expires_at_time,
+        })
+        .await
+        .map_err(ApiError::from_store)?;
     let response = flow_access_response(signed, &state.config.flow_public_endpoints, rate_limit);
     Ok((
         StatusCode::CREATED,
@@ -979,6 +1029,408 @@ async fn create_realtime_access_credential(
         ],
         Json(response),
     ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateRealtimeDeveloperCredential {
+    name: String,
+    permissions: BTreeSet<String>,
+    expires_in_days: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RotateRealtimeDeveloperCredential {}
+
+#[derive(Serialize)]
+struct FlowDeveloperCredentialResponse {
+    id: Uuid,
+    name: String,
+    prefix: String,
+    permissions: Vec<String>,
+    expires_at: DateTime<Utc>,
+    last_used_at: Option<DateTime<Utc>>,
+    revoked_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+}
+
+impl From<FlowDeveloperCredentialRecord> for FlowDeveloperCredentialResponse {
+    fn from(record: FlowDeveloperCredentialRecord) -> Self {
+        Self {
+            id: record.id,
+            name: record.name,
+            prefix: record.prefix,
+            permissions: record.permissions,
+            expires_at: record.expires_at,
+            last_used_at: record.last_used_at,
+            revoked_at: record.revoked_at,
+            created_at: record.created_at,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct FlowDeveloperCredentialCreationResponse {
+    #[serde(flatten)]
+    item: FlowDeveloperCredentialResponse,
+    credential: String,
+    mint_endpoint: Url,
+}
+
+#[derive(Serialize)]
+struct CollectionResponse<T> {
+    items: Vec<T>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FlowCredentialListQuery {
+    limit: Option<i64>,
+}
+
+async fn list_realtime_developer_credentials(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<FlowCredentialListQuery>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    realtime_service(&state, organization_id, service_instance_id).await?;
+    authorize_flow_credential_management(
+        &state,
+        &actor,
+        organization_id,
+        service_instance_id,
+        None,
+    )
+    .await?;
+    let limit = validate_list_limit(query.limit, MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE)?;
+    let items = state
+        .store
+        .list_flow_developer_credentials(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_instance_id),
+            limit,
+        )
+        .await
+        .map_err(ApiError::from_store)?
+        .into_iter()
+        .map(FlowDeveloperCredentialResponse::from)
+        .collect();
+    Ok((
+        sensitive_response_headers(),
+        Json(CollectionResponse { items }),
+    ))
+}
+
+async fn create_realtime_developer_credential(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<CreateRealtimeDeveloperCredential>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let name = validate_developer_credential_name(&request.name)?;
+    validate_flow_permissions(&request.permissions)?;
+    validate_developer_credential_expiry(request.expires_in_days)?;
+    realtime_service(&state, organization_id, service_instance_id).await?;
+    let authorization = authorize_flow_credential_management(
+        &state,
+        &actor,
+        organization_id,
+        service_instance_id,
+        Some(&request.permissions),
+    )
+    .await?;
+    let (prefix, credential, credential_hash) = generate_flow_developer_credential()?;
+    let permissions = request.permissions.into_iter().collect::<Vec<_>>();
+    let created_at = Utc::now();
+    let expires_at = created_at + ChronoDuration::days(request.expires_in_days);
+    let record = state
+        .store
+        .create_flow_developer_credential(NewFlowDeveloperCredential {
+            organization_id: OrganizationId(organization_id),
+            service_instance_id: ServiceInstanceId(service_instance_id),
+            created_by: authorization.principal_id,
+            name,
+            prefix: &prefix,
+            secret_hash: &credential_hash,
+            permissions: &permissions,
+            expires_at,
+            created_at,
+        })
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((
+        StatusCode::CREATED,
+        sensitive_response_headers(),
+        Json(FlowDeveloperCredentialCreationResponse {
+            item: record.into(),
+            credential: credential.expose_secret().to_owned(),
+            mint_endpoint: flow_developer_mint_endpoint(&state.config)?,
+        }),
+    ))
+}
+
+async fn revoke_realtime_developer_credential(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id, credential_id)): Path<(Uuid, Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    realtime_service(&state, organization_id, service_instance_id).await?;
+    let authorization = authorize_flow_credential_management(
+        &state,
+        &actor,
+        organization_id,
+        service_instance_id,
+        None,
+    )
+    .await?;
+    let _revocation = state
+        .store
+        .revoke_flow_developer_credential(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_instance_id),
+            credential_id,
+            authorization.principal_id,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::NO_CONTENT, sensitive_response_headers()))
+}
+
+async fn rotate_realtime_developer_credential(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id, credential_id)): Path<(Uuid, Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(_request): Json<RotateRealtimeDeveloperCredential>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    realtime_service(&state, organization_id, service_instance_id).await?;
+    let authorization = authorize_flow_credential_management(
+        &state,
+        &actor,
+        organization_id,
+        service_instance_id,
+        None,
+    )
+    .await?;
+    let existing = state
+        .store
+        .flow_developer_credential(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_instance_id),
+            credential_id,
+        )
+        .await
+        .map_err(ApiError::from_store)?
+        .ok_or(ApiError::NotFound)?;
+    let permissions = existing
+        .permissions
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    authorize_flow_permissions(
+        &state,
+        &actor,
+        organization_id,
+        service_instance_id,
+        &permissions,
+    )
+    .await?;
+    let (prefix, credential, credential_hash) = generate_flow_developer_credential()?;
+    let rotation = state
+        .store
+        .rotate_flow_developer_credential(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_instance_id),
+            credential_id,
+            &prefix,
+            &credential_hash,
+            authorization.principal_id,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((
+        StatusCode::CREATED,
+        sensitive_response_headers(),
+        Json(FlowDeveloperCredentialCreationResponse {
+            item: rotation.credential.into(),
+            credential: credential.expose_secret().to_owned(),
+            mint_endpoint: flow_developer_mint_endpoint(&state.config)?,
+        }),
+    ))
+}
+
+async fn list_realtime_access_contexts(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<FlowCredentialListQuery>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    realtime_service(&state, organization_id, service_instance_id).await?;
+    authorize_flow_credential_management(
+        &state,
+        &actor,
+        organization_id,
+        service_instance_id,
+        None,
+    )
+    .await?;
+    let limit = validate_list_limit(query.limit, MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE)?;
+    let items = state
+        .store
+        .list_flow_access_contexts(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_instance_id),
+            limit,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((
+        sensitive_response_headers(),
+        Json(CollectionResponse { items }),
+    ))
+}
+
+async fn revoke_realtime_access_context(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id, context_id)): Path<(Uuid, Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    realtime_service(&state, organization_id, service_instance_id).await?;
+    let authorization = authorize_flow_credential_management(
+        &state,
+        &actor,
+        organization_id,
+        service_instance_id,
+        None,
+    )
+    .await?;
+    state
+        .store
+        .revoke_flow_access_context(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_instance_id),
+            context_id,
+            authorization.principal_id,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::NO_CONTENT, sensitive_response_headers()))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateDeveloperAccessCredential {
+    principal_id: Uuid,
+    permissions: BTreeSet<String>,
+    expires_in_seconds: u64,
+}
+
+async fn create_developer_access_credential(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<CreateDeveloperAccessCredential>,
+) -> Result<impl IntoResponse, ApiError> {
+    let (prefix, secret_hash) = authenticate_flow_developer_bearer(&headers)?;
+    validate_flow_permissions(&request.permissions)?;
+    let expires_in_seconds = validate_flow_access_ttl(Some(request.expires_in_seconds))?;
+    let (issued_at, expires_at, issued_at_time, expires_at_time) =
+        flow_access_window(expires_in_seconds)?;
+    let context_id = Uuid::now_v7();
+    let permissions = request.permissions.iter().cloned().collect::<Vec<_>>();
+    let outcome = state
+        .store
+        .mint_flow_access_context_with_developer_credential(&DeveloperCredentialMint {
+            prefix,
+            secret_hash: &secret_hash,
+            context_id,
+            principal_id: PrincipalId(request.principal_id),
+            permissions: &permissions,
+            issued_at: issued_at_time,
+            expires_at: expires_at_time,
+        })
+        .await
+        .map_err(ApiError::from_store)?;
+    let scope = match outcome {
+        DeveloperCredentialMintOutcome::Issued(scope) => scope,
+        DeveloperCredentialMintOutcome::InvalidCredential => return Err(ApiError::Unauthorized),
+        DeveloperCredentialMintOutcome::PermissionDenied => return Err(ApiError::Forbidden),
+        DeveloperCredentialMintOutcome::ServiceInstanceNotReady => {
+            return Err(ApiError::ServiceInstanceNotReady);
+        }
+    };
+    let rate_limit = deserialize_stored_flow_spec(scope.service_spec)?.rate_limit;
+    let signed = state
+        .config
+        .flow_access_signer
+        .sign(
+            FlowAccessInput {
+                organization_id: scope.organization_id,
+                project_id: scope.project_id,
+                service_instance_id: scope.service_instance_id,
+                principal_id: PrincipalId(request.principal_id),
+                permissions: request.permissions,
+            },
+            issued_at,
+            expires_at,
+            context_id,
+        )
+        .map_err(|_| ApiError::Internal)?;
+    Ok((
+        StatusCode::CREATED,
+        sensitive_response_headers(),
+        Json(flow_access_response(
+            signed,
+            &state.config.flow_public_endpoints,
+            rate_limit,
+        )),
+    ))
+}
+
+async fn list_developer_access_contexts(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<FlowCredentialListQuery>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let (prefix, secret_hash) = authenticate_flow_developer_bearer(&headers)?;
+    let limit = validate_list_limit(query.limit, MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE)?;
+    let items = state
+        .store
+        .list_flow_access_contexts_for_developer_credential(prefix, &secret_hash, limit)
+        .await
+        .map_err(ApiError::from_store)?
+        .ok_or(ApiError::Unauthorized)?;
+    Ok((
+        sensitive_response_headers(),
+        Json(CollectionResponse { items }),
+    ))
+}
+
+async fn revoke_developer_access_context(
+    State(state): State<Arc<AppState>>,
+    Path(context_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let (prefix, secret_hash) = authenticate_flow_developer_bearer(&headers)?;
+    state
+        .store
+        .revoke_flow_access_context_with_developer_credential(prefix, &secret_hash, context_id)
+        .await
+        .map_err(ApiError::from_store)?
+        .ok_or(ApiError::Unauthorized)?;
+    Ok((StatusCode::NO_CONTENT, sensitive_response_headers()))
 }
 
 async fn get_realtime_service_metrics(
@@ -1128,6 +1580,157 @@ async fn get_realtime_service_metrics_history(
         max_samples: MAX_REALTIME_METRIC_HISTORY_SAMPLES,
         samples,
     }))
+}
+
+async fn authorize_flow_credential_management(
+    state: &AppState,
+    actor: &AuthenticatedActor,
+    organization_id: Uuid,
+    service_instance_id: Uuid,
+    permissions: Option<&BTreeSet<String>>,
+) -> Result<AuthorizationContext, ApiError> {
+    let resource = realtime_service_resource(organization_id, service_instance_id);
+    let authorization = authorize_actor(
+        state,
+        actor,
+        OrganizationId(organization_id),
+        "realtime:IssueAccessCredential",
+        &resource,
+    )
+    .await?;
+    if let Some(permissions) = permissions {
+        authorize_flow_permissions(
+            state,
+            actor,
+            organization_id,
+            service_instance_id,
+            permissions,
+        )
+        .await?;
+    }
+    Ok(authorization)
+}
+
+async fn authorize_flow_permissions(
+    state: &AppState,
+    actor: &AuthenticatedActor,
+    organization_id: Uuid,
+    service_instance_id: Uuid,
+    permissions: &BTreeSet<String>,
+) -> Result<(), ApiError> {
+    let resource = realtime_service_resource(organization_id, service_instance_id);
+    for permission in permissions {
+        let action = flow_permission_iam_action(permission).ok_or(ApiError::Internal)?;
+        authorize_actor(
+            state,
+            actor,
+            OrganizationId(organization_id),
+            action,
+            &resource,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+fn generate_flow_developer_credential() -> Result<(String, SecretString, [u8; 32]), ApiError> {
+    let fragment = Uuid::now_v7().simple().to_string()[..16].to_owned();
+    let prefix = format!("hcf_{fragment}");
+    let secret = generate_token().map_err(|_| ApiError::Internal)?;
+    let credential = SecretString::from(format!("{prefix}_{}", secret.expose_secret()));
+    let digest = token_hash(credential.expose_secret());
+    Ok((prefix, credential, digest))
+}
+
+fn authenticate_flow_developer_bearer(headers: &HeaderMap) -> Result<(&str, [u8; 32]), ApiError> {
+    let authorization = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or(ApiError::Unauthorized)?;
+    let token = authorization
+        .strip_prefix("Bearer ")
+        .ok_or(ApiError::Unauthorized)?;
+    let prefix = parse_flow_developer_credential_prefix(token)?;
+    Ok((prefix, token_hash(token)))
+}
+
+fn parse_flow_developer_credential_prefix(token: &str) -> Result<&str, ApiError> {
+    let rest = token.strip_prefix("hcf_").ok_or(ApiError::Unauthorized)?;
+    let (fragment, secret) = rest.split_once('_').ok_or(ApiError::Unauthorized)?;
+    if fragment.len() != FLOW_DEVELOPER_CREDENTIAL_FRAGMENT_LENGTH
+        || !fragment
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        || secret.len() != FLOW_DEVELOPER_CREDENTIAL_SECRET_LENGTH
+        || !secret
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(ApiError::Unauthorized);
+    }
+    let prefix_length = "hcf_".len() + FLOW_DEVELOPER_CREDENTIAL_FRAGMENT_LENGTH;
+    token.get(..prefix_length).ok_or(ApiError::Unauthorized)
+}
+
+fn flow_access_window(
+    expires_in_seconds: u64,
+) -> Result<(u64, u64, DateTime<Utc>, DateTime<Utc>), ApiError> {
+    let issued_at_seconds = Utc::now().timestamp();
+    let expires_in_seconds = i64::try_from(expires_in_seconds).map_err(|_| ApiError::Internal)?;
+    let expires_at_seconds = issued_at_seconds
+        .checked_add(expires_in_seconds)
+        .ok_or(ApiError::Internal)?;
+    let issued_at = u64::try_from(issued_at_seconds).map_err(|_| ApiError::Internal)?;
+    let expires_at = u64::try_from(expires_at_seconds).map_err(|_| ApiError::Internal)?;
+    let issued_at_time =
+        DateTime::from_timestamp(issued_at_seconds, 0).ok_or(ApiError::Internal)?;
+    let expires_at_time =
+        DateTime::from_timestamp(expires_at_seconds, 0).ok_or(ApiError::Internal)?;
+    Ok((issued_at, expires_at, issued_at_time, expires_at_time))
+}
+
+fn flow_developer_mint_endpoint(config: &RuntimeConfig) -> Result<Url, ApiError> {
+    let origin = config.public_origin.origin().ascii_serialization();
+    Url::parse(&format!("{origin}/api/v1/flow/v1/access-credentials"))
+        .map_err(|_| ApiError::Internal)
+}
+
+fn sensitive_response_headers() -> [(header::HeaderName, &'static str); 2] {
+    [
+        (header::CACHE_CONTROL, "no-store"),
+        (header::PRAGMA, "no-cache"),
+    ]
+}
+
+fn validate_developer_credential_name(name: &str) -> Result<&str, ApiError> {
+    if name.trim() != name || name.chars().any(char::is_control) {
+        return Err(ApiError::BadRequest(
+            "name must not contain surrounding whitespace or control characters".into(),
+        ));
+    }
+    validate_name(name)?;
+    Ok(name)
+}
+
+fn validate_developer_credential_expiry(expires_in_days: i64) -> Result<(), ApiError> {
+    if !(FLOW_DEVELOPER_CREDENTIAL_MIN_TTL_DAYS..=FLOW_DEVELOPER_CREDENTIAL_MAX_TTL_DAYS)
+        .contains(&expires_in_days)
+    {
+        return Err(ApiError::BadRequest(format!(
+            "expires_in_days must be {FLOW_DEVELOPER_CREDENTIAL_MIN_TTL_DAYS}..{FLOW_DEVELOPER_CREDENTIAL_MAX_TTL_DAYS}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_list_limit(limit: Option<i64>, maximum: i64) -> Result<i64, ApiError> {
+    let limit = limit.unwrap_or(maximum);
+    if !(1..=maximum).contains(&limit) {
+        return Err(ApiError::BadRequest(format!(
+            "limit must be between 1 and {maximum}"
+        )));
+    }
+    Ok(limit)
 }
 
 fn flow_access_response(
@@ -1692,9 +2295,14 @@ const fn default_invitation_ttl_hours() -> i64 {
 }
 
 const INVITATION_MAX_TTL_HOURS: i64 = 24;
+const FLOW_CREDENTIAL_BODY_LIMIT_BYTES: usize = 16 * 1024;
 const FLOW_ACCESS_DEFAULT_TTL_SECONDS: u64 = 300;
 const FLOW_ACCESS_MIN_TTL_SECONDS: u64 = 30;
 const FLOW_ACCESS_MAX_TTL_SECONDS: u64 = 300;
+const FLOW_DEVELOPER_CREDENTIAL_FRAGMENT_LENGTH: usize = 16;
+const FLOW_DEVELOPER_CREDENTIAL_SECRET_LENGTH: usize = 43;
+const FLOW_DEVELOPER_CREDENTIAL_MIN_TTL_DAYS: i64 = 1;
+const FLOW_DEVELOPER_CREDENTIAL_MAX_TTL_DAYS: i64 = 365;
 
 #[derive(Serialize)]
 struct SessionResponse {
@@ -1728,16 +2336,21 @@ mod tests {
         ServiceInstanceId, ServiceState, TrafficMode,
     };
     use serde_json::{Value, json};
+    use url::Url;
     use uuid::Uuid;
 
     use crate::error::ApiError;
 
     use super::{
-        CSRF_HEADER, CreateInvitation, INVITATION_MAX_TTL_HOURS, RealtimeMetricHistoryRange,
-        RealtimeMetricHistoryResponse, SESSION_COOKIE, deserialize_stored_flow_spec,
-        flow_permission_iam_action, parse_api_key_prefix, validate_flow_access_target,
-        validate_flow_access_ttl, validate_flow_permissions, validate_flow_spec,
-        validate_invitation_ttl, validate_slug,
+        CSRF_HEADER, CreateDeveloperAccessCredential, CreateInvitation,
+        FLOW_DEVELOPER_CREDENTIAL_MAX_TTL_DAYS, FLOW_DEVELOPER_CREDENTIAL_MIN_TTL_DAYS,
+        FlowDeveloperCredentialCreationResponse, FlowDeveloperCredentialResponse,
+        INVITATION_MAX_TTL_HOURS, RealtimeMetricHistoryRange, RealtimeMetricHistoryResponse,
+        SESSION_COOKIE, deserialize_stored_flow_spec, flow_permission_iam_action,
+        parse_api_key_prefix, parse_flow_developer_credential_prefix,
+        validate_developer_credential_expiry, validate_developer_credential_name,
+        validate_flow_access_target, validate_flow_access_ttl, validate_flow_permissions,
+        validate_flow_spec, validate_invitation_ttl, validate_list_limit, validate_slug,
     };
 
     #[test]
@@ -1851,6 +2464,108 @@ mod tests {
         let token = "hc_0123456789abcdef_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG";
         assert_eq!(parse_api_key_prefix(token).ok(), Some("0123456789abcdef"));
         assert!(parse_api_key_prefix("not-a-key").is_err());
+    }
+
+    #[test]
+    fn flow_developer_credential_format_and_requests_are_strict() {
+        let credential = format!("hcf_0123456789abcdef_{}", "A".repeat(43));
+        assert_eq!(
+            parse_flow_developer_credential_prefix(&credential).ok(),
+            Some("hcf_0123456789abcdef")
+        );
+        assert!(
+            parse_flow_developer_credential_prefix(&format!(
+                "hcf_0123456789abcdeF_{}",
+                "A".repeat(43)
+            ))
+            .is_err()
+        );
+        assert!(
+            parse_flow_developer_credential_prefix(&format!(
+                "hcf_0123456789abcdef_{}",
+                "A".repeat(42)
+            ))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<CreateDeveloperAccessCredential>(json!({
+                "principal_id": Uuid::nil(),
+                "permissions": ["flow.room.join"]
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<CreateDeveloperAccessCredential>(json!({
+                "principal_id": Uuid::nil(),
+                "permissions": ["flow.room.join"],
+                "expires_in_seconds": 60,
+                "credential": "must-not-be-accepted"
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn flow_developer_credential_names_expiry_and_lists_are_bounded() {
+        assert_eq!(
+            validate_developer_credential_name("application backend").ok(),
+            Some("application backend")
+        );
+        assert!(validate_developer_credential_name(" application backend").is_err());
+        assert!(validate_developer_credential_name(&"x".repeat(121)).is_err());
+        assert!(
+            validate_developer_credential_expiry(FLOW_DEVELOPER_CREDENTIAL_MIN_TTL_DAYS).is_ok()
+        );
+        assert!(
+            validate_developer_credential_expiry(FLOW_DEVELOPER_CREDENTIAL_MAX_TTL_DAYS).is_ok()
+        );
+        assert!(validate_developer_credential_expiry(0).is_err());
+        assert!(validate_developer_credential_expiry(366).is_err());
+        assert_eq!(validate_list_limit(None, 100).ok(), Some(100));
+        assert_eq!(validate_list_limit(Some(1), 100).ok(), Some(1));
+        assert!(validate_list_limit(Some(0), 100).is_err());
+        assert!(validate_list_limit(Some(101), 100).is_err());
+    }
+
+    #[test]
+    fn flow_developer_credential_creation_response_has_stable_public_fields()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let timestamp = chrono::DateTime::from_timestamp(1_785_480_000, 0)
+            .ok_or("test timestamp is invalid")?;
+        let response = FlowDeveloperCredentialCreationResponse {
+            item: FlowDeveloperCredentialResponse {
+                id: Uuid::from_u128(1),
+                name: "application backend".into(),
+                prefix: "hcf_0123456789abcdef".into(),
+                permissions: vec!["flow.room.join".into()],
+                expires_at: timestamp,
+                last_used_at: None,
+                revoked_at: None,
+                created_at: timestamp,
+            },
+            credential: format!("hcf_0123456789abcdef_{}", "A".repeat(43)),
+            mint_endpoint: Url::parse(
+                "https://heterocloud.example.test/api/v1/flow/v1/access-credentials",
+            )?,
+        };
+        let value = serde_json::to_value(response)?;
+        let object = value.as_object().ok_or("response is not an object")?;
+        assert_eq!(object.len(), 10);
+        for field in [
+            "id",
+            "name",
+            "prefix",
+            "permissions",
+            "expires_at",
+            "last_used_at",
+            "revoked_at",
+            "created_at",
+            "credential",
+            "mint_endpoint",
+        ] {
+            assert!(object.contains_key(field), "missing response field {field}");
+        }
+        Ok(())
     }
 
     #[test]

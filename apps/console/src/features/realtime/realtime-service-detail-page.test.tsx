@@ -100,6 +100,13 @@ describe("RealtimeServiceDetailPage", () => {
         },
       ],
     });
+    vi.spyOn(
+      api.realtime.services,
+      "listDeveloperCredentials",
+    ).mockResolvedValue({ items: [] });
+    vi.spyOn(api.realtime.services, "listAccessContexts").mockResolvedValue({
+      items: [],
+    });
   });
 
   it("現在値、履歴グラフ、エンドポイント、ルーム上限を表示する", async () => {

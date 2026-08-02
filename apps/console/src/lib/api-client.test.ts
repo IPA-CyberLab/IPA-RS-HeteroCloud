@@ -300,6 +300,35 @@ describe("HeteroCloudApiClient", () => {
         expires_in_seconds: 3600,
       },
     );
+    await client.realtime.services.listDeveloperCredentials(
+      organizationId,
+      serviceId,
+    );
+    await client.realtime.services.createDeveloperCredential(
+      organizationId,
+      serviceId,
+      {
+        name: "production-backend",
+        expires_in_days: 90,
+        permissions: ["flow.room.join", "flow.signal.connect"],
+      },
+    );
+    await client.realtime.services.rotateDeveloperCredential(
+      organizationId,
+      serviceId,
+      "credential-1",
+    );
+    await client.realtime.services.revokeDeveloperCredential(
+      organizationId,
+      serviceId,
+      "credential-1",
+    );
+    await client.realtime.services.listAccessContexts(organizationId, serviceId);
+    await client.realtime.services.revokeAccessContext(
+      organizationId,
+      serviceId,
+      "context-1",
+    );
     await client.realtime.services.metrics(organizationId, serviceId);
     await client.realtime.services.metricsHistory(
       organizationId,
@@ -316,6 +345,12 @@ describe("HeteroCloudApiClient", () => {
       base,
       base,
       `${base}/access-credentials`,
+      `${base}/developer-credentials`,
+      `${base}/developer-credentials`,
+      `${base}/developer-credentials/credential-1/rotate`,
+      `${base}/developer-credentials/credential-1`,
+      `${base}/access-contexts`,
+      `${base}/access-contexts/context-1`,
       `${base}/metrics`,
       history,
     ]);
@@ -324,6 +359,12 @@ describe("HeteroCloudApiClient", () => {
       "PATCH",
       "DELETE",
       "POST",
+      "GET",
+      "POST",
+      "POST",
+      "DELETE",
+      "GET",
+      "DELETE",
       "GET",
       "GET",
     ]);
@@ -334,6 +375,12 @@ describe("HeteroCloudApiClient", () => {
       permissions: ["flow.room.join", "flow.metrics.read"],
       expires_in_seconds: 3600,
     });
+    expect(JSON.parse(String(calls[5][1]?.body))).toEqual({
+      name: "production-backend",
+      expires_in_days: 90,
+      permissions: ["flow.room.join", "flow.signal.connect"],
+    });
+    expect(JSON.parse(String(calls[6][1]?.body))).toEqual({});
     calls
       .filter(([, options]) => ["PATCH", "DELETE", "POST"].includes(options?.method ?? ""))
       .forEach(([, options]) => {

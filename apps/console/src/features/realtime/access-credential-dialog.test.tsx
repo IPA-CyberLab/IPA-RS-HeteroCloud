@@ -46,7 +46,12 @@ describe("AccessCredentialDialog", () => {
       </QueryClientProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "認証情報を発行" }));
+    await user.click(
+      screen.getByRole("button", { name: "テスト用短期アクセス" }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "短期アクセスを手動発行" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("メトリクス参照")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "発行" }));
 
@@ -70,7 +75,9 @@ describe("AccessCredentialDialog", () => {
       expect(screen.queryByText("one-time-signature")).not.toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole("button", { name: "認証情報を発行" }));
+    await user.click(
+      screen.getByRole("button", { name: "テスト用短期アクセス" }),
+    );
     expect(screen.queryByText("one-time-signature")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "発行" })).toBeInTheDocument();
   });
