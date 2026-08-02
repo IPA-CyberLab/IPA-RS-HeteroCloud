@@ -203,12 +203,33 @@ pub struct FlowSpec {
     pub traffic_mode: TrafficMode,
     pub max_participants: u32,
     pub max_rooms: u32,
+    pub rate_limit: FlowRateLimit,
     pub turn_enabled: bool,
     pub metadata: Value,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlowRateLimit {
+    pub requests_per_second: u32,
+    pub burst: u32,
+}
+
+impl Default for FlowRateLimit {
+    fn default() -> Self {
+        Self {
+            requests_per_second: DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND,
+            burst: DEFAULT_FLOW_RATE_LIMIT_BURST,
+        }
+    }
+}
+
 pub const DEFAULT_FLOW_MAX_ROOMS: u32 = 100;
 pub const MAX_FLOW_ROOMS: u32 = 1_000_000;
+pub const DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND: u32 = 20;
+pub const DEFAULT_FLOW_RATE_LIMIT_BURST: u32 = 40;
+pub const MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND: u32 = 1_000;
+pub const MAX_FLOW_RATE_LIMIT_BURST: u32 = 5_000;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -248,8 +269,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        DEFAULT_FLOW_MAX_ROOMS, FlowSpec, POLICY_VERSION, PolicyDocument, PolicyEffect,
-        PolicyStatement,
+        DEFAULT_FLOW_MAX_ROOMS, DEFAULT_FLOW_RATE_LIMIT_BURST,
+        DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, FlowRateLimit, FlowSpec, POLICY_VERSION,
+        PolicyDocument, PolicyEffect, PolicyStatement,
     };
 
     #[test]
@@ -258,6 +280,10 @@ mod tests {
             "region": "heteronet-global",
             "traffic_mode": "forwarded",
             "max_participants": 100,
+            "rate_limit": {
+                "requests_per_second": DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND,
+                "burst": DEFAULT_FLOW_RATE_LIMIT_BURST
+            },
             "turn_enabled": true,
             "metadata": {}
         }));
@@ -268,10 +294,37 @@ mod tests {
             "traffic_mode": "forwarded",
             "max_participants": 100,
             "max_rooms": DEFAULT_FLOW_MAX_ROOMS,
+            "rate_limit": {
+                "requests_per_second": DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND,
+                "burst": DEFAULT_FLOW_RATE_LIMIT_BURST
+            },
             "turn_enabled": true,
             "metadata": {}
         }));
         assert_eq!(spec.ok().map(|spec| spec.max_rooms), Some(100));
+    }
+
+    #[test]
+    fn flow_rate_limit_is_explicit_and_structured() {
+        let spec = serde_json::from_value::<FlowSpec>(json!({
+            "region": "heteronet-global",
+            "traffic_mode": "forwarded",
+            "max_participants": 100,
+            "max_rooms": DEFAULT_FLOW_MAX_ROOMS,
+            "rate_limit": {
+                "requests_per_second": 75,
+                "burst": 150
+            },
+            "turn_enabled": true,
+            "metadata": {}
+        }));
+        assert_eq!(
+            spec.ok().map(|spec| spec.rate_limit),
+            Some(FlowRateLimit {
+                requests_per_second: 75,
+                burst: 150,
+            })
+        );
     }
 
     #[test]

@@ -206,6 +206,10 @@ describe("HeteroCloudApiClient", () => {
         traffic_mode: "forwarded",
         max_participants: 500,
         max_rooms: 100,
+        rate_limit: {
+          requests_per_second: 20,
+          burst: 40,
+        },
         turn_enabled: true,
         metadata: {},
       },
@@ -268,6 +272,10 @@ describe("HeteroCloudApiClient", () => {
             project_id: service.project_id,
             service_instance_id: serviceId,
             principal_id: session.memberships[0].principal_id,
+            rate_limit: {
+              requests_per_second: 20,
+              burst: 40,
+            },
           });
         }
         return jsonResponse(

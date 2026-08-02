@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ColumnDef } from "@tanstack/react-table";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DataTable } from "@/components/shared/data-table";
 
 interface RowData {
@@ -50,5 +50,41 @@ describe("DataTable", () => {
     bodyRows = within(screen.getByRole("table")).getAllByRole("row").slice(1);
     expect(bodyRows).toHaveLength(2);
     expect(bodyRows[0]).toHaveTextContent("Resource 11");
+  });
+
+  it("行全体をマウスとキーボードで開き、行内操作は横取りしない", async () => {
+    const user = userEvent.setup();
+    const onRowClick = vi.fn();
+    const interactiveColumns: ColumnDef<RowData, unknown>[] = [
+      ...columns,
+      {
+        id: "action",
+        header: "",
+        cell: () => <button type="button">操作</button>,
+      },
+    ];
+    const data = [{ id: "1", name: "Production" }];
+
+    render(
+      <DataTable
+        columns={interactiveColumns}
+        data={data}
+        getRowId={(row) => row.id}
+        onRowClick={onRowClick}
+        getRowAriaLabel={(row) => `${row.name}の詳細を開く`}
+      />,
+    );
+
+    const row = screen.getByRole("row", { name: "Productionの詳細を開く" });
+    await user.click(within(row).getByText("Production"));
+    expect(onRowClick).toHaveBeenCalledWith(data[0]);
+
+    onRowClick.mockClear();
+    await user.click(within(row).getByRole("button", { name: "操作" }));
+    expect(onRowClick).not.toHaveBeenCalled();
+
+    row.focus();
+    await user.keyboard("{Enter}");
+    expect(onRowClick).toHaveBeenCalledWith(data[0]);
   });
 });

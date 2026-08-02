@@ -38,6 +38,8 @@ interface DataTableProps<TData> {
   emptyDescription?: string;
   initialPageSize?: number;
   getRowId?: (row: TData) => string;
+  onRowClick?: (row: TData) => void;
+  getRowAriaLabel?: (row: TData) => string;
 }
 
 export function DataTable<TData>({
@@ -48,6 +50,8 @@ export function DataTable<TData>({
   emptyDescription = "条件に一致するデータはありません。",
   initialPageSize = 10,
   getRowId,
+  onRowClick,
+  getRowAriaLabel,
 }: DataTableProps<TData>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
@@ -143,7 +147,38 @@ export function DataTable<TData>({
           </TableHeader>
           <TableBody>
             {table.getRowModel().rows.map((row) => (
-              <TableRow key={row.id}>
+              <TableRow
+                key={row.id}
+                tabIndex={onRowClick ? 0 : undefined}
+                aria-label={getRowAriaLabel?.(row.original)}
+                className={cn(
+                  onRowClick &&
+                    "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-600",
+                )}
+                onClick={(event) => {
+                  if (
+                    !onRowClick ||
+                    (event.target instanceof Element &&
+                      event.target.closest(
+                        "a,button,input,select,textarea,[role='button'],[role='link']",
+                      ))
+                  ) {
+                    return;
+                  }
+                  onRowClick(row.original);
+                }}
+                onKeyDown={(event) => {
+                  if (
+                    !onRowClick ||
+                    event.target !== event.currentTarget ||
+                    (event.key !== "Enter" && event.key !== " ")
+                  ) {
+                    return;
+                  }
+                  event.preventDefault();
+                  onRowClick(row.original);
+                }}
+              >
                 {row.getVisibleCells().map((cell) => (
                   <TableCell key={cell.id}>
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}

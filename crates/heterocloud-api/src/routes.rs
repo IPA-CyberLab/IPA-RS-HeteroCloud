@@ -18,8 +18,11 @@ use heterocloud_auth::{
     constant_time_token_eq, csrf_token, generate_token, hash_password, token_hash, verify_password,
 };
 use heterocloud_domain::{
-    DEFAULT_FLOW_MAX_ROOMS, FlowSpec, MAX_FLOW_ROOMS, OrganizationId, PolicyDocument, PolicyId,
-    PrincipalId, ProjectId, ServiceInstance, ServiceInstanceId, ServiceState, UserStatus,
+    DEFAULT_FLOW_MAX_ROOMS, DEFAULT_FLOW_RATE_LIMIT_BURST,
+    DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, FlowRateLimit, FlowSpec,
+    MAX_FLOW_RATE_LIMIT_BURST, MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, MAX_FLOW_ROOMS,
+    OrganizationId, PolicyDocument, PolicyId, PrincipalId, ProjectId, ServiceInstance,
+    ServiceInstanceId, ServiceState, UserStatus,
 };
 use heterocloud_iam::{AuthorizationRequest, Decision, authorize, semantics_digest};
 use heterocloud_store::{
@@ -898,6 +901,7 @@ struct FlowAccessContextResponse {
     project_id: ProjectId,
     service_instance_id: ServiceInstanceId,
     principal_id: PrincipalId,
+    rate_limit: FlowRateLimit,
 }
 
 async fn create_realtime_access_credential(
@@ -921,6 +925,7 @@ async fn create_realtime_access_credential(
         OrganizationId(organization_id),
         ServiceInstanceId(service_instance_id),
     )?;
+    let rate_limit = deserialize_stored_flow_spec(instance.spec.clone())?.rate_limit;
     let resource = realtime_service_resource(organization_id, service_instance_id);
     let authorization = authorize_actor(
         &state,
@@ -965,7 +970,7 @@ async fn create_realtime_access_credential(
             Uuid::now_v7(),
         )
         .map_err(|_| ApiError::Internal)?;
-    let response = flow_access_response(signed, &state.config.flow_public_endpoints);
+    let response = flow_access_response(signed, &state.config.flow_public_endpoints, rate_limit);
     Ok((
         StatusCode::CREATED,
         [
@@ -1128,6 +1133,7 @@ async fn get_realtime_service_metrics_history(
 fn flow_access_response(
     signed: SignedFlowAccessContext,
     flow_public_endpoints: &[Url],
+    rate_limit: FlowRateLimit,
 ) -> FlowAccessContextResponse {
     FlowAccessContextResponse {
         endpoints: flow_public_endpoints.to_vec(),
@@ -1138,6 +1144,7 @@ fn flow_access_response(
         project_id: signed.context.project_id,
         service_instance_id: signed.context.service_instance_id,
         principal_id: signed.context.principal_id,
+        rate_limit,
         headers: FlowAccessHeaders {
             principal: signed.encoded,
             timestamp: signed.timestamp,
@@ -1629,6 +1636,12 @@ fn deserialize_stored_flow_spec(mut value: Value) -> Result<FlowSpec, ApiError> 
     object
         .entry("max_rooms")
         .or_insert_with(|| json!(DEFAULT_FLOW_MAX_ROOMS));
+    object.entry("rate_limit").or_insert_with(|| {
+        json!({
+            "requests_per_second": DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND,
+            "burst": DEFAULT_FLOW_RATE_LIMIT_BURST,
+        })
+    });
     serde_json::from_value(value).map_err(|_| ApiError::Internal)
 }
 
@@ -1642,6 +1655,17 @@ fn validate_flow_spec(spec: &FlowSpec) -> Result<(), ApiError> {
         return Err(ApiError::BadRequest(
             "max_participants must be between 1 and 100000".into(),
         ));
+    }
+    if !(1..=MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND).contains(&spec.rate_limit.requests_per_second)
+    {
+        return Err(ApiError::BadRequest(format!(
+            "rate_limit.requests_per_second must be between 1 and {MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND}"
+        )));
+    }
+    if !(1..=MAX_FLOW_RATE_LIMIT_BURST).contains(&spec.rate_limit.burst) {
+        return Err(ApiError::BadRequest(format!(
+            "rate_limit.burst must be between 1 and {MAX_FLOW_RATE_LIMIT_BURST}"
+        )));
     }
     if spec.region.trim().is_empty() || spec.region.len() > 64 {
         return Err(ApiError::BadRequest(
@@ -1700,8 +1724,8 @@ mod tests {
 
     use chrono::Utc;
     use heterocloud_domain::{
-        FlowSpec, MAX_FLOW_ROOMS, OrganizationId, ProjectId, ServiceInstance, ServiceInstanceId,
-        ServiceState, TrafficMode,
+        FlowRateLimit, FlowSpec, MAX_FLOW_ROOMS, OrganizationId, ProjectId, ServiceInstance,
+        ServiceInstanceId, ServiceState, TrafficMode,
     };
     use serde_json::{Value, json};
     use uuid::Uuid;
@@ -1736,6 +1760,10 @@ mod tests {
             traffic_mode: TrafficMode::Forwarded,
             max_participants: 100,
             max_rooms: 1,
+            rate_limit: FlowRateLimit {
+                requests_per_second: 20,
+                burst: 40,
+            },
             turn_enabled: true,
             metadata: json!({}),
         };
@@ -1746,6 +1774,12 @@ mod tests {
         assert!(validate_flow_spec(&spec).is_ok());
         spec.max_rooms = MAX_FLOW_ROOMS + 1;
         assert!(validate_flow_spec(&spec).is_err());
+        spec.max_rooms = 100;
+        spec.rate_limit.requests_per_second = 0;
+        assert!(validate_flow_spec(&spec).is_err());
+        spec.rate_limit.requests_per_second = 1_000;
+        spec.rate_limit.burst = 5_001;
+        assert!(validate_flow_spec(&spec).is_err());
 
         let stored = deserialize_stored_flow_spec(json!({
             "region": "heteronet-global",
@@ -1754,7 +1788,14 @@ mod tests {
             "turn_enabled": true,
             "metadata": {}
         }));
-        assert_eq!(stored.ok().map(|spec| spec.max_rooms), Some(100));
+        assert_eq!(
+            stored.ok().map(|spec| (
+                spec.max_rooms,
+                spec.rate_limit.requests_per_second,
+                spec.rate_limit.burst,
+            )),
+            Some((100, 20, 40))
+        );
     }
 
     #[test]

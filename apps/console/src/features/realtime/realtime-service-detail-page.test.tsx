@@ -34,6 +34,10 @@ const service: RealtimeService = {
     traffic_mode: "forwarded",
     max_participants: 500,
     max_rooms: 100,
+    rate_limit: {
+      requests_per_second: 20,
+      burst: 40,
+    },
     turn_enabled: true,
     metadata: {},
   },
@@ -130,6 +134,7 @@ describe("RealtimeServiceDetailPage", () => {
     expect(screen.getByText("3.75 MB")).toBeInTheDocument();
     expect(screen.getByText("100")).toBeInTheDocument();
     expect(screen.getByText("500")).toBeInTheDocument();
+    expect(screen.getByText("20 RPS / burst 40")).toBeInTheDocument();
     expect(
       await screen.findByRole("img", { name: /アクティブルームの推移/ }),
     ).toBeInTheDocument();

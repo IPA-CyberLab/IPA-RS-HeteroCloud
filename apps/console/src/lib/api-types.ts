@@ -135,6 +135,10 @@ export interface RealtimeServiceSpec {
   traffic_mode: TrafficMode;
   max_participants: number;
   max_rooms: number;
+  rate_limit: {
+    requests_per_second: number;
+    burst: number;
+  };
   turn_enabled: boolean;
   metadata: Record<string, unknown>;
 }
@@ -217,6 +221,10 @@ export interface RealtimeAccessCredential {
   expires_at: string | number;
   headers: Record<string, string>;
   endpoints: string[];
+  rate_limit: {
+    requests_per_second: number;
+    burst: number;
+  };
 }
 
 export type AuditDecision = "allow" | "deny" | "error";

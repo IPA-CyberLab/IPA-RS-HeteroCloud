@@ -85,6 +85,8 @@ function formValue(service: RealtimeService): RealtimeServiceFormValue {
     trafficMode: service.spec.traffic_mode,
     maxParticipants: service.spec.max_participants,
     maxRooms: service.spec.max_rooms,
+    rateLimitRequestsPerSecond: service.spec.rate_limit.requests_per_second,
+    rateLimitBurst: service.spec.rate_limit.burst,
     turnEnabled: service.spec.turn_enabled,
   };
 }
@@ -130,6 +132,10 @@ export function RealtimeServiceDetailPage() {
           traffic_mode: value.trafficMode,
           max_participants: value.maxParticipants,
           max_rooms: value.maxRooms,
+          rate_limit: {
+            requests_per_second: value.rateLimitRequestsPerSecond,
+            burst: value.rateLimitBurst,
+          },
           turn_enabled: value.turnEnabled,
           metadata: service.data?.spec.metadata ?? {},
         },
@@ -552,6 +558,13 @@ export function RealtimeServiceDetailPage() {
               <dt className="text-zinc-500">同時参加者上限</dt>
               <dd className="font-medium">
                 {formatNumber(item.spec.max_participants)}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-4 px-4 py-3">
+              <dt className="text-zinc-500">IPレート制限</dt>
+              <dd className="font-medium">
+                {formatNumber(item.spec.rate_limit.requests_per_second)} RPS / burst{" "}
+                {formatNumber(item.spec.rate_limit.burst)}
               </dd>
             </div>
             <div className="flex items-center justify-between gap-4 px-4 py-3">

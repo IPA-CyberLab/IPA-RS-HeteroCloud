@@ -42,4 +42,20 @@ describe("RealtimeServiceForm", () => {
     fireEvent.change(input, { target: { value: "-4" } });
     expect(input).toHaveValue(1);
   });
+
+  it("IPレート制限を既定値で初期化し、正の整数として編集できる", () => {
+    render(<FormHarness />);
+
+    const rps = screen.getByRole("spinbutton", { name: "RPS上限" });
+    const burst = screen.getByRole("spinbutton", { name: "バースト上限" });
+    expect(rps).toHaveValue(20);
+    expect(rps).toHaveAttribute("max", "1000");
+    expect(burst).toHaveValue(40);
+    expect(burst).toHaveAttribute("max", "5000");
+
+    fireEvent.change(rps, { target: { value: "75" } });
+    fireEvent.change(burst, { target: { value: "150" } });
+    expect(rps).toHaveValue(75);
+    expect(burst).toHaveValue(150);
+  });
 });

@@ -20,6 +20,8 @@ export interface RealtimeServiceFormValue {
   trafficMode: TrafficMode;
   maxParticipants: number;
   maxRooms: number;
+  rateLimitRequestsPerSecond: number;
+  rateLimitBurst: number;
   turnEnabled: boolean;
 }
 
@@ -43,6 +45,8 @@ export const defaultRealtimeServiceFormValue: RealtimeServiceFormValue = {
   trafficMode: "forwarded",
   maxParticipants: 100,
   maxRooms: 100,
+  rateLimitRequestsPerSecond: 20,
+  rateLimitBurst: 40,
   turnEnabled: true,
 };
 
@@ -133,6 +137,52 @@ export function RealtimeServiceForm({
           />
         </div>
       </div>
+
+      <fieldset className="border-t border-zinc-100 pt-4" disabled={disabled}>
+        <legend className="mb-3 text-sm font-medium text-zinc-800">
+          IPレート制限
+        </legend>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="realtime-rate-limit-rps">RPS上限</Label>
+            <Input
+              id="realtime-rate-limit-rps"
+              type="number"
+              required
+              min={1}
+              max={1_000}
+              step={1}
+              value={value.rateLimitRequestsPerSecond}
+              disabled={disabled}
+              onChange={(event) =>
+                update(
+                  "rateLimitRequestsPerSecond",
+                  positiveInteger(event.currentTarget.valueAsNumber),
+                )
+              }
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="realtime-rate-limit-burst">バースト上限</Label>
+            <Input
+              id="realtime-rate-limit-burst"
+              type="number"
+              required
+              min={1}
+              max={5_000}
+              step={1}
+              value={value.rateLimitBurst}
+              disabled={disabled}
+              onChange={(event) =>
+                update(
+                  "rateLimitBurst",
+                  positiveInteger(event.currentTarget.valueAsNumber),
+                )
+              }
+            />
+          </div>
+        </div>
+      </fieldset>
 
       <fieldset className="space-y-2" disabled={disabled}>
         <legend className="text-sm font-medium text-zinc-800">通信モード</legend>

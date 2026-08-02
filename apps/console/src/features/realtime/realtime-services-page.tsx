@@ -9,7 +9,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { type FormEvent, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { DataTable } from "@/components/shared/data-table";
 import { ErrorState } from "@/components/shared/error-state";
 import { FormError } from "@/components/shared/form-error";
@@ -68,6 +68,7 @@ export function RealtimeServicesPage() {
   const services = useQuery(realtimeServicesQueryOptions(organizationId));
   const projects = useQuery(projectsQueryOptions(organizationId));
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<RealtimeServiceFormValue>(
     defaultRealtimeServiceFormValue,
@@ -101,6 +102,10 @@ export function RealtimeServicesPage() {
           traffic_mode: value.trafficMode,
           max_participants: value.maxParticipants,
           max_rooms: value.maxRooms,
+          rate_limit: {
+            requests_per_second: value.rateLimitRequestsPerSecond,
+            burst: value.rateLimitBurst,
+          },
           turn_enabled: value.turnEnabled,
           metadata: {},
         },
@@ -391,6 +396,8 @@ export function RealtimeServicesPage() {
         columns={columns}
         data={serviceItems}
         getRowId={(service) => service.id}
+        onRowClick={(service) => navigate(`/realtime/services/${service.id}`)}
+        getRowAriaLabel={(service) => `${service.name}の詳細を開く`}
         searchPlaceholder="名前、プロジェクト、リージョン、状態で検索"
         emptyTitle="Flowがありません"
         emptyDescription="プロジェクトを選択してサービスを作成してください。"

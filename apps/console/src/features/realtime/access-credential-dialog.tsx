@@ -120,17 +120,24 @@ export function AccessCredentialDialog({
               この秘密値は今回だけ表示されます。閉じると再表示できません。
             </div>
 
-            <dl className="grid border border-zinc-200 bg-zinc-50 text-sm sm:grid-cols-2">
+            <dl className="grid border border-zinc-200 bg-zinc-50 text-sm sm:grid-cols-3">
               <div className="border-b border-zinc-200 px-4 py-3 sm:border-b-0 sm:border-r">
                 <dt className="text-xs text-zinc-500">発行日時</dt>
                 <dd className="mt-1 font-medium">
                   {formatCredentialDate(credential.issued_at)}
                 </dd>
               </div>
-              <div className="px-4 py-3">
+              <div className="border-b border-zinc-200 px-4 py-3 sm:border-b-0 sm:border-r">
                 <dt className="text-xs text-zinc-500">有効期限</dt>
                 <dd className="mt-1 font-medium">
                   {formatCredentialDate(credential.expires_at)}
+                </dd>
+              </div>
+              <div className="px-4 py-3">
+                <dt className="text-xs text-zinc-500">IPレート制限</dt>
+                <dd className="mt-1 font-medium">
+                  {credential.rate_limit.requests_per_second} RPS / burst{" "}
+                  {credential.rate_limit.burst}
                 </dd>
               </div>
             </dl>

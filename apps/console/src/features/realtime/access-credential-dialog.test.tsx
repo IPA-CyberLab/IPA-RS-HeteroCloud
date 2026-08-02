@@ -24,6 +24,10 @@ describe("AccessCredentialDialog", () => {
           "x-flow-signature": "one-time-signature",
         },
         endpoints: ["https://flow.example.com"],
+        rate_limit: {
+          requests_per_second: 20,
+          burst: 40,
+        },
       });
     const queryClient = new QueryClient({
       defaultOptions: {
@@ -47,6 +51,7 @@ describe("AccessCredentialDialog", () => {
     await user.click(screen.getByRole("button", { name: "発行" }));
 
     expect(await screen.findByText("one-time-signature")).toBeInTheDocument();
+    expect(screen.getByText("20 RPS / burst 40")).toBeInTheDocument();
     expect(issue).toHaveBeenCalledWith(
       "0198a117-0d8c-70e2-a457-a83c253b9f21",
       "0198a121-ffbd-70c2-a3c8-c65516d7b8fb",
