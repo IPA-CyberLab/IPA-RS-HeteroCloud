@@ -185,6 +185,11 @@ async fn test_state() -> Result<Option<(Store, Arc<AppState>)>, Box<dyn Error>> 
     let Ok(database_url) = env::var(TEST_DATABASE_ENV) else {
         return Ok(None);
     };
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .map_err(|_| "failed to install the rustls ring crypto provider")?;
+    }
     let store = Store::connect(&database_url, 8).await?;
     let database_name: String = sqlx::query_scalar("SELECT current_database()")
         .fetch_one(store.pool())
