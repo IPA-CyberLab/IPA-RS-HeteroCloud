@@ -168,5 +168,13 @@ describe("RealtimeServiceDetailPage", () => {
     expect(
       screen.getByText("turns:turn.realtime.example.com:5349"),
     ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "APIドキュメント" })).toHaveAttribute(
+      "href",
+      "https://api.realtime.example.com/docs/",
+    );
+    expect(screen.getByRole("link", { name: "OpenAPI JSONを開く" })).toHaveAttribute(
+      "href",
+      "https://api.realtime.example.com/openapi.json",
+    );
   });
 });

@@ -3,6 +3,8 @@ import {
   ArrowDownToLine,
   ArrowLeft,
   ArrowUpFromLine,
+  BookOpen,
+  FileJson,
   Gauge,
   LoaderCircle,
   Pencil,
@@ -65,6 +67,15 @@ const metricRanges: { value: RealtimeMetricsRange; label: string }[] = [
   { value: "7d", label: "7日" },
   { value: "30d", label: "30日" },
 ];
+
+function apiResourceUrl(endpoint: string | undefined, path: string): string | null {
+  if (!endpoint) return null;
+  try {
+    return new URL(path, endpoint).toString();
+  } catch {
+    return null;
+  }
+}
 
 function formValue(service: RealtimeService): RealtimeServiceFormValue {
   return {
@@ -194,6 +205,8 @@ export function RealtimeServiceDetailPage() {
   const item = service.data;
   const itemMetrics = metrics.data;
   const endpoints = itemMetrics?.endpoints ?? serviceEndpoints(item);
+  const apiDocumentationUrl = apiResourceUrl(endpoints.api[0], "/docs/");
+  const openApiUrl = apiResourceUrl(endpoints.api[0], "/openapi.json");
   const projectName =
     projects.data.items.find((project) => project.id === item.project_id)?.name ??
     item.project_id;
@@ -299,6 +312,31 @@ export function RealtimeServiceDetailPage() {
               <Pencil />
               編集
             </Button>
+            {apiDocumentationUrl ? (
+              <Button asChild variant="secondary">
+                <a
+                  href={apiDocumentationUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <BookOpen />
+                  APIドキュメント
+                </a>
+              </Button>
+            ) : null}
+            {openApiUrl ? (
+              <Button
+                asChild
+                variant="secondary"
+                size="icon"
+                title="OpenAPI JSONを開く"
+                aria-label="OpenAPI JSONを開く"
+              >
+                <a href={openApiUrl} target="_blank" rel="noreferrer">
+                  <FileJson />
+                </a>
+              </Button>
+            ) : null}
             <AccessCredentialDialog
               organizationId={organizationId}
               serviceId={item.id}
