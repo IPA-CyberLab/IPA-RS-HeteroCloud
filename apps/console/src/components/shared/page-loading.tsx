@@ -1,5 +1,6 @@
-import { LoaderCircle } from "lucide-react";
-import { cn } from "@/lib/utils";
+import Box from "@cloudscape-design/components/box";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import Spinner from "@cloudscape-design/components/spinner";
 
 interface PageLoadingProps {
   label?: string;
@@ -11,17 +12,13 @@ export function PageLoading({
   fullScreen = false,
 }: PageLoadingProps) {
   return (
-    <div
-      className={cn(
-        "flex min-h-64 items-center justify-center text-zinc-600",
-        fullScreen && "min-h-screen bg-zinc-50",
-      )}
-      role="status"
-    >
-      <div className="flex items-center gap-2 text-sm">
-        <LoaderCircle className="size-4 animate-spin" />
-        <span>{label}</span>
-      </div>
+    <div className={fullScreen ? "page-loading page-loading--full" : "page-loading"}>
+      <Box padding="xxl" textAlign="center" color="text-body-secondary">
+        <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+          <Spinner />
+          <span role="status">{label}</span>
+        </SpaceBetween>
+      </Box>
     </div>
   );
 }

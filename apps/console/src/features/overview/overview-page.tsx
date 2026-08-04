@@ -1,31 +1,19 @@
+import Box from "@cloudscape-design/components/box";
+import Button from "@cloudscape-design/components/button";
+import Cards from "@cloudscape-design/components/cards";
+import ColumnLayout from "@cloudscape-design/components/column-layout";
+import Container from "@cloudscape-design/components/container";
+import Header from "@cloudscape-design/components/header";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import Table from "@cloudscape-design/components/table";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Activity,
-  ArrowRight,
-  Boxes,
-  FileClock,
-  KeyRound,
-  RadioTower,
-  RefreshCw,
-  ShieldCheck,
-  Users,
-  UsersRound,
-} from "lucide-react";
 import { useMemo } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { ErrorState } from "@/components/shared/error-state";
 import { PageHeader } from "@/components/shared/page-header";
 import { PageLoading } from "@/components/shared/page-loading";
+import { RouterLink } from "@/components/shared/router-link";
 import { StatusBadge } from "@/components/shared/status-badge";
-import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { useActiveOrganization } from "@/features/organizations/organization-context";
 import { formatBytes, transferredBytes } from "@/features/realtime/realtime-service-utils";
 import {
@@ -38,10 +26,18 @@ import {
 } from "@/lib/queries";
 import { formatDateTime, formatNumber } from "@/lib/utils";
 
+const shortcuts = [
+  { title: "Flow", description: "WebRTC、LiveKit、STUN、TURN", to: "/flow/services" },
+  { title: "プロジェクト", description: "リソースの配置と分離", to: "/projects" },
+  { title: "アクセス管理", description: "プリンシパル、ポリシー、権限", to: "/iam/principals" },
+  { title: "監査ログ", description: "操作履歴と認可判定", to: "/audit-logs" },
+];
+
 export function OverviewPage() {
   const { activeOrganization } = useActiveOrganization();
   const organizationId = activeOrganization.organization_id;
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const projects = useQuery(projectsQueryOptions(organizationId));
   const principals = useQuery(iamPrincipalsQueryOptions(organizationId));
   const policies = useQuery(iamPoliciesQueryOptions(organizationId));
@@ -58,10 +54,7 @@ export function OverviewPage() {
   const metricsByService = useMemo(
     () =>
       new Map(
-        serviceItems.map((service, index) => [
-          service.id,
-          metricQueries[index]?.data,
-        ]),
+        serviceItems.map((service, index) => [service.id, metricQueries[index]?.data]),
       ),
     [metricQueries, serviceItems],
   );
@@ -69,14 +62,11 @@ export function OverviewPage() {
   if (baseQueries.some((query) => query.isPending)) {
     return <PageLoading label="コンソールを読み込んでいます" />;
   }
-
   if (baseQueries.some((query) => query.isError)) {
     return (
       <ErrorState
         description="選択中の組織からコンソールデータを取得できませんでした。"
-        onRetry={() => {
-          baseQueries.forEach((query) => void query.refetch());
-        }}
+        onRetry={() => baseQueries.forEach((query) => void query.refetch())}
       />
     );
   }
@@ -86,10 +76,7 @@ export function OverviewPage() {
   const policyItems = policies.data!.items;
   const auditItems = audit.data!.items;
   const readyServices = serviceItems.filter((service) => service.state === "ready");
-  const activeRooms = metricQueries.reduce(
-    (sum, query) => sum + (query.data?.active_rooms ?? 0),
-    0,
-  );
+  const activeRooms = metricQueries.reduce((sum, query) => sum + (query.data?.active_rooms ?? 0), 0);
   const concurrentConnections = metricQueries.reduce(
     (sum, query) => sum + (query.data?.concurrent_connections ?? 0),
     0,
@@ -98,282 +85,120 @@ export function OverviewPage() {
     (sum, query) => sum + (query.data ? transferredBytes(query.data) : 0),
     0,
   );
-
   const resources = [
-    {
-      label: "プロジェクト",
-      value: projectItems.length,
-      icon: Boxes,
-      to: "/projects",
-    },
-    {
-      label: "Flow",
-      value: serviceItems.length,
-      icon: RadioTower,
-      to: "/flow/services",
-    },
-    {
-      label: "IAMプリンシパル",
-      value: principalItems.length,
-      icon: Users,
-      to: "/iam/principals",
-    },
-    {
-      label: "IAMポリシー",
-      value: policyItems.length,
-      icon: ShieldCheck,
-      to: "/iam/policies",
-    },
-  ];
-
-  const serviceLinks = [
-    {
-      title: "Flow",
-      description: "WebRTC、LiveKit、STUN、TURN",
-      to: "/flow/services",
-      icon: RadioTower,
-    },
-    {
-      title: "プロジェクト",
-      description: "リソースの配置と分離",
-      to: "/projects",
-      icon: Boxes,
-    },
-    {
-      title: "アクセス管理",
-      description: "プリンシパル、ポリシー、権限",
-      to: "/iam/principals",
-      icon: KeyRound,
-    },
-    {
-      title: "監査ログ",
-      description: "操作履歴と認可判定",
-      to: "/audit-logs",
-      icon: FileClock,
-    },
-  ];
-
-  const refresh = async () => {
-    await queryClient.invalidateQueries({
-      queryKey: ["organizations", organizationId],
-    });
-  };
+    ["プロジェクト", projectItems.length, "/projects"],
+    ["Flow", serviceItems.length, "/flow/services"],
+    ["IAMプリンシパル", principalItems.length, "/iam/principals"],
+    ["IAMポリシー", policyItems.length, "/iam/policies"],
+  ] as const;
 
   return (
-    <div className="space-y-7">
+    <SpaceBetween size="l">
       <PageHeader
         title="コンソールホーム"
         description={`${activeOrganization.organization_name} のリソース、稼働状況、最近の操作です。`}
         actions={
-          <Button variant="secondary" onClick={() => void refresh()}>
-            <RefreshCw />
+          <Button
+            iconName="refresh"
+            onClick={() =>
+              void queryClient.invalidateQueries({ queryKey: ["organizations", organizationId] })
+            }
+          >
             更新
           </Button>
         }
       />
-
-      <section aria-labelledby="resources-heading">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 id="resources-heading" className="text-sm font-semibold text-zinc-900">
-            リソース
-          </h2>
-        </div>
-        <div className="grid border border-zinc-200 bg-white sm:grid-cols-2 xl:grid-cols-4">
-          {resources.map((resource, index) => {
-            const Icon = resource.icon;
-            return (
-              <Link
-                key={resource.label}
-                to={resource.to}
-                className={`group flex min-h-24 items-center gap-4 p-4 outline-none hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-600 ${
-                  index > 0 ? "border-t border-zinc-200 sm:border-t-0" : ""
-                } ${index % 2 === 1 ? "sm:border-l" : ""} ${
-                  index > 1 ? "xl:border-l" : ""
-                }`}
-              >
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-[6px] bg-zinc-100 text-zinc-600 group-hover:bg-emerald-50 group-hover:text-emerald-700">
-                  <Icon className="size-4" />
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-xl font-semibold text-zinc-950">
-                    {formatNumber(resource.value)}
-                  </span>
-                  <span className="block truncate text-xs text-zinc-500">
-                    {resource.label}
-                  </span>
-                </span>
-              </Link>
-            );
-          })}
-        </div>
-      </section>
-
-      <section aria-labelledby="services-heading">
-        <h2 id="services-heading" className="mb-3 text-sm font-semibold text-zinc-900">
-          サービス
-        </h2>
-        <div className="grid border border-zinc-200 bg-white md:grid-cols-2 xl:grid-cols-4">
-          {serviceLinks.map((serviceLink, index) => {
-            const Icon = serviceLink.icon;
-            return (
-              <Link
-                key={serviceLink.to}
-                to={serviceLink.to}
-                className={`group flex min-h-20 items-center gap-3 px-4 py-3 outline-none hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-600 ${
-                  index > 0 ? "border-t border-zinc-200 md:border-t-0" : ""
-                } ${index % 2 === 1 ? "md:border-l" : ""} ${
-                  index > 1 ? "xl:border-l" : ""
-                }`}
-              >
-                <Icon className="size-5 shrink-0 text-zinc-500 group-hover:text-emerald-700" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium text-zinc-900">
-                    {serviceLink.title}
-                  </span>
-                  <span className="block truncate text-xs text-zinc-500">
-                    {serviceLink.description}
-                  </span>
-                </span>
-                <ArrowRight className="size-4 shrink-0 text-zinc-400" />
-              </Link>
-            );
-          })}
-        </div>
-      </section>
-
-      <section aria-labelledby="operations-heading">
-        <h2 id="operations-heading" className="mb-3 text-sm font-semibold text-zinc-900">
-          Flowの稼働状況
-        </h2>
-        <div className="grid border border-zinc-200 bg-white sm:grid-cols-2 xl:grid-cols-4">
+      <Container header={<Header variant="h2">リソース</Header>}>
+        <ColumnLayout columns={4} variant="text-grid">
+          {resources.map(([label, value, to]) => (
+            <div key={label}>
+              <Box variant="awsui-key-label">{label}</Box>
+              <Box variant="awsui-value-large">{formatNumber(value)}</Box>
+              <RouterLink to={to}>管理画面を開く</RouterLink>
+            </div>
+          ))}
+        </ColumnLayout>
+      </Container>
+      <Cards
+        cardDefinition={{
+          header: (item) => <RouterLink to={item.to}>{item.title}</RouterLink>,
+          sections: [{ id: "description", content: (item) => item.description }],
+        }}
+        cardsPerRow={[{ cards: 1 }, { minWidth: 500, cards: 2 }, { minWidth: 900, cards: 4 }]}
+        items={shortcuts}
+        header={<Header variant="h2">サービス</Header>}
+        empty={<Box textAlign="center">利用可能なサービスがありません</Box>}
+      />
+      <Container header={<Header variant="h2">Flowの稼働状況</Header>}>
+        <ColumnLayout columns={4} variant="text-grid">
           {[
-            {
-              label: "準備完了サービス",
-              value: formatNumber(readyServices.length),
-              icon: RadioTower,
-            },
-            {
-              label: "アクティブルーム",
-              value: formatNumber(activeRooms),
-              icon: Activity,
-            },
-            {
-              label: "同時接続",
-              value: formatNumber(concurrentConnections),
-              icon: UsersRound,
-            },
-            {
-              label: "転送量",
-              value: formatBytes(transferTotal),
-              icon: Activity,
-            },
-          ].map((metric, index) => {
-            const Icon = metric.icon;
-            return (
-              <div
-                key={metric.label}
-                className={`min-h-20 px-4 py-3 ${
-                  index > 0 ? "border-t border-zinc-200 sm:border-t-0" : ""
-                } ${index % 2 === 1 ? "sm:border-l" : ""} ${
-                  index > 1 ? "xl:border-l" : ""
-                }`}
-              >
-                <div className="flex items-center gap-2 text-xs text-zinc-500">
-                  <Icon className="size-3.5" />
-                  {metric.label}
-                </div>
-                <div className="mt-2 text-xl font-semibold text-zinc-950">
-                  {metric.value}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,0.8fr)]">
-        <section className="overflow-hidden border border-zinc-200 bg-white">
-          <div className="flex items-center justify-between border-b border-zinc-200 bg-zinc-50 px-4 py-3">
-            <h2 className="text-sm font-semibold">最近のFlow</h2>
-            <Button asChild variant="ghost" size="sm">
-              <Link to="/flow/services">すべて表示</Link>
-            </Button>
-          </div>
-          {serviceItems.length === 0 ? (
-            <div className="flex min-h-44 items-center justify-center px-4 text-sm text-zinc-500">
-              サービスはありません。
+            ["準備完了サービス", formatNumber(readyServices.length)],
+            ["アクティブルーム", formatNumber(activeRooms)],
+            ["同時接続", formatNumber(concurrentConnections)],
+            ["転送量", formatBytes(transferTotal)],
+          ].map(([label, value]) => (
+            <div key={label}>
+              <Box variant="awsui-key-label">{label}</Box>
+              <Box variant="awsui-value-large">{value}</Box>
             </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>サービス</TableHead>
-                  <TableHead>状態</TableHead>
-                  <TableHead>ルーム</TableHead>
-                  <TableHead>同時接続</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {serviceItems.slice(0, 6).map((serviceItem) => {
-                  const itemMetrics = metricsByService.get(serviceItem.id);
-                  return (
-                    <TableRow key={serviceItem.id}>
-                      <TableCell>
-                        <Link
-                          to={`/flow/services/${serviceItem.id}`}
-                          className="font-medium text-emerald-800 hover:underline"
-                        >
-                          {serviceItem.name}
-                        </Link>
-                      </TableCell>
-                      <TableCell><StatusBadge status={serviceItem.state} /></TableCell>
-                      <TableCell>
-                        {itemMetrics ? formatNumber(itemMetrics.active_rooms) : "—"}
-                      </TableCell>
-                      <TableCell>
-                        {itemMetrics
-                          ? formatNumber(itemMetrics.concurrent_connections)
-                          : "—"}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </section>
-
-        <section className="overflow-hidden border border-zinc-200 bg-white">
-          <div className="flex items-center justify-between border-b border-zinc-200 bg-zinc-50 px-4 py-3">
-            <h2 className="text-sm font-semibold">最近の監査イベント</h2>
-            <Button asChild variant="ghost" size="sm">
-              <Link to="/audit-logs">すべて表示</Link>
-            </Button>
-          </div>
-          {auditItems.length === 0 ? (
-            <div className="flex min-h-44 items-center justify-center px-4 text-sm text-zinc-500">
-              監査イベントはありません。
-            </div>
-          ) : (
-            <div className="divide-y divide-zinc-100">
-              {auditItems.slice(0, 6).map((event) => (
-                <div key={event.id} className="flex items-center gap-3 px-4 py-3">
-                  <Activity className="size-4 shrink-0 text-zinc-400" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-zinc-800">
-                      {event.action}
-                    </p>
-                    <p className="truncate text-xs text-zinc-500">
-                      {formatDateTime(event.occurred_at)}
-                    </p>
-                  </div>
-                  <StatusBadge status={event.decision} />
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
-    </div>
+          ))}
+        </ColumnLayout>
+      </Container>
+      <ColumnLayout columns={2}>
+        <Table
+          variant="container"
+          header={
+            <Header
+              variant="h2"
+              counter={`(${serviceItems.length})`}
+              actions={<Button onClick={() => navigate("/flow/services")}>すべて表示</Button>}
+            >
+              最近のFlow
+            </Header>
+          }
+          items={serviceItems.slice(0, 6)}
+          trackBy="id"
+          columnDefinitions={[
+            {
+              id: "name",
+              header: "サービス",
+              cell: (item) => <RouterLink to={`/flow/services/${item.id}`}>{item.name}</RouterLink>,
+            },
+            { id: "state", header: "状態", cell: (item) => <StatusBadge status={item.state} /> },
+            {
+              id: "rooms",
+              header: "ルーム",
+              cell: (item) => formatNumber(metricsByService.get(item.id)?.active_rooms ?? 0),
+            },
+            {
+              id: "connections",
+              header: "同時接続",
+              cell: (item) => formatNumber(metricsByService.get(item.id)?.concurrent_connections ?? 0),
+            },
+          ]}
+          empty={<Box textAlign="center" color="text-body-secondary">サービスはありません。</Box>}
+        />
+        <Table
+          variant="container"
+          header={
+            <Header
+              variant="h2"
+              counter={`(${auditItems.length})`}
+              actions={<Button onClick={() => navigate("/audit-logs")}>すべて表示</Button>}
+            >
+              最近の監査イベント
+            </Header>
+          }
+          items={auditItems.slice(0, 6)}
+          trackBy={(item) => String(item.id)}
+          columnDefinitions={[
+            { id: "action", header: "アクション", cell: (item) => <Box variant="code">{item.action}</Box> },
+            { id: "decision", header: "判定", cell: (item) => <StatusBadge status={item.decision} /> },
+            { id: "time", header: "日時", cell: (item) => formatDateTime(item.occurred_at) },
+          ]}
+          empty={<Box textAlign="center" color="text-body-secondary">監査イベントはありません。</Box>}
+        />
+      </ColumnLayout>
+    </SpaceBetween>
   );
 }

@@ -1,25 +1,19 @@
+import Alert from "@cloudscape-design/components/alert";
+import Button from "@cloudscape-design/components/button";
+import Container from "@cloudscape-design/components/container";
+import Form from "@cloudscape-design/components/form";
+import FormField from "@cloudscape-design/components/form-field";
+import Header from "@cloudscape-design/components/header";
+import Select from "@cloudscape-design/components/select";
+import SpaceBetween from "@cloudscape-design/components/space-between";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { CheckCircle2, Link2, LoaderCircle } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { useState } from "react";
 import { ErrorState } from "@/components/shared/error-state";
-import { FormError } from "@/components/shared/form-error";
 import { PageHeader } from "@/components/shared/page-header";
 import { PageLoading } from "@/components/shared/page-loading";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { useActiveOrganization } from "@/features/organizations/organization-context";
 import { api, getApiErrorMessage } from "@/lib/api-client";
-import {
-  iamPoliciesQueryOptions,
-  iamPrincipalsQueryOptions,
-} from "@/lib/queries";
+import { iamPoliciesQueryOptions, iamPrincipalsQueryOptions } from "@/lib/queries";
 
 export function IamBindingsPage() {
   const { activeOrganization } = useActiveOrganization();
@@ -28,7 +22,6 @@ export function IamBindingsPage() {
   const policies = useQuery(iamPoliciesQueryOptions(organizationId));
   const [principalId, setPrincipalId] = useState("");
   const [policyId, setPolicyId] = useState("");
-
   const createBinding = useMutation({
     mutationFn: () =>
       api.iam.bindings.create(organizationId, {
@@ -37,15 +30,9 @@ export function IamBindingsPage() {
       }),
   });
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    createBinding.mutate();
-  };
-
   if (principals.isPending || policies.isPending) {
     return <PageLoading label="IAMリソースを読み込んでいます" />;
   }
-
   if (principals.isError || policies.isError) {
     return (
       <ErrorState
@@ -59,94 +46,73 @@ export function IamBindingsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <SpaceBetween size="l">
       <PageHeader
         title="IAMバインディング"
         description={`${activeOrganization.organization_name} のプリンシパルへポリシーを割り当てます。`}
       />
-
-      <form
-        onSubmit={submit}
-        className="max-w-2xl border border-zinc-200 bg-white"
+      <Container
+        header={
+          <Header variant="h2" description="プリンシパルと最小権限ポリシーを関連付けます。">
+            バインディングを作成
+          </Header>
+        }
       >
-        <div className="border-b border-zinc-200 px-5 py-4">
-          <div className="flex items-center gap-2">
-            <Link2 className="size-4 text-zinc-500" />
-            <h2 className="text-sm font-semibold">バインディングを作成</h2>
-          </div>
-        </div>
-        <div className="space-y-5 p-5 sm:p-6">
-          <div className="space-y-2">
-            <Label>プリンシパル</Label>
-            <Select value={principalId} onValueChange={setPrincipalId}>
-              <SelectTrigger>
-                <SelectValue placeholder="プリンシパルを選択" />
-              </SelectTrigger>
-              <SelectContent>
-                {principals.data.items.map((principal) => (
-                  <SelectItem key={principal.id} value={principal.id}>
-                    {principal.name} (
-                    {principal.kind === "user" ? "ユーザー" : "サービスアカウント"})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>ポリシー</Label>
-            <Select value={policyId} onValueChange={setPolicyId}>
-              <SelectTrigger>
-                <SelectValue placeholder="ポリシーを選択" />
-              </SelectTrigger>
-              <SelectContent>
-                {policies.data.items.map((policy) => (
-                  <SelectItem key={policy.id} value={policy.id}>
-                    {policy.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <FormError
-            message={
-              createBinding.isError
-                ? getApiErrorMessage(createBinding.error)
-                : null
-            }
-          />
-          {createBinding.isSuccess ? (
-            <p
-              className="flex items-center gap-2 text-sm text-emerald-700"
-              role="status"
+        <Form
+          errorText={createBinding.isError ? getApiErrorMessage(createBinding.error) : undefined}
+          actions={
+            <Button
+              variant="primary"
+              iconName="anchor-link"
+              loading={createBinding.isPending}
+              disabled={!principalId || !policyId}
+              onClick={() => createBinding.mutate()}
             >
-              <CheckCircle2 className="size-4" />
-              バインディングを作成しました。
-              <span className="font-mono text-xs">{createBinding.data.id}</span>
-            </p>
-          ) : null}
-        </div>
-        <div className="flex justify-end border-t border-zinc-200 bg-zinc-50 px-5 py-4 sm:px-6">
-          <Button
-            type="submit"
-            disabled={
-              createBinding.isPending || !principalId || !policyId
-            }
-          >
-            {createBinding.isPending ? (
-              <>
-                <LoaderCircle className="animate-spin" />
-                作成中
-              </>
-            ) : (
-              <>
-                <Link2 />
-                ポリシーを割り当て
-              </>
-            )}
-          </Button>
-        </div>
-      </form>
-    </div>
+              ポリシーを割り当て
+            </Button>
+          }
+        >
+          <SpaceBetween size="l">
+            <FormField label="プリンシパル">
+              <Select
+                selectedOption={
+                  principals.data.items
+                    .map((principal) => ({
+                      value: principal.id,
+                      label: principal.name,
+                      description: principal.kind === "user" ? "ユーザー" : "サービスアカウント",
+                    }))
+                    .find((option) => option.value === principalId) ?? null
+                }
+                options={principals.data.items.map((principal) => ({
+                  value: principal.id,
+                  label: principal.name,
+                  description: principal.kind === "user" ? "ユーザー" : "サービスアカウント",
+                }))}
+                placeholder="プリンシパルを選択"
+                onChange={({ detail }) => setPrincipalId(detail.selectedOption.value ?? "")}
+              />
+            </FormField>
+            <FormField label="ポリシー">
+              <Select
+                selectedOption={
+                  policies.data.items
+                    .map((policy) => ({ value: policy.id, label: policy.name }))
+                    .find((option) => option.value === policyId) ?? null
+                }
+                options={policies.data.items.map((policy) => ({ value: policy.id, label: policy.name }))}
+                placeholder="ポリシーを選択"
+                onChange={({ detail }) => setPolicyId(detail.selectedOption.value ?? "")}
+              />
+            </FormField>
+            {createBinding.isSuccess ? (
+              <Alert type="success" header="バインディングを作成しました">
+                ID: {createBinding.data.id}
+              </Alert>
+            ) : null}
+          </SpaceBetween>
+        </Form>
+      </Container>
+    </SpaceBetween>
   );
 }

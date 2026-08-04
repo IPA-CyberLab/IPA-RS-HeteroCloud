@@ -1,15 +1,11 @@
-import type { FormEvent } from "react";
+import ColumnLayout from "@cloudscape-design/components/column-layout";
+import FormField from "@cloudscape-design/components/form-field";
+import Input from "@cloudscape-design/components/input";
+import Select from "@cloudscape-design/components/select";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import Toggle from "@cloudscape-design/components/toggle";
+import type { FormEvent, ReactNode } from "react";
 import { ProjectSelector } from "@/components/shared/resource-selectors";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 
 export interface RealtimeServiceFormValue {
   projectId: string;
@@ -20,19 +16,6 @@ export interface RealtimeServiceFormValue {
   rateLimitRequestsPerSecond: number;
   rateLimitBurst: number;
   turnEnabled: boolean;
-}
-
-interface RealtimeServiceFormProps {
-  value: RealtimeServiceFormValue;
-  onChange: (value: RealtimeServiceFormValue) => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  disabled?: boolean;
-  projectLocked?: boolean;
-  children: React.ReactNode;
-}
-
-function positiveInteger(value: number): number {
-  return Number.isFinite(value) ? Math.max(1, Math.trunc(value)) : 1;
 }
 
 export const defaultRealtimeServiceFormValue: RealtimeServiceFormValue = {
@@ -46,6 +29,16 @@ export const defaultRealtimeServiceFormValue: RealtimeServiceFormValue = {
   turnEnabled: true,
 };
 
+const regions = [
+  { value: "heteronet-global", label: "HeteroNet Global" },
+  { value: "heteronet-jp", label: "HeteroNet Japan" },
+];
+
+function integer(value: string, fallback = 1) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(1, Math.trunc(parsed)) : fallback;
+}
+
 export function RealtimeServiceForm({
   value,
   onChange,
@@ -53,147 +46,109 @@ export function RealtimeServiceForm({
   disabled,
   projectLocked,
   children,
-}: RealtimeServiceFormProps) {
+}: {
+  value: RealtimeServiceFormValue;
+  onChange: (value: RealtimeServiceFormValue) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  disabled?: boolean;
+  projectLocked?: boolean;
+  children: ReactNode;
+}) {
   const update = <Key extends keyof RealtimeServiceFormValue>(
     key: Key,
     nextValue: RealtimeServiceFormValue[Key],
   ) => onChange({ ...value, [key]: nextValue });
 
   return (
-    <form onSubmit={onSubmit} className="space-y-5">
-      <div className="space-y-2">
-        <Label>プロジェクト</Label>
-        <ProjectSelector
-          value={value.projectId}
-          onValueChange={(projectId) => update("projectId", projectId)}
-          disabled={disabled || projectLocked}
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="realtime-service-name">サービス名</Label>
-        <Input
-          id="realtime-service-name"
-          required
-          maxLength={120}
-          value={value.name}
-          disabled={disabled}
-          onChange={(event) => update("name", event.target.value)}
-          placeholder="realtime-production"
-        />
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-3">
-        <div className="space-y-2">
-          <Label>リージョン</Label>
-          <Select
-            value={value.region}
-            onValueChange={(region) => update("region", region)}
+    <form onSubmit={onSubmit}>
+      <SpaceBetween size="l">
+        <FormField label="プロジェクト">
+          <ProjectSelector
+            value={value.projectId}
+            onValueChange={(projectId) => update("projectId", projectId)}
+            disabled={disabled || projectLocked}
+          />
+        </FormField>
+        <FormField label="サービス名">
+          <Input
+            value={value.name}
             disabled={disabled}
+            placeholder="realtime-production"
+            onChange={({ detail }) => update("name", detail.value.slice(0, 120))}
+          />
+        </FormField>
+        <ColumnLayout columns={3}>
+          <FormField label="リージョン">
+            <Select
+              ariaLabel="リージョン"
+              selectedOption={regions.find((region) => region.value === value.region) ?? regions[0]}
+              options={regions}
+              disabled={disabled}
+              onChange={({ detail }) => update("region", detail.selectedOption.value ?? regions[0].value)}
+            />
+          </FormField>
+          <FormField label="同時参加者上限" constraintText="1〜100,000">
+            <Input
+              type="number"
+              inputMode="numeric"
+              step={1}
+              nativeInputAttributes={{ min: 1, max: 100_000 }}
+              value={String(value.maxParticipants)}
+              disabled={disabled}
+              onChange={({ detail }) => update("maxParticipants", integer(detail.value))}
+            />
+          </FormField>
+          <FormField label="ルーム上限" constraintText="1〜1,000,000">
+            <Input
+              type="number"
+              inputMode="numeric"
+              step={1}
+              nativeInputAttributes={{ min: 1, max: 1_000_000 }}
+              value={String(value.maxRooms)}
+              disabled={disabled}
+              onChange={({ detail }) => update("maxRooms", integer(detail.value))}
+            />
+          </FormField>
+        </ColumnLayout>
+        <ColumnLayout columns={2}>
+          <FormField
+            label="RPS上限"
+            description="同一送信元IPに許可する1秒あたりの要求数"
           >
-            <SelectTrigger aria-label="リージョン">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="heteronet-global">HeteroNet Global</SelectItem>
-              <SelectItem value="heteronet-jp">HeteroNet Japan</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="realtime-max-participants">同時参加者上限</Label>
-          <Input
-            id="realtime-max-participants"
-            type="number"
-            required
-            min={1}
-            max={100_000}
-            step={1}
-            value={value.maxParticipants}
-            disabled={disabled}
-            onChange={(event) =>
-              update("maxParticipants", event.currentTarget.valueAsNumber || 1)
-            }
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="realtime-max-rooms">ルーム上限</Label>
-          <Input
-            id="realtime-max-rooms"
-            type="number"
-            required
-            min={1}
-            max={1_000_000}
-            step={1}
-            value={value.maxRooms}
-            disabled={disabled}
-            onChange={(event) =>
-              update("maxRooms", positiveInteger(event.currentTarget.valueAsNumber))
-            }
-          />
-        </div>
-      </div>
-
-      <fieldset className="border-t border-zinc-100 pt-4" disabled={disabled}>
-        <legend className="mb-3 text-sm font-medium text-zinc-800">
-          IPレート制限
-        </legend>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="realtime-rate-limit-rps">RPS上限</Label>
             <Input
-              id="realtime-rate-limit-rps"
               type="number"
-              required
-              min={1}
-              max={1_000}
+              inputMode="numeric"
               step={1}
-              value={value.rateLimitRequestsPerSecond}
+              nativeInputAttributes={{ min: 1, max: 1_000 }}
+              value={String(value.rateLimitRequestsPerSecond)}
               disabled={disabled}
-              onChange={(event) =>
-                update(
-                  "rateLimitRequestsPerSecond",
-                  positiveInteger(event.currentTarget.valueAsNumber),
-                )
-              }
+              onChange={({ detail }) => update("rateLimitRequestsPerSecond", integer(detail.value))}
             />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="realtime-rate-limit-burst">バースト上限</Label>
+          </FormField>
+          <FormField
+            label="バースト上限"
+            description="短時間に許可する要求数の上限"
+          >
             <Input
-              id="realtime-rate-limit-burst"
               type="number"
-              required
-              min={1}
-              max={5_000}
+              inputMode="numeric"
               step={1}
-              value={value.rateLimitBurst}
+              nativeInputAttributes={{ min: 1, max: 5_000 }}
+              value={String(value.rateLimitBurst)}
               disabled={disabled}
-              onChange={(event) =>
-                update(
-                  "rateLimitBurst",
-                  positiveInteger(event.currentTarget.valueAsNumber),
-                )
-              }
+              onChange={({ detail }) => update("rateLimitBurst", integer(detail.value))}
             />
-          </div>
-        </div>
-      </fieldset>
-
-      <div className="flex items-center justify-between gap-6 border-t border-zinc-100 pt-4">
-        <div>
-          <Label htmlFor="realtime-turn-enabled">TURN</Label>
-          <p className="mt-1 text-xs text-zinc-500">接続不能時のリレー経路</p>
-        </div>
-        <Switch
-          id="realtime-turn-enabled"
+          </FormField>
+        </ColumnLayout>
+        <Toggle
           checked={value.turnEnabled}
-          onCheckedChange={(turnEnabled) => update("turnEnabled", turnEnabled)}
           disabled={disabled}
-        />
-      </div>
-
-      {children}
+          onChange={({ detail }) => update("turnEnabled", detail.checked)}
+        >
+          TURNリレーを有効化
+        </Toggle>
+        {children}
+      </SpaceBetween>
     </form>
   );
 }

@@ -13,7 +13,7 @@ export function ProtectedRoute() {
 
   if (session.isError) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50 p-6">
+      <div className="auth-page">
         <ErrorState
           title="認証サービスに接続できません"
           description="セッションを確認できませんでした。APIの稼働状態を確認して再試行してください。"

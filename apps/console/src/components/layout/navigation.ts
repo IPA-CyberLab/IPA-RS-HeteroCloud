@@ -1,59 +1,30 @@
-import {
-  Activity,
-  Boxes,
-  Building2,
-  FileClock,
-  Gauge,
-  KeyRound,
-  Link2,
-  RadioTower,
-  Settings,
-  Users,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import type { SideNavigationProps } from "@cloudscape-design/components/side-navigation";
 
-export interface NavigationItem {
-  label: string;
-  to: string;
-  icon: LucideIcon;
-}
-
-export interface NavigationSection {
-  label?: string;
-  items: NavigationItem[];
-}
-
-export const navigationSections: NavigationSection[] = [
+export const navigationItems: SideNavigationProps.Item[] = [
+  { type: "link", text: "概要", href: "/overview" },
+  { type: "link", text: "組織", href: "/organizations" },
+  { type: "link", text: "プロジェクト", href: "/projects" },
+  { type: "divider" },
   {
+    type: "section",
+    text: "IAM",
     items: [
-      { label: "概要", to: "/overview", icon: Gauge },
-      { label: "組織", to: "/organizations", icon: Building2 },
-      { label: "プロジェクト", to: "/projects", icon: Boxes },
+      { type: "link", text: "プリンシパル", href: "/iam/principals" },
+      { type: "link", text: "ポリシー", href: "/iam/policies" },
+      { type: "link", text: "バインディング", href: "/iam/bindings" },
     ],
   },
   {
-    label: "IAM",
-    items: [
-      { label: "プリンシパル", to: "/iam/principals", icon: Users },
-      { label: "ポリシー", to: "/iam/policies", icon: KeyRound },
-      { label: "バインディング", to: "/iam/bindings", icon: Link2 },
-    ],
+    type: "section",
+    text: "サービス",
+    items: [{ type: "link", text: "Flow", href: "/flow/services" }],
   },
   {
-    label: "サービス",
+    type: "section",
+    text: "運用",
     items: [
-      {
-        label: "Flow",
-        to: "/flow/services",
-        icon: RadioTower,
-      },
-    ],
-  },
-  {
-    label: "運用",
-    items: [
-      { label: "監査ログ", to: "/audit-logs", icon: FileClock },
-      { label: "設定", to: "/settings", icon: Settings },
+      { type: "link", text: "監査ログ", href: "/audit-logs" },
+      { type: "link", text: "設定", href: "/settings" },
     ],
   },
 ];
@@ -62,12 +33,10 @@ export const routeTitles: Record<string, string> = {
   "/overview": "概要",
   "/organizations": "組織",
   "/projects": "プロジェクト",
-  "/iam/principals": "IAM / プリンシパル",
-  "/iam/policies": "IAM / ポリシー",
-  "/iam/bindings": "IAM / バインディング",
+  "/iam/principals": "プリンシパル",
+  "/iam/policies": "ポリシー",
+  "/iam/bindings": "バインディング",
   "/flow/services": "Flow",
   "/audit-logs": "監査ログ",
   "/settings": "設定",
 };
-
-export const HeteroCloudMark = Activity;

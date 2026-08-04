@@ -271,7 +271,10 @@ describe("DeveloperCredentialsSection", () => {
     expect(screen.queryByText("principal-11")).not.toBeInTheDocument();
     expect(screen.getByText("1–10 / 12")).toBeInTheDocument();
     expect(screen.getByText("1 / 2")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "前のページ" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "前のページ" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
 
     await user.click(screen.getByRole("button", { name: "次のページ" }));
 
@@ -280,7 +283,10 @@ describe("DeveloperCredentialsSection", () => {
     expect(screen.getByText("principal-12")).toBeInTheDocument();
     expect(screen.getByText("11–12 / 12")).toBeInTheDocument();
     expect(screen.getByText("2 / 2")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "次のページ" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "次のページ" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 
   it("サービスが準備未完了でも既存認証情報を失効できる", async () => {

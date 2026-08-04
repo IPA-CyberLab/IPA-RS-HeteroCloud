@@ -2,6 +2,8 @@
 /lean/.lake/
 /apps/console/node_modules/
 /apps/console/dist/
+/apps/console/playwright-report/
+/apps/console/test-results/
 /.env
 /.idea/
 /.vscode/

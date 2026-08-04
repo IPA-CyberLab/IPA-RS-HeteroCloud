@@ -65,7 +65,7 @@ export function OrganizationProvider({ children }: { children?: ReactNode }) {
 
   if (!value) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50 p-6">
+      <div className="auth-page">
         <ErrorState
           title="所属組織がありません"
           description="このアカウントには利用可能な組織メンバーシップがありません。管理者へ確認してください。"

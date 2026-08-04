@@ -1,26 +1,22 @@
+import Alert from "@cloudscape-design/components/alert";
+import Box from "@cloudscape-design/components/box";
+import Button from "@cloudscape-design/components/button";
+import Container from "@cloudscape-design/components/container";
+import Form from "@cloudscape-design/components/form";
+import FormField from "@cloudscape-design/components/form-field";
+import Header from "@cloudscape-design/components/header";
+import Input from "@cloudscape-design/components/input";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import TopNavigation from "@cloudscape-design/components/top-navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  Activity,
-  Eye,
-  EyeOff,
-  KeyRound,
-  LoaderCircle,
-  LockKeyhole,
-  UserPlus,
-} from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { FormError } from "@/components/shared/form-error";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { useSession, sessionQueryOptions } from "@/features/auth/session";
+import { sessionQueryOptions, useSession } from "@/features/auth/session";
 import { api, getApiErrorMessage } from "@/lib/api-client";
 
 interface LoginLocationState {
-  from?: {
-    pathname?: string;
-  };
+  from?: { pathname?: string };
 }
 
 export function LoginPage() {
@@ -31,7 +27,6 @@ export function LoginPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
-
   const login = useMutation({
     mutationFn: api.auth.login,
     onSuccess: (nextSession) => {
@@ -43,150 +38,105 @@ export function LoginPage() {
 
   if (session.data) return <Navigate to="/overview" replace />;
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     login.mutate({ email: email.trim(), password });
   };
 
   return (
-    <main className="grid min-h-screen grid-cols-1 bg-white lg:grid-cols-[minmax(20rem,0.85fr)_minmax(32rem,1.15fr)]">
-      <section className="hidden bg-[#151719] p-10 text-white lg:flex lg:flex-col lg:justify-between">
-        <div className="flex items-center gap-3">
-          <span className="flex size-9 items-center justify-center rounded-[6px] bg-emerald-500 text-zinc-950">
-            <Activity className="size-5" />
-          </span>
-          <div>
-            <p className="font-semibold">HeteroCloud</p>
-            <p className="text-xs text-zinc-400">Cloud control plane</p>
-          </div>
-        </div>
-        <div className="max-w-md">
-          <p className="text-2xl font-semibold leading-9">
-            クラウドリソースとアクセス権限を一か所で管理
-          </p>
-          <p className="mt-3 text-sm leading-7 text-zinc-400">
-            組織、プロジェクト、IAM、Flowの運用状況を確認できます。
-          </p>
-        </div>
-        <p className="text-xs text-zinc-500">HeteroCloud Console</p>
-      </section>
-
-      <section className="flex min-h-screen items-center justify-center bg-zinc-50 px-5 py-10">
-        <div className="w-full max-w-md">
-          <div className="mb-8 flex items-center gap-3 lg:hidden">
-            <span className="flex size-9 items-center justify-center rounded-[6px] bg-emerald-600 text-white">
-              <Activity className="size-5" />
-            </span>
-            <div>
-              <p className="font-semibold text-zinc-950">HeteroCloud</p>
-              <p className="text-xs text-zinc-500">管理コンソール</p>
-            </div>
-          </div>
-
-          <div className="rounded-[8px] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
-            <div className="mb-6">
-              <span className="mb-4 flex size-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
-                <LockKeyhole className="size-5" />
-              </span>
-              <h1 className="text-xl font-semibold text-zinc-950">ログイン</h1>
-              <p className="mt-1 text-sm leading-6 text-zinc-600">
-                HeteroCloudアカウントで続行してください。
-              </p>
-            </div>
-
+    <div className="auth-shell">
+      <TopNavigation
+        identity={{ href: "/login", title: "HeteroCloud", logo: { src: "/favicon.svg", alt: "" } }}
+        utilities={[]}
+        i18nStrings={{ overflowMenuTriggerText: "その他", overflowMenuTitleText: "メニュー" }}
+      />
+      <main className="auth-page">
+        <div className="auth-panel">
+          <SpaceBetween size="l">
+            <Header variant="h1" description="クラウドリソース管理コンソール">
+              ログイン
+            </Header>
             {session.isError ? (
-              <div className="mb-5 border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+              <Alert type="warning">
                 セッション確認APIに接続できません。ログイン時に再試行します。
-              </div>
+              </Alert>
             ) : null}
-
-            <div className="space-y-3">
-              <Button asChild className="w-full" size="lg">
-                <a href="/api/v1/auth/oidc/start">
-                  <KeyRound />
+            <Container
+              header={
+                <Header variant="h2" description="組織のIDプロバイダーで認証します。">
+                  Keycloak
+                </Header>
+              }
+            >
+              <SpaceBetween size="s">
+                <Button variant="primary" fullWidth href="/api/v1/auth/oidc/start" iconName="key">
                   Keycloakでログイン
-                </a>
-              </Button>
-              <Button
-                asChild
-                className="w-full"
-                size="lg"
-                variant="secondary"
-              >
-                <a href="/api/v1/auth/oidc/start?intent=register">
-                  <UserPlus />
+                </Button>
+                <Button fullWidth href="/api/v1/auth/oidc/start?intent=register" iconName="user-profile-active">
                   アカウントを作成
-                </a>
-              </Button>
-            </div>
-
-            <div className="my-6 flex items-center gap-3" aria-hidden="true">
-              <span className="h-px flex-1 bg-zinc-200" />
-              <span className="text-xs text-zinc-500">ローカルアカウント</span>
-              <span className="h-px flex-1 bg-zinc-200" />
-            </div>
-
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <div className="space-y-2">
-                <Label htmlFor="email">メールアドレス</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  autoComplete="username"
-                  required
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="name@example.com"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="password">パスワード</Label>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    autoComplete="current-password"
-                    required
-                    minLength={12}
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    className="pr-10"
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-1 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-[4px] text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
-                    onClick={() => setShowPassword((value) => !value)}
-                    aria-label={showPassword ? "パスワードを隠す" : "パスワードを表示"}
-                    title={showPassword ? "パスワードを隠す" : "パスワードを表示"}
-                  >
-                    {showPassword ? (
-                      <EyeOff className="size-4" />
-                    ) : (
-                      <Eye className="size-4" />
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              <FormError
-                message={login.isError ? getApiErrorMessage(login.error) : null}
-              />
-
-              <Button className="w-full" size="lg" disabled={login.isPending}>
-                {login.isPending ? (
-                  <>
-                    <LoaderCircle className="animate-spin" />
-                    ログイン中
-                  </>
-                ) : (
-                  "ログイン"
-                )}
-              </Button>
-            </form>
-          </div>
+                </Button>
+              </SpaceBetween>
+            </Container>
+            <Container
+              header={
+                <Header variant="h2" description="管理者が発行したローカル資格情報を使用します。">
+                  ローカルアカウント
+                </Header>
+              }
+            >
+              <form onSubmit={submit}>
+                <Form
+                  errorText={login.isError ? getApiErrorMessage(login.error) : undefined}
+                  actions={
+                    <Button
+                      variant="primary"
+                      formAction="submit"
+                      loading={login.isPending}
+                      disabled={!email.trim() || password.length < 12}
+                    >
+                      ログイン
+                    </Button>
+                  }
+                >
+                  <SpaceBetween size="l">
+                    <FormField label="メールアドレス">
+                      <Input
+                        type="email"
+                        value={email}
+                        placeholder="name@example.com"
+                        autoComplete="username"
+                        onChange={({ detail }) => setEmail(detail.value)}
+                      />
+                    </FormField>
+                    <FormField
+                      label="パスワード"
+                      secondaryControl={
+                        <Button
+                          variant="inline-icon"
+                          iconName="view-full"
+                          ariaLabel={showPassword ? "パスワードを隠す" : "パスワードを表示"}
+                          onClick={() => setShowPassword((value) => !value)}
+                        />
+                      }
+                    >
+                      <Input
+                        type={showPassword ? "text" : "password"}
+                        value={password}
+                        autoComplete="current-password"
+                        onChange={({ detail }) => setPassword(detail.value)}
+                      />
+                    </FormField>
+                    <FormError message={null} />
+                  </SpaceBetween>
+                </Form>
+              </form>
+            </Container>
+            <Box textAlign="center" color="text-body-secondary">
+              セッションはHttpOnly CookieとCSRF検証で保護されています。
+            </Box>
+          </SpaceBetween>
         </div>
-      </section>
-    </main>
+      </main>
+    </div>
   );
 }

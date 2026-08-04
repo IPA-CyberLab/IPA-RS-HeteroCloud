@@ -1,5 +1,6 @@
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import Box from "@cloudscape-design/components/box";
+import Pagination from "@cloudscape-design/components/pagination";
+import SpaceBetween from "@cloudscape-design/components/space-between";
 import { formatNumber } from "@/lib/utils";
 
 interface TablePaginationProps {
@@ -21,38 +22,23 @@ export function TablePagination({
   const lastItem = Math.min((pageIndex + 1) * pageSize, totalItems);
 
   return (
-    <div className="flex min-h-14 items-center justify-between gap-4 border-t border-zinc-200 px-4 py-2">
-      <span className="text-xs text-zinc-500">
-        {formatNumber(firstItem)}–{formatNumber(lastItem)} /{" "}
-        {formatNumber(totalItems)}
-      </span>
-      <div className="flex items-center gap-1">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          title="前のページ"
-          aria-label="前のページ"
-          onClick={() => onPageChange(pageIndex - 1)}
-          disabled={pageIndex === 0}
-        >
-          <ChevronLeft />
-        </Button>
-        <span className="min-w-16 text-center text-xs text-zinc-600">
-          {pageIndex + 1} / {pageCount}
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          title="次のページ"
-          aria-label="次のページ"
-          onClick={() => onPageChange(pageIndex + 1)}
-          disabled={pageIndex >= pageCount - 1}
-        >
-          <ChevronRight />
-        </Button>
-      </div>
-    </div>
+    <SpaceBetween direction="horizontal" size="m" alignItems="center">
+      <Box color="text-body-secondary">
+        {formatNumber(firstItem)}–{formatNumber(lastItem)} / {formatNumber(totalItems)}
+      </Box>
+      <Box color="text-body-secondary">
+        {pageIndex + 1} / {Math.max(1, pageCount)}
+      </Box>
+      <Pagination
+        currentPageIndex={pageIndex + 1}
+        pagesCount={Math.max(1, pageCount)}
+        onChange={({ detail }) => onPageChange(detail.currentPageIndex - 1)}
+        ariaLabels={{
+          nextPageLabel: "次のページ",
+          previousPageLabel: "前のページ",
+          pageLabel: (page) => `${page}ページ`,
+        }}
+      />
+    </SpaceBetween>
   );
 }

@@ -1,37 +1,23 @@
+import Alert from "@cloudscape-design/components/alert";
+import Box from "@cloudscape-design/components/box";
+import Button from "@cloudscape-design/components/button";
+import ColumnLayout from "@cloudscape-design/components/column-layout";
+import Container from "@cloudscape-design/components/container";
+import Header from "@cloudscape-design/components/header";
+import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
+import Modal from "@cloudscape-design/components/modal";
+import SegmentedControl from "@cloudscape-design/components/segmented-control";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowDownToLine,
-  ArrowLeft,
-  ArrowUpFromLine,
-  BookOpen,
-  FileJson,
-  Gauge,
-  LoaderCircle,
-  Pencil,
-  RadioTower,
-  RefreshCw,
-  Trash2,
-  UsersRound,
-} from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { ErrorState } from "@/components/shared/error-state";
 import { FormError } from "@/components/shared/form-error";
 import { PageHeader } from "@/components/shared/page-header";
 import { PageLoading } from "@/components/shared/page-loading";
+import { RouterLink } from "@/components/shared/router-link";
 import { StatusBadge } from "@/components/shared/status-badge";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import { useActiveOrganization } from "@/features/organizations/organization-context";
 import { api, getApiErrorMessage } from "@/lib/api-client";
 import type {
@@ -50,10 +36,7 @@ import { AccessCredentialDialog } from "./access-credential-dialog";
 import { DeveloperCredentialsSection } from "./developer-credentials-section";
 import { RealtimeEndpoints } from "./realtime-endpoints";
 import { RealtimeMetricChart } from "./realtime-metric-chart";
-import {
-  RealtimeServiceForm,
-  type RealtimeServiceFormValue,
-} from "./realtime-service-form";
+import { RealtimeServiceForm, type RealtimeServiceFormValue } from "./realtime-service-form";
 import {
   formatBytes,
   serviceEndpoints,
@@ -61,12 +44,12 @@ import {
   transferredBytes,
 } from "./realtime-service-utils";
 
-const metricRanges: { value: RealtimeMetricsRange; label: string }[] = [
-  { value: "1h", label: "1時間" },
-  { value: "6h", label: "6時間" },
-  { value: "24h", label: "24時間" },
-  { value: "7d", label: "7日" },
-  { value: "30d", label: "30日" },
+const metricRanges: { id: RealtimeMetricsRange; text: string }[] = [
+  { id: "1h", text: "1時間" },
+  { id: "6h", text: "6時間" },
+  { id: "24h", text: "24時間" },
+  { id: "7d", text: "7日" },
+  { id: "30d", text: "30日" },
 ];
 
 function apiResourceUrl(endpoint: string | undefined, path: string): string | null {
@@ -113,16 +96,12 @@ export function RealtimeServiceDetailPage() {
       serviceId,
       metricsRange,
     ),
-    enabled:
-      Boolean(serviceId) &&
-      Boolean(service.data?.project_id) &&
-      service.data?.state === "ready",
+    enabled: Boolean(serviceId) && Boolean(service.data?.project_id) && service.data?.state === "ready",
   });
   const projects = useQuery(projectsQueryOptions(organizationId));
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editForm, setEditForm] = useState<RealtimeServiceFormValue | null>(null);
-
   const updateService = useMutation({
     mutationFn: (value: RealtimeServiceFormValue) =>
       api.realtime.services.update(organizationId, serviceId, {
@@ -150,7 +129,6 @@ export function RealtimeServiceDetailPage() {
       });
     },
   });
-
   const deleteService = useMutation({
     mutationFn: () => api.realtime.services.delete(organizationId, serviceId),
     onSuccess: async () => {
@@ -161,39 +139,12 @@ export function RealtimeServiceDetailPage() {
     },
   });
 
-  const openEdit = () => {
-    if (!service.data) return;
-    setEditForm(formValue(service.data));
-    updateService.reset();
-    setEditOpen(true);
-  };
-
-  const submitEdit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (editForm) updateService.mutate(editForm);
-  };
-
-  const refresh = async () => {
-    await Promise.all([
-      service.refetch(),
-      metrics.refetch(),
-      metricHistory.refetch(),
-    ]);
-  };
-
   if (!serviceId) {
-    return (
-      <ErrorState
-        title="サービスを指定してください"
-        description="サービスIDがURLに含まれていません。"
-      />
-    );
+    return <ErrorState title="サービスを指定してください" description="サービスIDがURLに含まれていません。" />;
   }
-
   if (service.isPending || projects.isPending) {
     return <PageLoading label="サービス詳細を読み込んでいます" />;
   }
-
   if (service.isError || projects.isError) {
     return (
       <ErrorState
@@ -213,36 +164,14 @@ export function RealtimeServiceDetailPage() {
   const apiDocumentationUrl = apiResourceUrl(endpoints.api[0], "/docs/");
   const openApiUrl = apiResourceUrl(endpoints.api[0], "/openapi.json");
   const projectName =
-    projects.data.items.find((project) => project.id === item.project_id)?.name ??
-    item.project_id;
+    projects.data.items.find((project) => project.id === item.project_id)?.name ?? item.project_id;
   const disabled = item.state === "deleting";
-
   const metricItems = [
-    {
-      label: "アクティブルーム",
-      value: itemMetrics ? formatNumber(itemMetrics.active_rooms) : "—",
-      icon: RadioTower,
-    },
-    {
-      label: "同時接続",
-      value: itemMetrics ? formatNumber(itemMetrics.concurrent_connections) : "—",
-      icon: UsersRound,
-    },
-    {
-      label: "Ingress",
-      value: itemMetrics ? formatBytes(itemMetrics.ingress_bytes) : "—",
-      icon: ArrowDownToLine,
-    },
-    {
-      label: "Egress",
-      value: itemMetrics ? formatBytes(itemMetrics.egress_bytes) : "—",
-      icon: ArrowUpFromLine,
-    },
-    {
-      label: "転送量",
-      value: itemMetrics ? formatBytes(transferredBytes(itemMetrics)) : "—",
-      icon: Gauge,
-    },
+    ["アクティブルーム", itemMetrics ? formatNumber(itemMetrics.active_rooms) : "-"],
+    ["同時接続", itemMetrics ? formatNumber(itemMetrics.concurrent_connections) : "-"],
+    ["Ingress", itemMetrics ? formatBytes(itemMetrics.ingress_bytes) : "-"],
+    ["Egress", itemMetrics ? formatBytes(itemMetrics.egress_bytes) : "-"],
+    ["転送量", itemMetrics ? formatBytes(transferredBytes(itemMetrics)) : "-"],
   ];
   const historySamples = metricHistory.data?.samples ?? [];
   const transferRateSamples = transferRateSamplesPerHour(historySamples);
@@ -253,101 +182,56 @@ export function RealtimeServiceDetailPage() {
     formatValue: (value: number) => string;
     color: string;
   }[] = [
-    {
-      label: "アクティブルーム",
-      samples: historySamples,
-      value: (sample) => sample.active_rooms,
-      formatValue: (value) => formatNumber(value),
-      color: "#047857",
-    },
-    {
-      label: "同時接続",
-      samples: historySamples,
-      value: (sample) => sample.concurrent_connections,
-      formatValue: (value) => formatNumber(value),
-      color: "#0369a1",
-    },
-    {
-      label: "Ingress / 時間",
-      samples: transferRateSamples,
-      value: (sample) => sample.ingress_bytes,
-      formatValue: (value) => `${formatBytes(value)}/h`,
-      color: "#b45309",
-    },
-    {
-      label: "Egress / 時間",
-      samples: transferRateSamples,
-      value: (sample) => sample.egress_bytes,
-      formatValue: (value) => `${formatBytes(value)}/h`,
-      color: "#be123c",
-    },
-    {
-      label: "転送量 / 時間",
-      samples: transferRateSamples,
-      value: (sample) => sample.transferred_bytes,
-      formatValue: (value) => `${formatBytes(value)}/h`,
-      color: "#52525b",
-    },
+    { label: "アクティブルーム", samples: historySamples, value: (sample) => sample.active_rooms, formatValue: formatNumber, color: "#0972d3" },
+    { label: "同時接続", samples: historySamples, value: (sample) => sample.concurrent_connections, formatValue: formatNumber, color: "#1d8102" },
+    { label: "Ingress / 時間", samples: transferRateSamples, value: (sample) => sample.ingress_bytes, formatValue: (value) => `${formatBytes(value)}/h`, color: "#8d6605" },
+    { label: "Egress / 時間", samples: transferRateSamples, value: (sample) => sample.egress_bytes, formatValue: (value) => `${formatBytes(value)}/h`, color: "#d91515" },
+    { label: "転送量 / 時間", samples: transferRateSamples, value: (sample) => sample.transferred_bytes, formatValue: (value) => `${formatBytes(value)}/h`, color: "#414d5c" },
   ];
+  const submitEdit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (editForm) updateService.mutate(editForm);
+  };
 
   return (
-    <div className="space-y-6">
-      <Link
-        to="/flow/services"
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-800 hover:underline"
-      >
-        <ArrowLeft className="size-4" />
-        Flow
-      </Link>
-
+    <SpaceBetween size="l">
+      <RouterLink to="/flow/services">Flow</RouterLink>
       <PageHeader
         title={item.name}
         description={`サービスID: ${item.id}`}
         actions={
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <SpaceBetween direction="horizontal" size="xs">
             <Button
-              type="button"
-              variant="secondary"
-              size="icon"
-              title="更新"
-              aria-label="更新"
-              onClick={() => void refresh()}
-            >
-              <RefreshCw />
-            </Button>
+              variant="icon"
+              iconName="refresh"
+              ariaLabel="更新"
+              onClick={() => void Promise.all([service.refetch(), metrics.refetch(), metricHistory.refetch()])}
+            />
             <Button
-              type="button"
-              variant="secondary"
+              iconName="edit"
               disabled={disabled}
-              onClick={openEdit}
+              onClick={() => {
+                setEditForm(formValue(item));
+                updateService.reset();
+                setEditOpen(true);
+              }}
             >
-              <Pencil />
               編集
             </Button>
             {apiDocumentationUrl ? (
-              <Button asChild variant="secondary">
-                <a
-                  href={apiDocumentationUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <BookOpen />
-                  APIドキュメント
-                </a>
+              <Button href={apiDocumentationUrl} target="_blank" iconName="file-open" external>
+                APIドキュメント
               </Button>
             ) : null}
             {openApiUrl ? (
               <Button
-                asChild
-                variant="secondary"
-                size="icon"
-                title="OpenAPI JSONを開く"
-                aria-label="OpenAPI JSONを開く"
-              >
-                <a href={openApiUrl} target="_blank" rel="noreferrer">
-                  <FileJson />
-                </a>
-              </Button>
+                variant="icon"
+                href={openApiUrl}
+                target="_blank"
+                iconName="file"
+                external
+                ariaLabel="OpenAPI JSONを開く"
+              />
             ) : null}
             <AccessCredentialDialog
               organizationId={organizationId}
@@ -355,281 +239,171 @@ export function RealtimeServiceDetailPage() {
               serviceName={item.name}
               disabled={item.state !== "ready"}
             />
-            <Dialog
-              open={deleteOpen}
-              onOpenChange={(nextOpen) => {
-                setDeleteOpen(nextOpen);
-                if (nextOpen) deleteService.reset();
+            <Button
+              iconName="remove"
+              disabled={disabled}
+              onClick={() => {
+                deleteService.reset();
+                setDeleteOpen(true);
               }}
             >
-              <DialogTrigger asChild>
-                <Button variant="destructive" disabled={disabled}>
-                  <Trash2 />
-                  削除
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>サービスを削除</DialogTitle>
-                  <DialogDescription>
-                    {item.name} と関連するルームおよび認証情報を削除します。
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
-                  この操作は取り消せません。
-                </div>
-                <FormError
-                  message={
-                    deleteService.isError
-                      ? getApiErrorMessage(deleteService.error)
-                      : null
-                  }
-                />
-                <DialogFooter>
-                  <DialogClose asChild>
-                    <Button type="button" variant="secondary">
-                      キャンセル
-                    </Button>
-                  </DialogClose>
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    disabled={deleteService.isPending}
-                    onClick={() => deleteService.mutate()}
-                  >
-                    {deleteService.isPending ? (
-                      <>
-                        <LoaderCircle className="animate-spin" />
-                        削除中
-                      </>
-                    ) : (
-                      <>
-                        <Trash2 />
-                        削除する
-                      </>
-                    )}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          </div>
+              削除
+            </Button>
+          </SpaceBetween>
         }
       />
-
-      <section
-        className="grid border border-zinc-200 bg-white sm:grid-cols-2 xl:grid-cols-5"
-        aria-label="Flowメトリクス"
-      >
-        {metricItems.map((metric, index) => {
-          const Icon = metric.icon;
-          return (
-            <div
-              key={metric.label}
-              className={`min-h-24 px-4 py-4 ${
-                index > 0
-                  ? "border-t border-zinc-200 sm:border-l sm:border-t-0"
-                  : ""
-              } ${index === 2 ? "sm:border-t xl:border-t-0" : ""} ${
-                index === 4 ? "sm:col-span-2 xl:col-span-1" : ""
-              }`}
-            >
-              <div className="flex items-center gap-2 text-xs font-medium text-zinc-500">
-                <Icon className="size-4" />
-                {metric.label}
-              </div>
-              <div className="mt-2 text-xl font-semibold text-zinc-950">
-                {metric.value}
-              </div>
+      <Container>
+        <ColumnLayout columns={5} variant="text-grid">
+          {metricItems.map(([label, value]) => (
+            <div key={label}>
+              <Box variant="awsui-key-label">{label}</Box>
+              <Box variant="awsui-value-large">{value}</Box>
             </div>
-          );
-        })}
-      </section>
-
+          ))}
+        </ColumnLayout>
+      </Container>
       {metrics.isError ? (
-        <div className="flex items-center justify-between border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-          <span>Flowメトリクスを取得できませんでした。</span>
-          <Button variant="secondary" size="sm" onClick={() => void metrics.refetch()}>
-            <RefreshCw />
-            再試行
-          </Button>
-        </div>
+        <Alert
+          type="warning"
+          action={<Button onClick={() => void metrics.refetch()}>再試行</Button>}
+        >
+          Flowメトリクスを取得できませんでした。
+        </Alert>
       ) : null}
-
-      <section aria-labelledby="metrics-history-heading" className="space-y-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h2 id="metrics-history-heading" className="text-sm font-semibold text-zinc-950">
-              モニタリング
-            </h2>
-            <p className="mt-1 text-xs text-zinc-500">
-              アクティブルーム、接続数、通信量の履歴
-            </p>
-          </div>
-          <div
-            className="grid w-full grid-cols-5 overflow-hidden rounded-[6px] border border-zinc-300 bg-white sm:w-auto"
-            role="group"
-            aria-label="メトリクスの表示期間"
-          >
-            {metricRanges.map((range) => {
-              const selected = metricsRange === range.value;
-              return (
-                <button
-                  key={range.value}
-                  type="button"
-                  aria-pressed={selected}
-                  className={`h-8 border-l border-zinc-300 px-2 text-xs font-medium first:border-l-0 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-600 sm:min-w-14 ${
-                    selected
-                      ? "bg-zinc-900 text-white"
-                      : "bg-white text-zinc-700 hover:bg-zinc-50"
-                  }`}
-                  onClick={() => setMetricsRange(range.value)}
-                >
-                  {range.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
+      <SpaceBetween size="m">
+        <Header
+          variant="h2"
+          description="アクティブルーム、接続数、時間あたり通信量の履歴"
+          actions={
+            <SegmentedControl
+              selectedId={metricsRange}
+              options={metricRanges}
+              label="メトリクスの表示期間"
+              onChange={({ detail }) => setMetricsRange(detail.selectedId as RealtimeMetricsRange)}
+            />
+          }
+        >
+          モニタリング
+        </Header>
         {metricHistory.isError ? (
-          <div className="flex items-center justify-between border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-            <span>メトリクス履歴を取得できませんでした。</span>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void metricHistory.refetch()}
-            >
-              <RefreshCw />
-              再試行
-            </Button>
-          </div>
+          <Alert
+            type="warning"
+            action={<Button onClick={() => void metricHistory.refetch()}>再試行</Button>}
+          >
+            メトリクス履歴を取得できませんでした。
+          </Alert>
         ) : null}
-
-        <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+        <ColumnLayout columns={2}>
           {historyCharts.map((chart) => (
             <RealtimeMetricChart
               key={chart.label}
-              label={chart.label}
-              samples={chart.samples}
-              value={chart.value}
-              formatValue={chart.formatValue}
-              color={chart.color}
+              {...chart}
               loading={metricHistory.isPending}
             />
           ))}
-        </div>
-      </section>
-
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(22rem,0.8fr)]">
-        <section className="overflow-hidden border border-zinc-200 bg-white">
-          <div className="flex items-center justify-between border-b border-zinc-200 bg-zinc-50 px-4 py-3">
-            <h2 className="text-sm font-semibold">実エンドポイント</h2>
-            <span className="text-xs text-zinc-500">自動割り当て</span>
-          </div>
+        </ColumnLayout>
+      </SpaceBetween>
+      <ColumnLayout columns={2}>
+        <Container
+          header={
+            <Header variant="h2" description="自動割り当て">
+              実エンドポイント
+            </Header>
+          }
+        >
           <RealtimeEndpoints endpoints={endpoints} />
-        </section>
-
-        <section className="overflow-hidden border border-zinc-200 bg-white">
-          <div className="border-b border-zinc-200 bg-zinc-50 px-4 py-3">
-            <h2 className="text-sm font-semibold">サービス設定</h2>
-          </div>
-          <dl className="divide-y divide-zinc-100 text-sm">
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <dt className="text-zinc-500">状態</dt>
-              <dd><StatusBadge status={item.state} /></dd>
-            </div>
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <dt className="text-zinc-500">プロジェクト</dt>
-              <dd className="truncate font-medium">{projectName}</dd>
-            </div>
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <dt className="text-zinc-500">リージョン</dt>
-              <dd className="font-medium">{item.spec.region}</dd>
-            </div>
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <dt className="text-zinc-500">ルーム上限</dt>
-              <dd className="font-medium">{formatNumber(item.spec.max_rooms)}</dd>
-            </div>
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <dt className="text-zinc-500">同時参加者上限</dt>
-              <dd className="font-medium">
-                {formatNumber(item.spec.max_participants)}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <dt className="text-zinc-500">IPレート制限</dt>
-              <dd className="font-medium">
-                {formatNumber(item.spec.rate_limit.requests_per_second)} RPS / burst{" "}
-                {formatNumber(item.spec.rate_limit.burst)}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <dt className="text-zinc-500">TURN</dt>
-              <dd>
-                <Badge variant={item.spec.turn_enabled ? "success" : "neutral"}>
-                  {item.spec.turn_enabled ? "有効" : "無効"}
-                </Badge>
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <dt className="text-zinc-500">更新日時</dt>
-              <dd className="font-medium">{formatDateTime(item.updated_at)}</dd>
-            </div>
-          </dl>
-        </section>
-      </div>
-
+        </Container>
+        <Container header={<Header variant="h2">サービス設定</Header>}>
+          <KeyValuePairs
+            columns={2}
+            items={[
+              { label: "状態", value: <StatusBadge status={item.state} /> },
+              { label: "プロジェクト", value: projectName },
+              { label: "リージョン", value: item.spec.region },
+              { label: "ルーム上限", value: formatNumber(item.spec.max_rooms) },
+              { label: "同時参加者上限", value: formatNumber(item.spec.max_participants) },
+              {
+                label: "IPレート制限",
+                value: `${formatNumber(item.spec.rate_limit.requests_per_second)} RPS / burst ${formatNumber(item.spec.rate_limit.burst)}`,
+              },
+              {
+                label: "TURN",
+                value: (
+                  <StatusIndicator type={item.spec.turn_enabled ? "success" : "stopped"}>
+                    {item.spec.turn_enabled ? "有効" : "無効"}
+                  </StatusIndicator>
+                ),
+              },
+              { label: "更新日時", value: formatDateTime(item.updated_at) },
+            ]}
+          />
+        </Container>
+      </ColumnLayout>
       <DeveloperCredentialsSection
         organizationId={organizationId}
         serviceId={item.id}
         disabled={item.state !== "ready"}
       />
-
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>サービス設定を編集</DialogTitle>
-            <DialogDescription>{item.name}</DialogDescription>
-          </DialogHeader>
-          {editForm ? (
-            <RealtimeServiceForm
-              value={editForm}
-              onChange={setEditForm}
-              onSubmit={submitEdit}
-              disabled={updateService.isPending}
-              projectLocked
-            >
-              <FormError
-                message={
-                  updateService.isError
-                    ? getApiErrorMessage(updateService.error)
-                    : null
-                }
-              />
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button type="button" variant="secondary">
-                    キャンセル
-                  </Button>
-                </DialogClose>
-                <Button
-                  type="submit"
-                  disabled={updateService.isPending || !editForm.name.trim()}
-                >
-                  {updateService.isPending ? (
-                    <>
-                      <LoaderCircle className="animate-spin" />
-                      更新中
-                    </>
-                  ) : (
-                    "変更を保存"
-                  )}
-                </Button>
-              </DialogFooter>
-            </RealtimeServiceForm>
-          ) : null}
-        </DialogContent>
-      </Dialog>
-    </div>
+      <Modal
+        visible={editOpen}
+        onDismiss={() => setEditOpen(false)}
+        size="large"
+        header="サービス設定を編集"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button onClick={() => setEditOpen(false)}>キャンセル</Button>
+              <Button
+                variant="primary"
+                loading={updateService.isPending}
+                disabled={!editForm?.name.trim()}
+                onClick={() => editForm && updateService.mutate(editForm)}
+              >
+                変更を保存
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        {editForm ? (
+          <RealtimeServiceForm
+            value={editForm}
+            onChange={setEditForm}
+            onSubmit={submitEdit}
+            disabled={updateService.isPending}
+            projectLocked
+          >
+            <FormError message={updateService.isError ? getApiErrorMessage(updateService.error) : null} />
+          </RealtimeServiceForm>
+        ) : null}
+      </Modal>
+      <Modal
+        visible={deleteOpen}
+        onDismiss={() => setDeleteOpen(false)}
+        header="サービスを削除"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button onClick={() => setDeleteOpen(false)}>キャンセル</Button>
+              <Button
+                variant="primary"
+                iconName="remove"
+                loading={deleteService.isPending}
+                onClick={() => deleteService.mutate()}
+              >
+                削除する
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="l">
+          <Alert type="warning" header="この操作は取り消せません">
+            {item.name} と関連するルームおよび認証情報を削除します。
+          </Alert>
+          <FormError message={deleteService.isError ? getApiErrorMessage(deleteService.error) : null} />
+        </SpaceBetween>
+      </Modal>
+    </SpaceBetween>
   );
 }

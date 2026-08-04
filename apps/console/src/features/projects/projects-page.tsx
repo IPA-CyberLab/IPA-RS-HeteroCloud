@@ -1,30 +1,24 @@
+import Box from "@cloudscape-design/components/box";
+import Button from "@cloudscape-design/components/button";
+import FormField from "@cloudscape-design/components/form-field";
+import Input from "@cloudscape-design/components/input";
+import Modal from "@cloudscape-design/components/modal";
+import SpaceBetween from "@cloudscape-design/components/space-between";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Boxes, LoaderCircle, Plus } from "lucide-react";
-import { type FormEvent, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { DataTable } from "@/components/shared/data-table";
 import { ErrorState } from "@/components/shared/error-state";
 import { FormError } from "@/components/shared/form-error";
 import { PageHeader } from "@/components/shared/page-header";
 import { PageLoading } from "@/components/shared/page-loading";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useActiveOrganization } from "@/features/organizations/organization-context";
 import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { Project } from "@/lib/api-types";
 import { projectsQueryOptions } from "@/lib/queries";
 import { formatDateTime } from "@/lib/utils";
+
+const slugPattern = /^[a-z][a-z0-9-]{1,61}[a-z0-9]$/;
 
 export function ProjectsPage() {
   const { activeOrganization } = useActiveOrganization();
@@ -54,23 +48,16 @@ export function ProjectsPage() {
         accessorKey: "name",
         header: "プロジェクト",
         cell: ({ row }) => (
-          <div className="flex items-center gap-3">
-            <span className="flex size-8 items-center justify-center rounded-[5px] bg-zinc-100 text-zinc-600">
-              <Boxes className="size-4" />
-            </span>
-            <div>
-              <div className="font-medium text-zinc-900">{row.original.name}</div>
-              <div className="text-xs text-zinc-500">{row.original.slug}</div>
-            </div>
-          </div>
+          <SpaceBetween size="xxs">
+            <Box fontWeight="bold">{row.original.name}</Box>
+            <Box color="text-body-secondary">{row.original.slug}</Box>
+          </SpaceBetween>
         ),
       },
       {
         accessorKey: "id",
         header: "プロジェクトID",
-        cell: ({ getValue }) => (
-          <span className="font-mono text-xs">{getValue<string>()}</span>
-        ),
+        cell: ({ getValue }) => <Box variant="code">{getValue<string>()}</Box>,
       },
       {
         accessorKey: "created_at",
@@ -81,15 +68,7 @@ export function ProjectsPage() {
     [],
   );
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    createProject.mutate({ name: name.trim(), slug: slug.trim() });
-  };
-
-  if (projects.isPending) {
-    return <PageLoading label="プロジェクトを読み込んでいます" />;
-  }
-
+  if (projects.isPending) return <PageLoading label="プロジェクトを読み込んでいます" />;
   if (projects.isError) {
     return (
       <ErrorState
@@ -99,91 +78,31 @@ export function ProjectsPage() {
     );
   }
 
+  const valid = name.trim().length > 0 && slugPattern.test(slug);
+  const submit = () => {
+    if (valid && !createProject.isPending) {
+      createProject.mutate({ name: name.trim(), slug });
+    }
+  };
+
   return (
-    <div className="space-y-6">
+    <SpaceBetween size="l">
       <PageHeader
         title="プロジェクト"
         description={`${activeOrganization.organization_name} のサービスリソース境界を管理します。`}
         actions={
-          <Dialog
-            open={open}
-            onOpenChange={(nextOpen) => {
-              setOpen(nextOpen);
-              if (nextOpen) createProject.reset();
+          <Button
+            variant="primary"
+            iconName="add-plus"
+            onClick={() => {
+              createProject.reset();
+              setOpen(true);
             }}
           >
-            <DialogTrigger asChild>
-              <Button>
-                <Plus />
-                プロジェクトを作成
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>プロジェクトを作成</DialogTitle>
-                <DialogDescription>
-                  {activeOrganization.organization_name} に新しいプロジェクトを作成します。
-                </DialogDescription>
-              </DialogHeader>
-              <form onSubmit={submit} className="space-y-5">
-                <div className="space-y-2">
-                  <Label htmlFor="project-name">プロジェクト名</Label>
-                  <Input
-                    id="project-name"
-                    required
-                    maxLength={120}
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder="Realtime Production"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="project-slug">プロジェクトslug</Label>
-                  <Input
-                    id="project-slug"
-                    required
-                    pattern="[a-z][a-z0-9-]{1,61}[a-z0-9]"
-                    maxLength={63}
-                    value={slug}
-                    onChange={(event) =>
-                      setSlug(event.target.value.toLowerCase().replace(/\s+/g, "-"))
-                    }
-                    placeholder="realtime-prod"
-                  />
-                  <p className="text-xs text-zinc-500">
-                    3〜63文字の英小文字、数字、ハイフンを使用します。
-                  </p>
-                </div>
-                <FormError
-                  message={
-                    createProject.isError
-                      ? getApiErrorMessage(createProject.error)
-                      : null
-                  }
-                />
-                <DialogFooter>
-                  <DialogClose asChild>
-                    <Button type="button" variant="secondary">
-                      キャンセル
-                    </Button>
-                  </DialogClose>
-                  <Button type="submit" disabled={createProject.isPending}>
-                    {createProject.isPending ? (
-                      <>
-                        <LoaderCircle className="animate-spin" />
-                        作成中
-                      </>
-                    ) : (
-                      "作成"
-                    )}
-                  </Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
+            プロジェクトを作成
+          </Button>
         }
       />
-
       <DataTable
         columns={columns}
         data={projects.data.items}
@@ -192,6 +111,55 @@ export function ProjectsPage() {
         emptyTitle="プロジェクトがありません"
         emptyDescription="最初のプロジェクトを作成してください。"
       />
-    </div>
+      <Modal
+        visible={open}
+        onDismiss={() => setOpen(false)}
+        header="プロジェクトを作成"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button onClick={() => setOpen(false)}>キャンセル</Button>
+              <Button
+                variant="primary"
+                loading={createProject.isPending}
+                disabled={!valid}
+                onClick={submit}
+              >
+                作成
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="l">
+          <Box color="text-body-secondary">
+            {activeOrganization.organization_name} に新しいプロジェクトを作成します。
+          </Box>
+          <FormField label="プロジェクト名">
+            <Input
+              value={name}
+              placeholder="Realtime Production"
+              onChange={({ detail }) => setName(detail.value.slice(0, 120))}
+            />
+          </FormField>
+          <FormField
+            label="プロジェクトslug"
+            description="3〜63文字の英小文字、数字、ハイフンを使用します。"
+            errorText={slug && !slugPattern.test(slug) ? "slugの形式が正しくありません。" : undefined}
+          >
+            <Input
+              value={slug}
+              placeholder="realtime-prod"
+              onChange={({ detail }) =>
+                setSlug(detail.value.toLowerCase().replace(/\s+/g, "-").slice(0, 63))
+              }
+            />
+          </FormField>
+          <FormError
+            message={createProject.isError ? getApiErrorMessage(createProject.error) : null}
+          />
+        </SpaceBetween>
+      </Modal>
+    </SpaceBetween>
   );
 }

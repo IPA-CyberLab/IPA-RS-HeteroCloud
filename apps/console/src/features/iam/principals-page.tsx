@@ -1,34 +1,21 @@
+import Alert from "@cloudscape-design/components/alert";
+import Badge from "@cloudscape-design/components/badge";
+import Box from "@cloudscape-design/components/box";
+import Button from "@cloudscape-design/components/button";
+import FormField from "@cloudscape-design/components/form-field";
+import Input from "@cloudscape-design/components/input";
+import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
+import Modal from "@cloudscape-design/components/modal";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import {
-  Bot,
-  Check,
-  Copy,
-  KeyRound,
-  LoaderCircle,
-  Plus,
-  UserRound,
-} from "lucide-react";
-import { type FormEvent, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { DataTable } from "@/components/shared/data-table";
 import { ErrorState } from "@/components/shared/error-state";
 import { FormError } from "@/components/shared/form-error";
 import { PageHeader } from "@/components/shared/page-header";
 import { PageLoading } from "@/components/shared/page-loading";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useActiveOrganization } from "@/features/organizations/organization-context";
 import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { InvitationResponse, Principal } from "@/lib/api-types";
@@ -43,8 +30,7 @@ export function IamPrincipalsPage() {
   const [serviceAccountOpen, setServiceAccountOpen] = useState(false);
   const [invitationOpen, setInvitationOpen] = useState(false);
   const [serviceAccountName, setServiceAccountName] = useState("");
-  const [expiresInHours, setExpiresInHours] = useState(24);
-
+  const [expiresInHours, setExpiresInHours] = useState("24");
   const createServiceAccount = useMutation({
     mutationFn: (name: string) =>
       api.iam.principals.createServiceAccount(organizationId, { name }),
@@ -56,11 +42,10 @@ export function IamPrincipalsPage() {
       });
     },
   });
-
   const createInvitation = useMutation({
     mutationFn: () =>
       api.invitations.create(organizationId, {
-        expires_in_hours: expiresInHours,
+        expires_in_hours: Number(expiresInHours),
       }),
   });
 
@@ -70,21 +55,10 @@ export function IamPrincipalsPage() {
         accessorKey: "name",
         header: "プリンシパル",
         cell: ({ row }) => (
-          <div className="flex items-center gap-3">
-            <span className="flex size-8 items-center justify-center rounded-full bg-zinc-100 text-zinc-600">
-              {row.original.kind === "user" ? (
-                <UserRound className="size-4" />
-              ) : (
-                <Bot className="size-4" />
-              )}
-            </span>
-            <div>
-              <div className="font-medium text-zinc-900">{row.original.name}</div>
-              <div className="font-mono text-xs text-zinc-500">
-                {row.original.id}
-              </div>
-            </div>
-          </div>
+          <SpaceBetween size="xxs">
+            <Box fontWeight="bold">{row.original.name}</Box>
+            <Box variant="code">{row.original.id}</Box>
+          </SpaceBetween>
         ),
       },
       {
@@ -92,30 +66,22 @@ export function IamPrincipalsPage() {
         header: "種別",
         cell: ({ getValue }) => {
           const kind = getValue<Principal["kind"]>();
-          return (
-            <Badge variant={kind === "user" ? "info" : "neutral"}>
-              {kind === "user" ? "ユーザー" : "サービスアカウント"}
-            </Badge>
-          );
+          return <Badge color={kind === "user" ? "blue" : "grey"}>{kind === "user" ? "ユーザー" : "サービスアカウント"}</Badge>;
         },
       },
       {
         accessorKey: "enabled",
         header: "状態",
         cell: ({ getValue }) => (
-          <Badge variant={getValue<boolean>() ? "success" : "neutral"}>
+          <StatusIndicator type={getValue<boolean>() ? "success" : "stopped"}>
             {getValue<boolean>() ? "有効" : "無効"}
-          </Badge>
+          </StatusIndicator>
         ),
       },
       {
         accessorKey: "user_id",
         header: "ユーザーID",
-        cell: ({ getValue }) => (
-          <span className="font-mono text-xs">
-            {getValue<string | null>() ?? "—"}
-          </span>
-        ),
+        cell: ({ getValue }) => <Box variant="code">{getValue<string | null>() ?? "-"}</Box>,
       },
       {
         accessorKey: "created_at",
@@ -126,20 +92,7 @@ export function IamPrincipalsPage() {
     [],
   );
 
-  const submitServiceAccount = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    createServiceAccount.mutate(serviceAccountName.trim());
-  };
-
-  const resetInvitation = () => {
-    createInvitation.reset();
-    setExpiresInHours(24);
-  };
-
-  if (principals.isPending) {
-    return <PageLoading label="プリンシパルを読み込んでいます" />;
-  }
-
+  if (principals.isPending) return <PageLoading label="プリンシパルを読み込んでいます" />;
   if (principals.isError) {
     return (
       <ErrorState
@@ -150,100 +103,37 @@ export function IamPrincipalsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <SpaceBetween size="l">
       <PageHeader
         title="IAMプリンシパル"
         description={`${activeOrganization.organization_name} のユーザーおよびサービスアカウントを管理します。`}
         actions={
-          <div className="flex flex-wrap gap-2">
+          <SpaceBetween direction="horizontal" size="xs">
             {activeOrganization.role === "owner" ? (
-              <InvitationDialog
-                open={invitationOpen}
-                onOpenChange={(nextOpen) => {
-                  setInvitationOpen(nextOpen);
-                  if (!nextOpen) resetInvitation();
+              <Button
+                iconName="key"
+                onClick={() => {
+                  createInvitation.reset();
+                  setExpiresInHours("24");
+                  setInvitationOpen(true);
                 }}
-                expiresInHours={expiresInHours}
-                setExpiresInHours={setExpiresInHours}
-                invitation={createInvitation.data}
-                pending={createInvitation.isPending}
-                error={
-                  createInvitation.isError
-                    ? getApiErrorMessage(createInvitation.error)
-                    : null
-                }
-                onCreate={() => createInvitation.mutate()}
-              />
+              >
+                招待コードを発行
+              </Button>
             ) : null}
-
-            <Dialog
-              open={serviceAccountOpen}
-              onOpenChange={(nextOpen) => {
-                setServiceAccountOpen(nextOpen);
-                if (nextOpen) createServiceAccount.reset();
+            <Button
+              variant="primary"
+              iconName="add-plus"
+              onClick={() => {
+                createServiceAccount.reset();
+                setServiceAccountOpen(true);
               }}
             >
-              <DialogTrigger asChild>
-                <Button>
-                  <Plus />
-                  サービスアカウントを作成
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>サービスアカウントを作成</DialogTitle>
-                  <DialogDescription>
-                    自動化処理へIAMポリシーを割り当てるプリンシパルを作成します。
-                  </DialogDescription>
-                </DialogHeader>
-                <form onSubmit={submitServiceAccount} className="space-y-5">
-                  <div className="space-y-2">
-                    <Label htmlFor="service-account-name">名前</Label>
-                    <Input
-                      id="service-account-name"
-                      required
-                      maxLength={120}
-                      value={serviceAccountName}
-                      onChange={(event) =>
-                        setServiceAccountName(event.target.value)
-                      }
-                      placeholder="flow-deployer"
-                    />
-                  </div>
-                  <FormError
-                    message={
-                      createServiceAccount.isError
-                        ? getApiErrorMessage(createServiceAccount.error)
-                        : null
-                    }
-                  />
-                  <DialogFooter>
-                    <DialogClose asChild>
-                      <Button type="button" variant="secondary">
-                        キャンセル
-                      </Button>
-                    </DialogClose>
-                    <Button
-                      type="submit"
-                      disabled={createServiceAccount.isPending}
-                    >
-                      {createServiceAccount.isPending ? (
-                        <>
-                          <LoaderCircle className="animate-spin" />
-                          作成中
-                        </>
-                      ) : (
-                        "作成"
-                      )}
-                    </Button>
-                  </DialogFooter>
-                </form>
-              </DialogContent>
-            </Dialog>
-          </div>
+              サービスアカウントを作成
+            </Button>
+          </SpaceBetween>
         }
       />
-
       <DataTable
         columns={columns}
         data={principals.data.items}
@@ -252,164 +142,159 @@ export function IamPrincipalsPage() {
         emptyTitle="プリンシパルがありません"
         emptyDescription="サービスアカウントを作成するか、ユーザーを招待してください。"
       />
-    </div>
+      <Modal
+        visible={serviceAccountOpen}
+        onDismiss={() => setServiceAccountOpen(false)}
+        header="サービスアカウントを作成"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button onClick={() => setServiceAccountOpen(false)}>キャンセル</Button>
+              <Button
+                variant="primary"
+                loading={createServiceAccount.isPending}
+                disabled={!serviceAccountName.trim()}
+                onClick={() => createServiceAccount.mutate(serviceAccountName.trim())}
+              >
+                作成
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="l">
+          <Box color="text-body-secondary">
+            自動化処理へIAMポリシーを割り当てるプリンシパルを作成します。
+          </Box>
+          <FormField label="名前">
+            <Input
+              value={serviceAccountName}
+              placeholder="flow-deployer"
+              onChange={({ detail }) => setServiceAccountName(detail.value.slice(0, 120))}
+            />
+          </FormField>
+          <FormError
+            message={createServiceAccount.isError ? getApiErrorMessage(createServiceAccount.error) : null}
+          />
+        </SpaceBetween>
+      </Modal>
+      <InvitationModal
+        visible={invitationOpen}
+        onDismiss={() => setInvitationOpen(false)}
+        expiresInHours={expiresInHours}
+        setExpiresInHours={setExpiresInHours}
+        invitation={createInvitation.data}
+        pending={createInvitation.isPending}
+        error={createInvitation.isError ? getApiErrorMessage(createInvitation.error) : null}
+        onCreate={() => createInvitation.mutate()}
+      />
+    </SpaceBetween>
   );
 }
 
-interface InvitationDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  expiresInHours: number;
-  setExpiresInHours: (value: number) => void;
-  invitation?: InvitationResponse;
-  pending: boolean;
-  error: string | null;
-  onCreate: () => void;
-}
-
-function InvitationDialog({
-  open,
-  onOpenChange,
+function InvitationModal({
+  visible,
+  onDismiss,
   expiresInHours,
   setExpiresInHours,
   invitation,
   pending,
   error,
   onCreate,
-}: InvitationDialogProps) {
+}: {
+  visible: boolean;
+  onDismiss: () => void;
+  expiresInHours: string;
+  setExpiresInHours: (value: string) => void;
+  invitation?: InvitationResponse;
+  pending: boolean;
+  error: string | null;
+  onCreate: () => void;
+}) {
   const [copied, setCopied] = useState<"code" | "url" | null>(null);
   const registrationUrl = invitation
     ? `${window.location.origin}/register#invitation_code=${encodeURIComponent(invitation.code)}`
     : "";
-
   const copy = async (value: string, kind: "code" | "url") => {
     await navigator.clipboard.writeText(value);
     setCopied(kind);
   };
+  const hours = Number(expiresInHours);
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(nextOpen) => {
+    <Modal
+      visible={visible}
+      onDismiss={() => {
         setCopied(null);
-        onOpenChange(nextOpen);
+        onDismiss();
       }}
-    >
-      <DialogTrigger asChild>
-        <Button variant="secondary">
-          <KeyRound />
-          招待コードを発行
-        </Button>
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>組織への招待</DialogTitle>
-          <DialogDescription>
-            1回だけ利用できる有効期限付き招待コードを発行します。
-          </DialogDescription>
-        </DialogHeader>
-
-        {invitation ? (
-          <div className="space-y-5">
-            <div className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              このコードは閉じると再表示できません。
-            </div>
-            <div className="space-y-2">
-              <Label>招待コード</Label>
-              <div className="flex gap-2">
-                <Input readOnly value={invitation.code} className="font-mono" />
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="secondary"
-                  title="招待コードをコピー"
-                  aria-label="招待コードをコピー"
-                  onClick={() => void copy(invitation.code, "code")}
-                >
-                  {copied === "code" ? <Check /> : <Copy />}
-                </Button>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>登録URL</Label>
-              <div className="flex gap-2">
-                <Input readOnly value={registrationUrl} />
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="secondary"
-                  title="登録URLをコピー"
-                  aria-label="登録URLをコピー"
-                  onClick={() => void copy(registrationUrl, "url")}
-                >
-                  {copied === "url" ? <Check /> : <Copy />}
-                </Button>
-              </div>
-            </div>
-            <dl className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <dt className="text-zinc-500">最大利用回数</dt>
-                <dd className="mt-1 font-medium">{invitation.max_uses}</dd>
-              </div>
-              <div>
-                <dt className="text-zinc-500">有効期限</dt>
-                <dd className="mt-1 font-medium">
-                  {formatDateTime(invitation.expires_at)}
-                </dd>
-              </div>
-            </dl>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button>完了</Button>
-              </DialogClose>
-            </DialogFooter>
-          </div>
-        ) : (
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              onCreate();
-            }}
-            className="space-y-5"
-          >
-            <div className="space-y-2">
-              <Label htmlFor="invitation-expiry">有効時間</Label>
-              <Input
-                id="invitation-expiry"
-                type="number"
-                required
-                min={1}
-                max={168}
-                value={expiresInHours}
-                onChange={(event) =>
-                  setExpiresInHours(event.currentTarget.valueAsNumber || 1)
-                }
-              />
-              <p className="text-xs text-zinc-500">
-                1〜168時間。登録が完了すると直ちに無効になります。
-              </p>
-            </div>
-            <FormError message={error} />
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button type="button" variant="secondary">
-                  キャンセル
-                </Button>
-              </DialogClose>
-              <Button type="submit" disabled={pending}>
-                {pending ? (
-                  <>
-                    <LoaderCircle className="animate-spin" />
-                    発行中
-                  </>
-                ) : (
-                  "発行"
-                )}
+      header="組織への招待"
+      footer={
+        <Box float="right">
+          {invitation ? (
+            <Button variant="primary" onClick={onDismiss}>完了</Button>
+          ) : (
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button onClick={onDismiss}>キャンセル</Button>
+              <Button
+                variant="primary"
+                loading={pending}
+                disabled={!Number.isInteger(hours) || hours < 1 || hours > 168}
+                onClick={onCreate}
+              >
+                発行
               </Button>
-            </DialogFooter>
-          </form>
-        )}
-      </DialogContent>
-    </Dialog>
+            </SpaceBetween>
+          )}
+        </Box>
+      }
+    >
+      {invitation ? (
+        <SpaceBetween size="l">
+          <Alert type="warning">このコードは閉じると再表示できません。</Alert>
+          <FormField label="招待コード">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Input readOnly value={invitation.code} />
+              <Button
+                iconName={copied === "code" ? "check" : "copy"}
+                ariaLabel="招待コードをコピー"
+                onClick={() => void copy(invitation.code, "code")}
+              />
+            </SpaceBetween>
+          </FormField>
+          <FormField label="登録URL">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Input readOnly value={registrationUrl} />
+              <Button
+                iconName={copied === "url" ? "check" : "copy"}
+                ariaLabel="登録URLをコピー"
+                onClick={() => void copy(registrationUrl, "url")}
+              />
+            </SpaceBetween>
+          </FormField>
+          <KeyValuePairs
+            columns={2}
+            items={[
+              { label: "最大利用回数", value: invitation.max_uses },
+              { label: "有効期限", value: formatDateTime(invitation.expires_at) },
+            ]}
+          />
+        </SpaceBetween>
+      ) : (
+        <SpaceBetween size="l">
+          <Box color="text-body-secondary">
+            1回だけ利用できる有効期限付き招待コードを発行します。
+          </Box>
+          <FormField label="有効時間" description="1〜168時間。登録完了後は直ちに無効になります。">
+            <Input
+              type="number"
+              value={expiresInHours}
+              onChange={({ detail }) => setExpiresInHours(detail.value)}
+            />
+          </FormField>
+          <FormError message={error} />
+        </SpaceBetween>
+      )}
+    </Modal>
   );
 }

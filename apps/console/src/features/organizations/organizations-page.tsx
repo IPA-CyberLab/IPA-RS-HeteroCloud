@@ -1,12 +1,13 @@
+import Badge from "@cloudscape-design/components/badge";
+import Box from "@cloudscape-design/components/box";
+import SpaceBetween from "@cloudscape-design/components/space-between";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Building2 } from "lucide-react";
 import { useMemo } from "react";
 import { DataTable } from "@/components/shared/data-table";
 import { ErrorState } from "@/components/shared/error-state";
 import { PageHeader } from "@/components/shared/page-header";
 import { PageLoading } from "@/components/shared/page-loading";
-import { Badge } from "@/components/ui/badge";
 import { useSession } from "@/features/auth/session";
 import type { Organization } from "@/lib/api-types";
 import { organizationsQueryOptions } from "@/lib/queries";
@@ -22,15 +23,10 @@ export function OrganizationsPage() {
         accessorKey: "name",
         header: "組織",
         cell: ({ row }) => (
-          <div className="flex items-center gap-3">
-            <span className="flex size-8 items-center justify-center rounded-[5px] bg-zinc-100 text-zinc-600">
-              <Building2 className="size-4" />
-            </span>
-            <div>
-              <div className="font-medium text-zinc-900">{row.original.name}</div>
-              <div className="text-xs text-zinc-500">{row.original.slug}</div>
-            </div>
-          </div>
+          <SpaceBetween size="xxs">
+            <Box fontWeight="bold">{row.original.name}</Box>
+            <Box color="text-body-secondary">{row.original.slug}</Box>
+          </SpaceBetween>
         ),
       },
       {
@@ -45,20 +41,18 @@ export function OrganizationsPage() {
             (membership) => membership.organization_id === row.original.id,
           )?.role;
           return role ? (
-            <Badge variant={role === "owner" ? "success" : "neutral"}>
+            <Badge color={role === "owner" ? "green" : "blue"}>
               {role === "owner" ? "オーナー" : "メンバー"}
             </Badge>
           ) : (
-            "—"
+            "-"
           );
         },
       },
       {
         accessorKey: "id",
         header: "組織ID",
-        cell: ({ getValue }) => (
-          <span className="font-mono text-xs">{getValue<string>()}</span>
-        ),
+        cell: ({ getValue }) => <Box variant="code">{getValue<string>()}</Box>,
       },
       {
         accessorKey: "created_at",
@@ -69,10 +63,7 @@ export function OrganizationsPage() {
     [memberships],
   );
 
-  if (organizations.isPending) {
-    return <PageLoading label="組織を読み込んでいます" />;
-  }
-
+  if (organizations.isPending) return <PageLoading label="組織を読み込んでいます" />;
   if (organizations.isError) {
     return (
       <ErrorState
@@ -83,7 +74,7 @@ export function OrganizationsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <SpaceBetween size="l">
       <PageHeader
         title="組織"
         description="参加しているテナント境界とメンバーシップを確認します。"
@@ -96,6 +87,6 @@ export function OrganizationsPage() {
         emptyTitle="組織がありません"
         emptyDescription="有効な招待コードで登録すると、参加先の組織が表示されます。"
       />
-    </div>
+    </SpaceBetween>
   );
 }

@@ -1,4 +1,6 @@
-import { Badge, type BadgeProps } from "@/components/ui/badge";
+import StatusIndicator, {
+  type StatusIndicatorProps,
+} from "@cloudscape-design/components/status-indicator";
 
 const labels: Record<string, string> = {
   active: "有効",
@@ -21,31 +23,31 @@ const labels: Record<string, string> = {
   denied: "拒否",
 };
 
-const variants: Record<string, BadgeProps["variant"]> = {
+const types: Record<string, StatusIndicatorProps.Type> = {
   active: "success",
   running: "success",
   ready: "success",
   success: "success",
   allow: "success",
-  pending: "info",
-  provisioning: "info",
-  updating: "info",
+  pending: "pending",
+  provisioning: "in-progress",
+  updating: "in-progress",
   invited: "info",
   suspended: "warning",
   degraded: "warning",
-  stopped: "neutral",
-  disabled: "neutral",
-  deleting: "neutral",
-  error: "danger",
-  failed: "danger",
-  denied: "danger",
-  deny: "danger",
+  stopped: "stopped",
+  disabled: "stopped",
+  deleting: "in-progress",
+  error: "error",
+  failed: "error",
+  denied: "error",
+  deny: "error",
 };
 
 export function StatusBadge({ status }: { status: string }) {
   return (
-    <Badge variant={variants[status] ?? "neutral"}>
+    <StatusIndicator type={types[status] ?? "info"}>
       {labels[status] ?? status}
-    </Badge>
+    </StatusIndicator>
   );
 }

@@ -1,3 +1,9 @@
+import Pagination from "@cloudscape-design/components/pagination";
+import Box from "@cloudscape-design/components/box";
+import Link from "@cloudscape-design/components/link";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import Table, { type TableProps } from "@cloudscape-design/components/table";
+import TextFilter from "@cloudscape-design/components/text-filter";
 import {
   type ColumnDef,
   type SortingState,
@@ -8,20 +14,9 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, ArrowUpDown, Search } from "lucide-react";
-import { useState } from "react";
+import { type MouseEvent, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/shared/empty-state";
-import { TablePagination } from "@/components/shared/table-pagination";
-import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { cn, formatNumber } from "@/lib/utils";
+import { formatNumber } from "@/lib/utils";
 
 interface DataTableProps<TData> {
   columns: ColumnDef<TData, unknown>[];
@@ -33,6 +28,44 @@ interface DataTableProps<TData> {
   getRowId?: (row: TData) => string;
   onRowClick?: (row: TData) => void;
   getRowAriaLabel?: (row: TData) => string;
+  mobileVisibleColumns?: string[];
+}
+
+const interactiveElementSelector = [
+  "a",
+  "button",
+  "input",
+  "select",
+  "textarea",
+  "[role='button']",
+  "[role='link']",
+  "[role='checkbox']",
+  "[role='menuitem']",
+].join(",");
+
+function stopInteractiveClick(event: MouseEvent<HTMLElement>) {
+  if (
+    event.target instanceof Element &&
+    event.target.closest(interactiveElementSelector)
+  ) {
+    event.stopPropagation();
+  }
+}
+
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia(query).matches : false,
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [query]);
+
+  return matches;
 }
 
 export function DataTable<TData>({
@@ -45,6 +78,7 @@ export function DataTable<TData>({
   getRowId,
   onRowClick,
   getRowAriaLabel,
+  mobileVisibleColumns,
 }: DataTableProps<TData>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
@@ -52,15 +86,8 @@ export function DataTable<TData>({
   const table = useReactTable({
     data,
     columns,
-    state: {
-      sorting,
-      globalFilter,
-    },
-    initialState: {
-      pagination: {
-        pageSize: initialPageSize,
-      },
-    },
+    state: { sorting, globalFilter },
+    initialState: { pagination: { pageSize: initialPageSize } },
     getRowId,
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
@@ -70,126 +97,117 @@ export function DataTable<TData>({
     getPaginationRowModel: getPaginationRowModel(),
   });
 
+  const rows = table.getRowModel().rows;
   const filteredCount = table.getFilteredRowModel().rows.length;
   const pageIndex = table.getState().pagination.pageIndex;
-  const pageSize = table.getState().pagination.pageSize;
+  const mobile = useMediaQuery("(max-width: 767px)");
+  const rowByItem = useMemo(
+    () => new Map(rows.map((row) => [row.original, row])),
+    [rows],
+  );
 
-  return (
-    <section className="overflow-hidden border border-zinc-200 bg-white">
-      <div className="flex flex-col gap-3 border-b border-zinc-200 p-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative w-full sm:max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
-          <Input
-            aria-label="テーブルを検索"
-            value={globalFilter}
-            onChange={(event) => {
-              setGlobalFilter(event.target.value);
-              table.setPageIndex(0);
-            }}
-            className="pl-9"
-            placeholder={searchPlaceholder}
-          />
-        </div>
-        <span className="text-xs text-zinc-500">
-          {formatNumber(filteredCount)} 件
-        </span>
-      </div>
-
-      {table.getRowModel().rows.length === 0 ? (
-        <EmptyState title={emptyTitle} description={emptyDescription} />
-      ) : (
-        <Table>
-          <TableHeader>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id} className="hover:bg-transparent">
-                {headerGroup.headers.map((header) => {
-                  const sorted = header.column.getIsSorted();
-                  return (
-                    <TableHead key={header.id}>
-                      {header.isPlaceholder ? null : header.column.getCanSort() ? (
-                        <button
-                          type="button"
-                          className="-ml-2 inline-flex h-8 items-center gap-1 rounded-[4px] px-2 text-left hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
-                          onClick={header.column.getToggleSortingHandler()}
-                        >
-                          {flexRender(
-                            header.column.columnDef.header,
-                            header.getContext(),
-                          )}
-                          {sorted === "asc" ? (
-                            <ArrowUp className="size-3.5" />
-                          ) : sorted === "desc" ? (
-                            <ArrowDown className="size-3.5" />
-                          ) : (
-                            <ArrowUpDown className="size-3.5 text-zinc-400" />
-                          )}
-                        </button>
-                      ) : (
-                        flexRender(
-                          header.column.columnDef.header,
-                          header.getContext(),
-                        )
-                      )}
-                    </TableHead>
-                  );
-                })}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {table.getRowModel().rows.map((row) => (
-              <TableRow
-                key={row.id}
-                tabIndex={onRowClick ? 0 : undefined}
-                aria-label={getRowAriaLabel?.(row.original)}
-                className={cn(
-                  onRowClick &&
-                    "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-600",
-                )}
-                onClick={(event) => {
-                  if (
-                    !onRowClick ||
-                    (event.target instanceof Element &&
-                      event.target.closest(
-                        "a,button,input,select,textarea,[role='button'],[role='link']",
-                      ))
-                  ) {
-                    return;
-                  }
-                  onRowClick(row.original);
-                }}
-                onKeyDown={(event) => {
-                  if (
-                    !onRowClick ||
-                    event.target !== event.currentTarget ||
-                    (event.key !== "Enter" && event.key !== " ")
-                  ) {
-                    return;
-                  }
+  const tableColumns = useMemo<TableProps.ColumnDefinition<TData>[]>(
+    () =>
+      table.getFlatHeaders().map((header, index) => ({
+        id: header.column.id,
+        header: flexRender(header.column.columnDef.header, header.getContext()),
+        isRowHeader: index === 0,
+        sortingField: header.column.getCanSort() ? header.column.id : undefined,
+        cell: (item) => {
+          const row = rowByItem.get(item);
+          const cell = row
+            ?.getVisibleCells()
+            .find((candidate) => candidate.column.id === header.column.id);
+          const content = cell
+            ? flexRender(cell.column.columnDef.cell, cell.getContext())
+            : null;
+          return index === 0 && getRowAriaLabel && onRowClick ? (
+            <span onClick={(event) => event.stopPropagation()}>
+              <Link
+                href="#"
+                ariaLabel={getRowAriaLabel(item)}
+                onFollow={(event) => {
                   event.preventDefault();
-                  onRowClick(row.original);
+                  onRowClick(item);
                 }}
               >
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id}>
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+                {content}
+              </Link>
+            </span>
+          ) : (
+            <span onClick={stopInteractiveClick}>{content}</span>
+          );
+        },
+      })),
+    [getRowAriaLabel, onRowClick, rowByItem, table],
+  );
 
-      {filteredCount > 0 ? (
-        <TablePagination
-          pageIndex={pageIndex}
-          pageCount={table.getPageCount()}
-          pageSize={pageSize}
-          totalItems={filteredCount}
-          onPageChange={table.setPageIndex}
-        />
-      ) : null}
-    </section>
+  const sortingColumn = sorting[0]
+    ? tableColumns.find((column) => column.id === sorting[0].id)
+    : undefined;
+  const columnDisplay =
+    mobile && mobileVisibleColumns
+      ? tableColumns.map((column) => ({
+          id: String(column.id),
+          visible: mobileVisibleColumns.includes(String(column.id)),
+        }))
+      : undefined;
+
+  return (
+    <Table
+      variant="container"
+      stickyHeader
+      stripedRows
+      wrapLines
+      trackBy={getRowId}
+      items={rows.map((row) => row.original)}
+      columnDefinitions={tableColumns}
+      columnDisplay={columnDisplay}
+      sortingColumn={sortingColumn}
+      sortingDescending={sorting[0]?.desc}
+      onSortingChange={({ detail }) => {
+        const id = (detail.sortingColumn as { id?: string }).id;
+        if (id) setSorting([{ id, desc: detail.isDescending ?? false }]);
+      }}
+      onRowClick={
+        onRowClick ? ({ detail }) => onRowClick(detail.item) : undefined
+      }
+      filter={
+        <SpaceBetween direction="horizontal" size="m" alignItems="center">
+          <TextFilter
+            filteringText={globalFilter}
+            filteringPlaceholder={searchPlaceholder}
+            filteringAriaLabel="テーブルを検索"
+            onChange={({ detail }) => {
+              setGlobalFilter(detail.filteringText);
+              table.setPageIndex(0);
+            }}
+          />
+          <Box color="text-body-secondary">{formatNumber(filteredCount)} 件</Box>
+        </SpaceBetween>
+      }
+      pagination={
+        filteredCount > 0 ? (
+          <Pagination
+            currentPageIndex={pageIndex + 1}
+            pagesCount={Math.max(1, table.getPageCount())}
+            onChange={({ detail }) => table.setPageIndex(detail.currentPageIndex - 1)}
+            ariaLabels={{
+              nextPageLabel: "次のページ",
+              previousPageLabel: "前のページ",
+              pageLabel: (page) => `${page}ページ`,
+            }}
+          />
+        ) : null
+      }
+      empty={
+        <EmptyState title={emptyTitle} description={emptyDescription} />
+      }
+      ariaLabels={{
+        tableLabel: "リソース一覧",
+        sortAscending: "昇順に並べ替え",
+        sortDescending: "降順に並べ替え",
+      }}
+    />
   );
 }

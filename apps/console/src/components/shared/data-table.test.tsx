@@ -75,7 +75,7 @@ describe("DataTable", () => {
       />,
     );
 
-    const row = screen.getByRole("row", { name: "Productionの詳細を開く" });
+    const row = screen.getByRole("row", { name: /Production/ });
     await user.click(within(row).getByText("Production"));
     expect(onRowClick).toHaveBeenCalledWith(data[0]);
 
@@ -83,7 +83,7 @@ describe("DataTable", () => {
     await user.click(within(row).getByRole("button", { name: "操作" }));
     expect(onRowClick).not.toHaveBeenCalled();
 
-    row.focus();
+    within(row).getByRole("link", { name: "Productionの詳細を開く" }).focus();
     await user.keyboard("{Enter}");
     expect(onRowClick).toHaveBeenCalledWith(data[0]);
   });
