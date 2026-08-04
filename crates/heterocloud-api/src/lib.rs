@@ -39,7 +39,7 @@ pub fn app(state: Arc<AppState>, console_dir: Option<&Path>) -> Router {
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(
                 "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
-                 img-src 'self' data:; font-src 'self'; connect-src 'self'; \
+                 img-src 'self' data:; font-src 'self' data:; connect-src 'self'; \
                  base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
             ),
         ))
