@@ -1018,7 +1018,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "heterocloud-api"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "axum",
  "axum-extra",
@@ -1054,7 +1054,7 @@ dependencies = [
 
 [[package]]
 name = "heterocloud-auth"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "argon2",
  "base64",
@@ -1069,7 +1069,7 @@ dependencies = [
 
 [[package]]
 name = "heterocloud-cli"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "clap",
  "serde",
@@ -1081,7 +1081,7 @@ dependencies = [
 
 [[package]]
 name = "heterocloud-domain"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "chrono",
  "serde",
@@ -1092,7 +1092,7 @@ dependencies = [
 
 [[package]]
 name = "heterocloud-iam"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "heterocloud-domain",
  "serde",
@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "heterocloud-provider"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "chrono",
  "heterocloud-domain",
@@ -1115,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "heterocloud-store"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "chrono",
  "heterocloud-domain",
@@ -1129,7 +1129,7 @@ dependencies = [
 
 [[package]]
 name = "heterocloud-worker"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "clap",
  "heterocloud-domain",

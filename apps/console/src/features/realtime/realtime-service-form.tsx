@@ -3,7 +3,6 @@ import FormField from "@cloudscape-design/components/form-field";
 import Input from "@cloudscape-design/components/input";
 import Select from "@cloudscape-design/components/select";
 import SpaceBetween from "@cloudscape-design/components/space-between";
-import Toggle from "@cloudscape-design/components/toggle";
 import type { FormEvent, ReactNode } from "react";
 import { ProjectSelector } from "@/components/shared/resource-selectors";
 
@@ -15,7 +14,6 @@ export interface RealtimeServiceFormValue {
   maxRooms: number;
   rateLimitRequestsPerSecond: number;
   rateLimitBurst: number;
-  turnEnabled: boolean;
 }
 
 export const defaultRealtimeServiceFormValue: RealtimeServiceFormValue = {
@@ -26,7 +24,6 @@ export const defaultRealtimeServiceFormValue: RealtimeServiceFormValue = {
   maxRooms: 100,
   rateLimitRequestsPerSecond: 20,
   rateLimitBurst: 40,
-  turnEnabled: true,
 };
 
 const regions = [
@@ -140,13 +137,6 @@ export function RealtimeServiceForm({
             />
           </FormField>
         </ColumnLayout>
-        <Toggle
-          checked={value.turnEnabled}
-          disabled={disabled}
-          onChange={({ detail }) => update("turnEnabled", detail.checked)}
-        >
-          TURNリレーを有効化
-        </Toggle>
         {children}
       </SpaceBetween>
     </form>

@@ -414,7 +414,6 @@ async fn test_state() -> Result<
                 "max_participants": 100,
                 "max_rooms": 100,
                 "rate_limit": {"requests_per_second": 20, "burst": 40},
-                "turn_enabled": true,
                 "metadata": {}
             }),
         )

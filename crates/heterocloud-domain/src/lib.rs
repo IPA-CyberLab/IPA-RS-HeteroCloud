@@ -197,7 +197,6 @@ pub struct FlowSpec {
     pub max_participants: u32,
     pub max_rooms: u32,
     pub rate_limit: FlowRateLimit,
-    pub turn_enabled: bool,
     pub metadata: Value,
 }
 
@@ -276,7 +275,6 @@ mod tests {
                 "requests_per_second": DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND,
                 "burst": DEFAULT_FLOW_RATE_LIMIT_BURST
             },
-            "turn_enabled": true,
             "metadata": {}
         }));
         assert!(missing.is_err());
@@ -289,7 +287,6 @@ mod tests {
                 "requests_per_second": DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND,
                 "burst": DEFAULT_FLOW_RATE_LIMIT_BURST
             },
-            "turn_enabled": true,
             "metadata": {}
         }));
         assert_eq!(spec.ok().map(|spec| spec.max_rooms), Some(100));
@@ -305,7 +302,6 @@ mod tests {
                 "requests_per_second": 75,
                 "burst": 150
             },
-            "turn_enabled": true,
             "metadata": {}
         }));
         assert_eq!(
@@ -322,6 +318,21 @@ mod tests {
         let spec = serde_json::from_value::<FlowSpec>(json!({
             "region": "heteronet-global",
             "traffic_mode": "forwarded",
+            "max_participants": 100,
+            "max_rooms": DEFAULT_FLOW_MAX_ROOMS,
+            "rate_limit": {
+                "requests_per_second": DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND,
+                "burst": DEFAULT_FLOW_RATE_LIMIT_BURST
+            },
+            "metadata": {}
+        }));
+        assert!(spec.is_err());
+    }
+
+    #[test]
+    fn flow_spec_rejects_removed_turn_mode() {
+        let spec = serde_json::from_value::<FlowSpec>(json!({
+            "region": "heteronet-global",
             "max_participants": 100,
             "max_rooms": DEFAULT_FLOW_MAX_ROOMS,
             "rate_limit": {

@@ -18,7 +18,6 @@ const service = {
     max_participants: 500,
     max_rooms: 1_000,
     rate_limit: { requests_per_second: 40, burst: 80 },
-    turn_enabled: true,
     metadata: {},
   },
   status: {},

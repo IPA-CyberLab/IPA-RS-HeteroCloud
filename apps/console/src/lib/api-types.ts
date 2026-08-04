@@ -137,7 +137,6 @@ export interface RealtimeServiceSpec {
     requests_per_second: number;
     burst: number;
   };
-  turn_enabled: boolean;
   metadata: Record<string, unknown>;
 }
 

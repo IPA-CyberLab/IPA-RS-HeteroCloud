@@ -8,7 +8,6 @@ import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 import Modal from "@cloudscape-design/components/modal";
 import SegmentedControl from "@cloudscape-design/components/segmented-control";
 import SpaceBetween from "@cloudscape-design/components/space-between";
-import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -70,7 +69,6 @@ function formValue(service: RealtimeService): RealtimeServiceFormValue {
     maxRooms: service.spec.max_rooms,
     rateLimitRequestsPerSecond: service.spec.rate_limit.requests_per_second,
     rateLimitBurst: service.spec.rate_limit.burst,
-    turnEnabled: service.spec.turn_enabled,
   };
 }
 
@@ -114,7 +112,6 @@ export function RealtimeServiceDetailPage() {
             requests_per_second: value.rateLimitRequestsPerSecond,
             burst: value.rateLimitBurst,
           },
-          turn_enabled: value.turnEnabled,
           metadata: service.data?.spec.metadata ?? {},
         },
       }),
@@ -325,14 +322,6 @@ export function RealtimeServiceDetailPage() {
               {
                 label: "IPレート制限",
                 value: `${formatNumber(item.spec.rate_limit.requests_per_second)} RPS / burst ${formatNumber(item.spec.rate_limit.burst)}`,
-              },
-              {
-                label: "TURN",
-                value: (
-                  <StatusIndicator type={item.spec.turn_enabled ? "success" : "stopped"}>
-                    {item.spec.turn_enabled ? "有効" : "無効"}
-                  </StatusIndicator>
-                ),
               },
               { label: "更新日時", value: formatDateTime(item.updated_at) },
             ]}

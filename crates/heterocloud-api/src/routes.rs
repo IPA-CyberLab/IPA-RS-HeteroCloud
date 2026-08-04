@@ -2376,7 +2376,6 @@ mod tests {
                 requests_per_second: 20,
                 burst: 40,
             },
-            turn_enabled: true,
             metadata: json!({}),
         };
         assert!(validate_flow_spec(&spec).is_ok());
@@ -2396,7 +2395,6 @@ mod tests {
         let stored = deserialize_stored_flow_spec(json!({
             "region": "heteronet-global",
             "max_participants": 100,
-            "turn_enabled": true,
             "metadata": {}
         }));
         assert_eq!(

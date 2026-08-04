@@ -76,7 +76,6 @@ export function RealtimeServicesPage() {
             requests_per_second: value.rateLimitRequestsPerSecond,
             burst: value.rateLimitBurst,
           },
-          turn_enabled: value.turnEnabled,
           metadata: {},
         },
       }),

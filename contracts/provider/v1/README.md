@@ -43,11 +43,14 @@ both `organization_id` and `project_id`. Repeated `jti` values are idempotent.
       "requests_per_second": 20,
       "burst": 40
     },
-    "turn_enabled": true,
     "metadata": {}
   }
 }
 ```
+
+TURN is not a service mode. Flow always supplies STUN and short-lived TURN
+credentials so normal ICE can prefer a direct path and use TURN automatically
+when direct connectivity checks fail.
 
 The provider returns `202 Accepted`, an operation identifier, and a required
 provider status object. HeteroCloud records both and marks the instance ready

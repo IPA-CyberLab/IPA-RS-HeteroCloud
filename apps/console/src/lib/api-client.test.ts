@@ -209,7 +209,6 @@ describe("HeteroCloudApiClient", () => {
           requests_per_second: 20,
           burst: 40,
         },
-        turn_enabled: true,
         metadata: {},
       },
       status: {},

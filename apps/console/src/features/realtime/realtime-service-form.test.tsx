@@ -58,4 +58,10 @@ describe("RealtimeServiceForm", () => {
     expect(rps).toHaveValue(75);
     expect(burst).toHaveValue(150);
   });
+
+  it("TURN接続方式を利用者向け設定として表示しない", () => {
+    render(<FormHarness />);
+
+    expect(screen.queryByText("TURNリレーを有効化")).not.toBeInTheDocument();
+  });
 });

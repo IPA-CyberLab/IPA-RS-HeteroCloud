@@ -64,7 +64,6 @@ async fn developer_credentials_are_scoped_hashed_rotatable_and_revocable()
                 "max_participants": 100,
                 "max_rooms": 100,
                 "rate_limit": {"requests_per_second": 20, "burst": 40},
-                "turn_enabled": true,
                 "metadata": {}
             }),
         )
