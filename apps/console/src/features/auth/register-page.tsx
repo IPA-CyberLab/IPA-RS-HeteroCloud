@@ -18,7 +18,7 @@ import { api, getApiErrorMessage } from "@/lib/api-client";
 function AuthTopNavigation() {
   return (
     <TopNavigation
-      identity={{ href: "/login", title: "HeteroCloud", logo: { src: "/favicon.svg", alt: "" } }}
+      identity={{ href: "/login", title: "HeteroCloud" }}
       utilities={[]}
       i18nStrings={{ overflowMenuTriggerText: "その他", overflowMenuTitleText: "メニュー" }}
     />
@@ -35,7 +35,6 @@ export function RegisterPage() {
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const session = useSession();
   const queryClient = useQueryClient();
@@ -125,20 +124,9 @@ export function RegisterPage() {
                       </FormField>
                     </ColumnLayout>
                     <ColumnLayout columns={2}>
-                      <FormField
-                        label="パスワード"
-                        description="12〜128文字"
-                        secondaryControl={
-                          <Button
-                            variant="inline-icon"
-                            iconName="view-full"
-                            ariaLabel={showPassword ? "パスワードを隠す" : "パスワードを表示"}
-                            onClick={() => setShowPassword((value) => !value)}
-                          />
-                        }
-                      >
+                      <FormField label="パスワード" description="12〜128文字">
                         <Input
-                          type={showPassword ? "text" : "password"}
+                          type="password"
                           value={password}
                           autoComplete="new-password"
                           onChange={({ detail }) => setPassword(detail.value.slice(0, 128))}
@@ -146,7 +134,7 @@ export function RegisterPage() {
                       </FormField>
                       <FormField label="パスワード（確認）">
                         <Input
-                          type={showPassword ? "text" : "password"}
+                          type="password"
                           value={passwordConfirmation}
                           autoComplete="new-password"
                           onChange={({ detail }) => setPasswordConfirmation(detail.value.slice(0, 128))}

@@ -22,7 +22,6 @@ interface LoginLocationState {
 export function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
   const session = useSession();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -46,7 +45,7 @@ export function LoginPage() {
   return (
     <div className="auth-shell">
       <TopNavigation
-        identity={{ href: "/login", title: "HeteroCloud", logo: { src: "/favicon.svg", alt: "" } }}
+        identity={{ href: "/login", title: "HeteroCloud" }}
         utilities={[]}
         i18nStrings={{ overflowMenuTriggerText: "その他", overflowMenuTitleText: "メニュー" }}
       />
@@ -108,19 +107,9 @@ export function LoginPage() {
                         onChange={({ detail }) => setEmail(detail.value)}
                       />
                     </FormField>
-                    <FormField
-                      label="パスワード"
-                      secondaryControl={
-                        <Button
-                          variant="inline-icon"
-                          iconName="view-full"
-                          ariaLabel={showPassword ? "パスワードを隠す" : "パスワードを表示"}
-                          onClick={() => setShowPassword((value) => !value)}
-                        />
-                      }
-                    >
+                    <FormField label="パスワード">
                       <Input
-                        type={showPassword ? "text" : "password"}
+                        type="password"
                         value={password}
                         autoComplete="current-password"
                         onChange={({ detail }) => setPassword(detail.value)}
