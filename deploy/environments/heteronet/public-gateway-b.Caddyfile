@@ -96,14 +96,35 @@ flow.heterocloud.mizuame.app {
 
 	@rtc path /rtc /rtc/*
 	handle @rtc {
-		reverse_proxy 10.250.0.5:7880
+		reverse_proxy 163.220.236.52:7880 163.220.236.53:7880 163.220.236.51:7880 {
+			lb_policy first
+			health_uri /
+			health_interval 5s
+			health_timeout 2s
+			fail_duration 10s
+			max_fails 2
+		}
 	}
 
 	handle /v1/signal/* {
-		reverse_proxy 10.250.0.5:8082
+		reverse_proxy 163.220.236.52:8082 163.220.236.53:8082 163.220.236.51:8082 {
+			lb_policy first
+			health_uri /health/live
+			health_interval 5s
+			health_timeout 2s
+			fail_duration 10s
+			max_fails 2
+		}
 	}
 
 	handle {
-		reverse_proxy 10.250.0.5:8080
+		reverse_proxy 163.220.236.52:8080 163.220.236.53:8080 163.220.236.51:8080 {
+			lb_policy first
+			health_uri /health/live
+			health_interval 5s
+			health_timeout 2s
+			fail_duration 10s
+			max_fails 2
+		}
 	}
 }
