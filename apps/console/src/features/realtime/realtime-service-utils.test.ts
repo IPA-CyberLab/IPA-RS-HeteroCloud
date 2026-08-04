@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatBytes,
   normalizeEndpoints,
+  transferRateSamplesPerHour,
   transferredBytes,
 } from "./realtime-service-utils";
 
@@ -39,5 +40,55 @@ describe("realtime service utilities", () => {
         transferred_bytes: Number.NaN,
       }),
     ).toBe(3_000);
+  });
+
+  it("累積通信量をリセット対応の1時間換算レートへ変換する", () => {
+    expect(
+      transferRateSamplesPerHour([
+        {
+          sampled_at: "2026-08-01T09:15:00Z",
+          active_rooms: 2,
+          concurrent_connections: 4,
+          ingress_bytes: 200_000,
+          egress_bytes: 350_000,
+          transferred_bytes: 550_000,
+        },
+        {
+          sampled_at: "2026-08-01T09:00:00Z",
+          active_rooms: 1,
+          concurrent_connections: 2,
+          ingress_bytes: 100_000,
+          egress_bytes: 150_000,
+          transferred_bytes: 250_000,
+        },
+        {
+          sampled_at: "2026-08-01T09:30:00Z",
+          active_rooms: 0,
+          concurrent_connections: 0,
+          ingress_bytes: 25_000,
+          egress_bytes: 50_000,
+          transferred_bytes: 75_000,
+        },
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        sampled_at: "2026-08-01T09:00:00Z",
+        ingress_bytes: 0,
+        egress_bytes: 0,
+        transferred_bytes: 0,
+      }),
+      expect.objectContaining({
+        sampled_at: "2026-08-01T09:15:00Z",
+        ingress_bytes: 400_000,
+        egress_bytes: 800_000,
+        transferred_bytes: 1_200_000,
+      }),
+      expect.objectContaining({
+        sampled_at: "2026-08-01T09:30:00Z",
+        ingress_bytes: 100_000,
+        egress_bytes: 200_000,
+        transferred_bytes: 300_000,
+      }),
+    ]);
   });
 });

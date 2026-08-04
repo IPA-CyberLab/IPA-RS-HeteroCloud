@@ -190,17 +190,10 @@ pub struct IamPolicy {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TrafficMode {
-    Direct,
-    Forwarded,
-}
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FlowSpec {
     pub region: String,
-    pub traffic_mode: TrafficMode,
     pub max_participants: u32,
     pub max_rooms: u32,
     pub rate_limit: FlowRateLimit,
@@ -278,7 +271,6 @@ mod tests {
     fn flow_spec_requires_an_explicit_room_limit() {
         let missing = serde_json::from_value::<FlowSpec>(json!({
             "region": "heteronet-global",
-            "traffic_mode": "forwarded",
             "max_participants": 100,
             "rate_limit": {
                 "requests_per_second": DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND,
@@ -291,7 +283,6 @@ mod tests {
 
         let spec = serde_json::from_value::<FlowSpec>(json!({
             "region": "heteronet-global",
-            "traffic_mode": "forwarded",
             "max_participants": 100,
             "max_rooms": DEFAULT_FLOW_MAX_ROOMS,
             "rate_limit": {
@@ -308,7 +299,6 @@ mod tests {
     fn flow_rate_limit_is_explicit_and_structured() {
         let spec = serde_json::from_value::<FlowSpec>(json!({
             "region": "heteronet-global",
-            "traffic_mode": "forwarded",
             "max_participants": 100,
             "max_rooms": DEFAULT_FLOW_MAX_ROOMS,
             "rate_limit": {
@@ -325,6 +315,23 @@ mod tests {
                 burst: 150,
             })
         );
+    }
+
+    #[test]
+    fn flow_spec_rejects_removed_traffic_mode() {
+        let spec = serde_json::from_value::<FlowSpec>(json!({
+            "region": "heteronet-global",
+            "traffic_mode": "forwarded",
+            "max_participants": 100,
+            "max_rooms": DEFAULT_FLOW_MAX_ROOMS,
+            "rate_limit": {
+                "requests_per_second": DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND,
+                "burst": DEFAULT_FLOW_RATE_LIMIT_BURST
+            },
+            "turn_enabled": true,
+            "metadata": {}
+        }));
+        assert!(spec.is_err());
     }
 
     #[test]

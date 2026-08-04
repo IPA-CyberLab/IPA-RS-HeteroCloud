@@ -2333,7 +2333,7 @@ mod tests {
     use chrono::Utc;
     use heterocloud_domain::{
         FlowRateLimit, FlowSpec, MAX_FLOW_ROOMS, OrganizationId, ProjectId, ServiceInstance,
-        ServiceInstanceId, ServiceState, TrafficMode,
+        ServiceInstanceId, ServiceState,
     };
     use serde_json::{Value, json};
     use url::Url;
@@ -2370,7 +2370,6 @@ mod tests {
     fn flow_room_limit_is_positive_and_old_rows_get_the_conservative_default() {
         let mut spec = FlowSpec {
             region: "heteronet-global".into(),
-            traffic_mode: TrafficMode::Forwarded,
             max_participants: 100,
             max_rooms: 1,
             rate_limit: FlowRateLimit {
@@ -2396,7 +2395,6 @@ mod tests {
 
         let stored = deserialize_stored_flow_spec(json!({
             "region": "heteronet-global",
-            "traffic_mode": "forwarded",
             "max_participants": 100,
             "turn_enabled": true,
             "metadata": {}

@@ -411,7 +411,6 @@ async fn test_state() -> Result<
             "production-flow",
             json!({
                 "region": "global",
-                "traffic_mode": "forwarded",
                 "max_participants": 100,
                 "max_rooms": 100,
                 "rate_limit": {"requests_per_second": 20, "burst": 40},

@@ -8,8 +8,10 @@ Flow receives opaque organization, project, principal, and instance IDs; it
 does not read HeteroCloud's customer tables.
 
 HeteroNetwork remains an infrastructure dependency. It exposes the Kubernetes
-`heteronetwork.io/public` load-balancer class and selects direct or forwarded
-data paths. No HeteroCloud customer model is compiled into HeteroNetwork.
+`heteronetwork.io/public` load-balancer class. Flow fixes TURN to the direct
+data path and all other public services to the forwarded data path; this is an
+operator-owned deployment policy rather than a customer setting. No
+HeteroCloud customer model is compiled into HeteroNetwork.
 
 ## DNS reconciliation
 

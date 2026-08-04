@@ -1,14 +1,9 @@
 import type {
   RealtimeService,
   RealtimeServiceEndpoints,
+  RealtimeServiceMetricSample,
   RealtimeServiceMetrics,
-  TrafficMode,
 } from "@/lib/api-types";
-
-export const trafficModeLabels: Record<TrafficMode, string> = {
-  direct: "ダイレクト",
-  forwarded: "転送",
-};
 
 export const endpointGroups = [
   { key: "api", label: "API" },
@@ -101,6 +96,58 @@ export function transferredBytes(
   return Number.isFinite(metrics.transferred_bytes)
     ? metrics.transferred_bytes
     : metrics.ingress_bytes + metrics.egress_bytes;
+}
+
+function counterIncrease(current: number, previous: number): number {
+  if (!Number.isFinite(current) || current < 0) return 0;
+  if (!Number.isFinite(previous) || previous < 0 || current < previous) {
+    return current;
+  }
+  return current - previous;
+}
+
+export function transferRateSamplesPerHour(
+  samples: RealtimeServiceMetricSample[],
+): RealtimeServiceMetricSample[] {
+  const ordered = [...samples].sort(
+    (left, right) => Date.parse(left.sampled_at) - Date.parse(right.sampled_at),
+  );
+
+  return ordered.map((sample, index) => {
+    const previous = ordered[index - 1];
+    if (!previous) {
+      return {
+        ...sample,
+        ingress_bytes: 0,
+        egress_bytes: 0,
+        transferred_bytes: 0,
+      };
+    }
+
+    const elapsedMilliseconds =
+      Date.parse(sample.sampled_at) - Date.parse(previous.sampled_at);
+    if (!Number.isFinite(elapsedMilliseconds) || elapsedMilliseconds <= 0) {
+      return {
+        ...sample,
+        ingress_bytes: 0,
+        egress_bytes: 0,
+        transferred_bytes: 0,
+      };
+    }
+
+    const ingressBytes =
+      (counterIncrease(sample.ingress_bytes, previous.ingress_bytes) * 3_600_000) /
+      elapsedMilliseconds;
+    const egressBytes =
+      (counterIncrease(sample.egress_bytes, previous.egress_bytes) * 3_600_000) /
+      elapsedMilliseconds;
+    return {
+      ...sample,
+      ingress_bytes: ingressBytes,
+      egress_bytes: egressBytes,
+      transferred_bytes: ingressBytes + egressBytes,
+    };
+  });
 }
 
 export function formatCredentialDate(value: string | number): string {

@@ -122,7 +122,6 @@ export interface InvitationResponse {
   expires_at: string;
 }
 
-export type TrafficMode = "direct" | "forwarded";
 export type ServiceState =
   | "provisioning"
   | "ready"
@@ -132,7 +131,6 @@ export type ServiceState =
 
 export interface RealtimeServiceSpec {
   region: string;
-  traffic_mode: TrafficMode;
   max_participants: number;
   max_rooms: number;
   rate_limit: {

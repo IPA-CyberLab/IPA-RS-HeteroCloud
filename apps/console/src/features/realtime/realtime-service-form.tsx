@@ -1,4 +1,3 @@
-import { RadioTower } from "lucide-react";
 import type { FormEvent } from "react";
 import { ProjectSelector } from "@/components/shared/resource-selectors";
 import { Input } from "@/components/ui/input";
@@ -11,13 +10,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import type { TrafficMode } from "@/lib/api-types";
 
 export interface RealtimeServiceFormValue {
   projectId: string;
   name: string;
   region: string;
-  trafficMode: TrafficMode;
   maxParticipants: number;
   maxRooms: number;
   rateLimitRequestsPerSecond: number;
@@ -42,7 +39,6 @@ export const defaultRealtimeServiceFormValue: RealtimeServiceFormValue = {
   projectId: "",
   name: "",
   region: "heteronet-global",
-  trafficMode: "forwarded",
   maxParticipants: 100,
   maxRooms: 100,
   rateLimitRequestsPerSecond: 20,
@@ -181,51 +177,6 @@ export function RealtimeServiceForm({
               }
             />
           </div>
-        </div>
-      </fieldset>
-
-      <fieldset className="space-y-2" disabled={disabled}>
-        <legend className="text-sm font-medium text-zinc-800">通信モード</legend>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {(
-            [
-              {
-                value: "direct",
-                label: "ダイレクト",
-                description: "公開IP所有ノードへ配置し、転送を行いません。",
-              },
-              {
-                value: "forwarded",
-                label: "転送",
-                description: "公開ノードを入口として内部Podへ転送します。",
-              },
-            ] as const
-          ).map((mode) => (
-            <label
-              key={mode.value}
-              className={`cursor-pointer border p-3 ${
-                value.trafficMode === mode.value
-                  ? "border-emerald-600 bg-emerald-50"
-                  : "border-zinc-200 hover:bg-zinc-50"
-              }`}
-            >
-              <span className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="traffic-mode"
-                  value={mode.value}
-                  checked={value.trafficMode === mode.value}
-                  onChange={() => update("trafficMode", mode.value)}
-                  className="size-4 accent-emerald-700"
-                />
-                <RadioTower className="size-4 text-zinc-600" />
-                <span className="text-sm font-medium">{mode.label}</span>
-              </span>
-              <span className="mt-2 block text-xs leading-5 text-zinc-600">
-                {mode.description}
-              </span>
-            </label>
-          ))}
         </div>
       </fieldset>
 

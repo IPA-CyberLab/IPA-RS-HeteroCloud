@@ -31,7 +31,6 @@ const service: RealtimeService = {
   state: "ready",
   spec: {
     region: "heteronet-global",
-    traffic_mode: "forwarded",
     max_participants: 500,
     max_rooms: 100,
     rate_limit: {
@@ -146,9 +145,18 @@ describe("RealtimeServiceDetailPage", () => {
       await screen.findByRole("img", { name: /アクティブルームの推移/ }),
     ).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /同時接続の推移/ })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /Ingressの推移/ })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /Egressの推移/ })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /転送量の推移/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /Ingress \/ 時間の推移/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /Egress \/ 時間の推移/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /転送量 \/ 時間の推移/ }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("400 KB/h").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("800 KB/h").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("1.2 MB/h").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "24時間" })).toHaveAttribute(
       "aria-pressed",
       "true",

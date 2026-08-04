@@ -16,7 +16,6 @@ import { FormError } from "@/components/shared/form-error";
 import { PageHeader } from "@/components/shared/page-header";
 import { PageLoading } from "@/components/shared/page-loading";
 import { StatusBadge } from "@/components/shared/status-badge";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -42,11 +41,7 @@ import {
   RealtimeServiceForm,
   type RealtimeServiceFormValue,
 } from "./realtime-service-form";
-import {
-  formatBytes,
-  trafficModeLabels,
-  transferredBytes,
-} from "./realtime-service-utils";
+import { formatBytes, transferredBytes } from "./realtime-service-utils";
 
 function MetricValue({
   metrics,
@@ -99,7 +94,6 @@ export function RealtimeServicesPage() {
         name: value.name.trim(),
         spec: {
           region: value.region,
-          traffic_mode: value.trafficMode,
           max_participants: value.maxParticipants,
           max_rooms: value.maxRooms,
           rate_limit: {
@@ -200,19 +194,6 @@ export function RealtimeServicesPage() {
             value={(metrics) => formatBytes(transferredBytes(metrics))}
           />
         ),
-      },
-      {
-        id: "trafficMode",
-        accessorFn: (service) => service.spec.traffic_mode,
-        header: "通信モード",
-        cell: ({ row }) => {
-          const mode = row.original.spec.traffic_mode;
-          return (
-            <Badge variant={mode === "direct" ? "warning" : "info"}>
-              {trafficModeLabels[mode]}
-            </Badge>
-          );
-        },
       },
       {
         id: "maxParticipants",
@@ -316,7 +297,7 @@ export function RealtimeServicesPage() {
                 <DialogHeader>
                   <DialogTitle>Flowを作成</DialogTitle>
                   <DialogDescription>
-                    プロジェクトと通信モードを指定します。
+                    プロジェクトとサービス上限を指定します。
                   </DialogDescription>
                 </DialogHeader>
                 <RealtimeServiceForm

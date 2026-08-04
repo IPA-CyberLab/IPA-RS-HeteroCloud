@@ -57,7 +57,7 @@ import {
 import {
   formatBytes,
   serviceEndpoints,
-  trafficModeLabels,
+  transferRateSamplesPerHour,
   transferredBytes,
 } from "./realtime-service-utils";
 
@@ -83,7 +83,6 @@ function formValue(service: RealtimeService): RealtimeServiceFormValue {
     projectId: service.project_id,
     name: service.name,
     region: service.spec.region,
-    trafficMode: service.spec.traffic_mode,
     maxParticipants: service.spec.max_participants,
     maxRooms: service.spec.max_rooms,
     rateLimitRequestsPerSecond: service.spec.rate_limit.requests_per_second,
@@ -130,7 +129,6 @@ export function RealtimeServiceDetailPage() {
         name: value.name.trim(),
         spec: {
           region: value.region,
-          traffic_mode: value.trafficMode,
           max_participants: value.maxParticipants,
           max_rooms: value.maxRooms,
           rate_limit: {
@@ -247,40 +245,47 @@ export function RealtimeServiceDetailPage() {
     },
   ];
   const historySamples = metricHistory.data?.samples ?? [];
+  const transferRateSamples = transferRateSamplesPerHour(historySamples);
   const historyCharts: {
     label: string;
+    samples: RealtimeServiceMetricSample[];
     value: (sample: RealtimeServiceMetricSample) => number;
     formatValue: (value: number) => string;
     color: string;
   }[] = [
     {
       label: "アクティブルーム",
+      samples: historySamples,
       value: (sample) => sample.active_rooms,
       formatValue: (value) => formatNumber(value),
       color: "#047857",
     },
     {
       label: "同時接続",
+      samples: historySamples,
       value: (sample) => sample.concurrent_connections,
       formatValue: (value) => formatNumber(value),
       color: "#0369a1",
     },
     {
-      label: "Ingress",
+      label: "Ingress / 時間",
+      samples: transferRateSamples,
       value: (sample) => sample.ingress_bytes,
-      formatValue: formatBytes,
+      formatValue: (value) => `${formatBytes(value)}/h`,
       color: "#b45309",
     },
     {
-      label: "Egress",
+      label: "Egress / 時間",
+      samples: transferRateSamples,
       value: (sample) => sample.egress_bytes,
-      formatValue: formatBytes,
+      formatValue: (value) => `${formatBytes(value)}/h`,
       color: "#be123c",
     },
     {
-      label: "転送量",
+      label: "転送量 / 時間",
+      samples: transferRateSamples,
       value: (sample) => sample.transferred_bytes,
-      formatValue: formatBytes,
+      formatValue: (value) => `${formatBytes(value)}/h`,
       color: "#52525b",
     },
   ];
@@ -505,7 +510,7 @@ export function RealtimeServiceDetailPage() {
             <RealtimeMetricChart
               key={chart.label}
               label={chart.label}
-              samples={historySamples}
+              samples={chart.samples}
               value={chart.value}
               formatValue={chart.formatValue}
               color={chart.color}
@@ -540,16 +545,6 @@ export function RealtimeServiceDetailPage() {
             <div className="flex items-center justify-between gap-4 px-4 py-3">
               <dt className="text-zinc-500">リージョン</dt>
               <dd className="font-medium">{item.spec.region}</dd>
-            </div>
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <dt className="text-zinc-500">通信モード</dt>
-              <dd>
-                <Badge
-                  variant={item.spec.traffic_mode === "direct" ? "warning" : "info"}
-                >
-                  {trafficModeLabels[item.spec.traffic_mode]}
-                </Badge>
-              </dd>
             </div>
             <div className="flex items-center justify-between gap-4 px-4 py-3">
               <dt className="text-zinc-500">ルーム上限</dt>

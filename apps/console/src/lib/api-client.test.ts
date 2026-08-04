@@ -203,7 +203,6 @@ describe("HeteroCloudApiClient", () => {
       state: "ready",
       spec: {
         region: "heteronet-global",
-        traffic_mode: "forwarded",
         max_participants: 500,
         max_rooms: 100,
         rate_limit: {

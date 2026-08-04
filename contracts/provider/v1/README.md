@@ -37,8 +37,12 @@ both `organization_id` and `project_id`. Repeated `jti` values are idempotent.
   "name": "production-realtime",
   "spec": {
     "region": "heteronet-global",
-    "traffic_mode": "direct",
     "max_participants": 500,
+    "max_rooms": 100,
+    "rate_limit": {
+      "requests_per_second": 20,
+      "burst": 40
+    },
     "turn_enabled": true,
     "metadata": {}
   }
