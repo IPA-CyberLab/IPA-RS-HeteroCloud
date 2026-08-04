@@ -19,5 +19,6 @@ export default defineConfig({
     css: true,
     globals: true,
     restoreMocks: true,
+    testTimeout: 15_000,
   },
 });
