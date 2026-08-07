@@ -55,7 +55,7 @@ function unauthenticatedSession() {
 }
 
 describe("認証画面", () => {
-  it("Keycloakのログインと登録を主導線として表示し、ローカルログインも維持する", async () => {
+  it("Keycloakのログインと登録だけを表示する", async () => {
     unauthenticatedSession();
     renderRoute("/login", <LoginPage />);
 
@@ -71,9 +71,13 @@ describe("認証画面", () => {
       "href",
       "/api/v1/auth/oidc/start?intent=register",
     );
-    expect(screen.getByLabelText("メールアドレス")).toBeInTheDocument();
-    expect(screen.getByLabelText("パスワード")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "ログイン" })).toBeInTheDocument();
+    expect(screen.queryByText("ローカルアカウント")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("メールアドレス")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("パスワード")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "ログイン" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("セッションはHttpOnly CookieとCSRF検証で保護されています。"),
+    ).not.toBeInTheDocument();
     expect(document.querySelector('a[href="/register"]')).not.toBeInTheDocument();
   });
 
