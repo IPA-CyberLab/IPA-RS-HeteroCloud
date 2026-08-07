@@ -60,9 +60,11 @@ bootstrap:
   organizationName: HeteroCloud
 
 service:
-  type: LoadBalancer
+  # The public HTTP entry point is the GitOps-managed Envoy Gateway. Keeping
+  # this Service private removes the direct HeteroNetwork L4 bypass.
+  type: ClusterIP
   port: 10443
-  loadBalancerClass: heteronetwork.io/public
+  loadBalancerClass: ""
   trafficMode: forwarded
   ingressReplicas: 3
   externalTrafficPolicy: Cluster

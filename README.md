@@ -168,15 +168,18 @@ zone block. It checks every A record and fails on missing, extra, IPv6, or
 incorrect destinations. `--format table` and `--format json` are available
 for providers that do not accept zone imports.
 
-Every public gateway serves the same `flow.<domain>` HTTPS host and routes
-`/rtc` to its local LiveKit process, `/v1/signal/*` to local signaling, and
-other public paths to the local Flow API. Each Caddy instance obtains its own
-certificate. Because an ACME HTTP-01 request can arrive at any address in the
-RRset, unknown challenge tokens are forwarded around a bounded gateway ring
-over HeteroNetwork. TLS-ALPN validation is disabled for this host. Port 80
-must therefore be reachable between adjacent gateway VPN addresses, and all
-gateway Caddyfiles must be deployed before switching DNS to the unified
-RRset.
+Every public gateway serves the same `flow.<domain>` HTTPS host and forwards
+HTTP/WebSocket traffic to the GitOps-managed Envoy Gateway through the
+HeteroNetwork LoadBalancer. Envoy routes `/rtc` to the LiveKit signaling
+service, `/v1/signal/*` to Flow signaling, and other public paths to the Flow
+API. The Flow API, signaling, and LiveKit signaling Services remain private
+ClusterIP Services; the Envoy Gateway applies the shared source-IP rate limit
+before forwarding. Each Caddy instance obtains its own certificate. Because an
+ACME HTTP-01 request can arrive at any address in the RRset, unknown challenge
+tokens are forwarded around a bounded gateway ring over HeteroNetwork.
+TLS-ALPN validation is disabled for this host. Port 80 must therefore be
+reachable between adjacent gateway VPN addresses, and all gateway Caddyfiles
+must be deployed before switching DNS to the unified RRset.
 
 ## Development
 
