@@ -401,6 +401,73 @@ async fn developer_credentials_are_scoped_hashed_rotatable_and_revocable()
         after_revoke,
         DeveloperCredentialMintOutcome::InvalidCredential
     ));
+
+    let retention_started_at = Utc::now() - Duration::hours(2);
+    let mut expired_context_ids = Vec::new();
+    for offset in 0_i64..101 {
+        let context_id = Uuid::now_v7();
+        let issued_at = retention_started_at + Duration::seconds(offset);
+        store
+            .record_flow_access_context(&NewFlowAccessContext {
+                context_id,
+                organization_id,
+                project_id: project.id,
+                service_instance_id: instance.id,
+                credential_id: None,
+                principal_id: membership.principal_id,
+                permissions: &requested_permissions,
+                issued_at,
+                expires_at: issued_at + Duration::minutes(5),
+            })
+            .await?;
+        expired_context_ids.push(context_id);
+    }
+    let retained_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM flow_access_contexts WHERE service_instance_id = $1",
+    )
+    .bind(instance.id.0)
+    .fetch_one(store.pool())
+    .await?;
+    assert_eq!(retained_count, 100);
+    let oldest_expired_retained: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM flow_access_contexts WHERE context_id = $1)",
+    )
+    .bind(expired_context_ids[0])
+    .fetch_one(store.pool())
+    .await?;
+    assert!(!oldest_expired_retained);
+    let newest_expired_retained: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM flow_access_contexts WHERE context_id = $1)",
+    )
+    .bind(expired_context_ids[100])
+    .fetch_one(store.pool())
+    .await?;
+    assert!(newest_expired_retained);
+
+    let active_issued_at = Utc::now();
+    for _ in 0..101 {
+        store
+            .record_flow_access_context(&NewFlowAccessContext {
+                context_id: Uuid::now_v7(),
+                organization_id,
+                project_id: project.id,
+                service_instance_id: instance.id,
+                credential_id: None,
+                principal_id: membership.principal_id,
+                permissions: &requested_permissions,
+                issued_at: active_issued_at,
+                expires_at: active_issued_at + Duration::minutes(5),
+            })
+            .await?;
+    }
+    let active_context_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM flow_access_contexts
+         WHERE service_instance_id = $1 AND revoked_at IS NULL AND expires_at > now()",
+    )
+    .bind(instance.id.0)
+    .fetch_one(store.pool())
+    .await?;
+    assert_eq!(active_context_count, 101);
     Ok(())
 }
 

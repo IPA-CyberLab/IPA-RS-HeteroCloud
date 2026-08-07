@@ -13,7 +13,8 @@ use uuid::Uuid;
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
 pub const MAX_REALTIME_METRIC_HISTORY_SAMPLES: i64 = 240;
-pub const MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE: i64 = 100;
+pub const MAX_FLOW_ACCESS_CONTEXT_RECORDS_PER_SERVICE: i64 = 100;
+pub const MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE: i64 = MAX_FLOW_ACCESS_CONTEXT_RECORDS_PER_SERVICE;
 pub const MAX_FLOW_DEVELOPER_CREDENTIALS_PER_SERVICE: i64 = 100;
 pub const MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE: i64 = 100;
 
@@ -1118,6 +1119,8 @@ impl Store {
         &self,
         input: &NewFlowAccessContext<'_>,
     ) -> Result<(), StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        lock_flow_access_context_retention(&mut transaction, input.service_instance_id).await?;
         let result = sqlx::query(
             "INSERT INTO flow_access_contexts
                 (context_id, organization_id, project_id, service_instance_id,
@@ -1136,11 +1139,13 @@ impl Store {
         .bind(input.permissions.to_vec())
         .bind(input.issued_at)
         .bind(input.expires_at)
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await?;
         if result.rows_affected() != 1 {
             return Err(StoreError::Conflict);
         }
+        prune_flow_access_context_history(&mut transaction, input.service_instance_id).await?;
+        transaction.commit().await?;
         Ok(())
     }
 
@@ -1180,6 +1185,8 @@ impl Store {
             transaction.rollback().await?;
             return Ok(DeveloperCredentialMintOutcome::PermissionDenied);
         }
+        let service_instance_id = ServiceInstanceId(row.service_instance_id);
+        lock_flow_access_context_retention(&mut transaction, service_instance_id).await?;
         sqlx::query(
             "INSERT INTO flow_access_contexts
                 (context_id, organization_id, project_id, service_instance_id,
@@ -1197,6 +1204,7 @@ impl Store {
         .bind(input.expires_at)
         .execute(&mut *transaction)
         .await?;
+        prune_flow_access_context_history(&mut transaction, service_instance_id).await?;
         sqlx::query("UPDATE flow_developer_credentials SET last_used_at = now() WHERE id = $1")
             .bind(row.credential_id)
             .execute(&mut *transaction)
@@ -1788,6 +1796,40 @@ impl Store {
         .await
         .map_err(StoreError::from)
     }
+}
+
+async fn lock_flow_access_context_retention(
+    transaction: &mut Transaction<'_, Postgres>,
+    service_instance_id: ServiceInstanceId,
+) -> Result<(), StoreError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text, 0))")
+        .bind(service_instance_id.0)
+        .execute(&mut **transaction)
+        .await?;
+    Ok(())
+}
+
+async fn prune_flow_access_context_history(
+    transaction: &mut Transaction<'_, Postgres>,
+    service_instance_id: ServiceInstanceId,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "DELETE FROM flow_access_contexts
+         WHERE service_instance_id = $1
+           AND context_id IN (
+               SELECT context_id
+               FROM flow_access_contexts
+               WHERE service_instance_id = $1
+               ORDER BY issued_at DESC, context_id DESC
+               OFFSET $2
+           )
+           AND (revoked_at IS NOT NULL OR expires_at <= now())",
+    )
+    .bind(service_instance_id.0)
+    .bind(MAX_FLOW_ACCESS_CONTEXT_RECORDS_PER_SERVICE)
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
 }
 
 async fn cascade_flow_developer_credential_contexts(

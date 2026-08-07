@@ -324,7 +324,7 @@ export function DeveloperCredentialsSection({
         header={
           <Header
             variant="h2"
-            description="このサービスで発行された利用者コンテキスト"
+            description="このサービスで発行された直近100件の利用者コンテキスト"
             counter={contexts.data ? `(${accessContextItems.length})` : undefined}
           >
             発行済み短期アクセス

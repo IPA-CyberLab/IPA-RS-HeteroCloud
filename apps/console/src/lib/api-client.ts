@@ -429,7 +429,7 @@ export class HeteroCloudApiClient {
         this.request<CollectionResponse<RealtimeAccessContext>>(
           organizationPath(
             organizationId,
-            `realtime/services/${encodeURIComponent(serviceId)}/access-contexts`,
+            `realtime/services/${encodeURIComponent(serviceId)}/access-contexts?limit=100`,
           ),
           { signal },
         ),

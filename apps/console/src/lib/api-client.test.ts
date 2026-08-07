@@ -347,7 +347,7 @@ describe("HeteroCloudApiClient", () => {
       `${base}/developer-credentials`,
       `${base}/developer-credentials/credential-1/rotate`,
       `${base}/developer-credentials/credential-1`,
-      `${base}/access-contexts`,
+      `${base}/access-contexts?limit=100`,
       `${base}/access-contexts/context-1`,
       `${base}/metrics`,
       history,
