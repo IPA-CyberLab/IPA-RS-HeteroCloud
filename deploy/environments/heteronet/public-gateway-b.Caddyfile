@@ -23,7 +23,7 @@
 	}
 
 	handle {
-		reverse_proxy https://10.250.0.5:8443 https://10.250.0.6:8443 https://10.250.0.4:8443 {
+		reverse_proxy https://10.250.0.3:8443 https://10.250.0.8:8443 https://10.250.0.2:8443 {
 			lb_policy first
 			health_uri /api/v1/health/live
 			health_interval 5s
@@ -47,7 +47,7 @@ heterocloud.mizuame.app {
 }
 
 cloud-b.heterocloud.mizuame.app {
-	reverse_proxy https://10.250.0.5:8443 https://10.250.0.6:8443 https://10.250.0.4:8443 {
+	reverse_proxy https://10.250.0.3:8443 https://10.250.0.8:8443 https://10.250.0.2:8443 {
 		lb_policy first
 		health_uri /api/v1/health/live
 		health_interval 5s
