@@ -50,9 +50,5 @@ networkPolicy:
   providerPort: 8080
 
 nodeSelector:
-  node-role.kubernetes.io/control-plane: ""
-
-tolerations:
-  - key: node-role.kubernetes.io/control-plane
-    operator: Exists
-    effect: NoSchedule
+  database.heteronetwork.io/proxy-ready: "true"
+  workload.heteronetwork.io/capacity-tier: high
