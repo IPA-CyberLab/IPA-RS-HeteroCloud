@@ -1,4 +1,4 @@
-replicaCount: 3
+replicaCount: 4
 hostNetwork: true
 
 publicOrigin: https://heterocloud.mizuame.app
@@ -30,7 +30,7 @@ image:
   pullPolicy: IfNotPresent
 
 worker:
-  replicaCount: 3
+  replicaCount: 4
   flowEndpoint: http://heterocloud-flow-api.heterocloud-flow.svc.cluster.local:8080/
   providerIssuer: heterocloud
   flowAudience: heterocloud-flow
