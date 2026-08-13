@@ -31,6 +31,7 @@ const CONTROLLER_KUBECONFIG_KEY: &str = "kubeconfig";
 const CONTROLLER_KUBECONFIG_MOUNT_PATH: &str = "/etc/heterocloud/external-dns";
 const SERVICE_ACCOUNT_CA_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
 const SERVICE_ACCOUNT_TOKEN_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccount/token";
+const DNS_PUBLISH_LABEL: &str = "dns.heterocloud.io/publish";
 
 #[derive(Clone, Debug, Args)]
 pub struct ReconcileArgs {
@@ -257,13 +258,13 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
     let mut helm_values = json!({
         "fullnameOverride": args.controller_release,
         "provider": {"name": args.provider},
-        "sources": ["crd"],
+        "sources": ["crd", "service"],
         "policy": "sync",
         "registry": "txt",
         "txtOwnerId": owner,
         "txtPrefix": "_heterocloud-",
         "domainFilters": [domain],
-        "labelFilter": "app.kubernetes.io/managed-by=heterocloud",
+        "labelFilter": format!("{DNS_PUBLISH_LABEL}=true"),
         "managedRecordTypes": ["A"],
         "interval": "30s",
         "triggerLoopOnEvent": true,
@@ -301,7 +302,10 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
         }]);
     }
     let mut grouped_targets = BTreeMap::<(String, &'static str, u32), BTreeSet<String>>::new();
-    for record in &records {
+    for record in records
+        .iter()
+        .filter(|record| record.service != super::FLOW_SERVICE_PREFIX)
+    {
         grouped_targets
             .entry((record.name.clone(), record.record_type, record.ttl))
             .or_default()
@@ -331,7 +335,8 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
             "labels": {
                 "app.kubernetes.io/name": "heterocloud-public-dns",
                 "app.kubernetes.io/part-of": "heterocloud",
-                "app.kubernetes.io/managed-by": "heterocloud"
+                "app.kubernetes.io/managed-by": "heterocloud",
+                (DNS_PUBLISH_LABEL): "true"
             }
         },
         "spec": {"endpoints": endpoints}
@@ -1093,7 +1098,7 @@ mod tests {
             kubeconfig: Some(PathBuf::from("/secure/admin.conf")),
             context: Some("production".to_owned()),
             namespace: "heterocloud-flow".to_owned(),
-            service: "heterocloud-flow-livekit-rtc".to_owned(),
+            service: "heterocloud-flow-turn".to_owned(),
         };
         let shared = apply_manifest_args(&source, false);
         let endpoint = apply_manifest_args(&source, true);
@@ -1138,7 +1143,7 @@ mod tests {
                 kubeconfig: None,
                 context: None,
                 namespace: "heterocloud-flow".into(),
-                service: "heterocloud-flow-livekit-rtc".into(),
+                service: "heterocloud-flow-turn".into(),
             },
             provider: provider.into(),
             credential_files: Vec::new(),
@@ -1174,29 +1179,34 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_is_scoped_and_contains_all_public_services()
+    fn static_endpoint_excludes_service_managed_flow_record()
     -> Result<(), Box<dyn std::error::Error>> {
         let plan = build_plan(&base_args("inmemory"))?;
         let endpoints = plan.endpoint["spec"]["endpoints"]
             .as_array()
             .ok_or("endpoints must be an array")?;
-        assert_eq!(endpoints.len(), 5);
+        assert_eq!(endpoints.len(), 4);
         assert_eq!(endpoints[0]["dnsName"], "cloud-a.heterocloud.example.com");
         assert_eq!(endpoints[1]["dnsName"], "cloud-b.heterocloud.example.com");
         assert_eq!(endpoints[2]["dnsName"], "cloud-c.heterocloud.example.com");
-        assert_eq!(endpoints[3]["dnsName"], "flow.heterocloud.example.com");
+        assert_eq!(endpoints[3]["dnsName"], "heterocloud.example.com");
         assert_eq!(
             endpoints[3]["targets"],
             json!(["163.220.236.51", "163.220.236.52", "163.220.236.53"])
         );
-        assert_eq!(endpoints[4]["dnsName"], "heterocloud.example.com");
-        assert_eq!(
-            endpoints[4]["targets"],
-            json!(["163.220.236.51", "163.220.236.52", "163.220.236.53"])
+        assert!(
+            endpoints
+                .iter()
+                .all(|endpoint| { endpoint["dnsName"] != "flow.heterocloud.example.com" })
         );
+        assert_eq!(plan.helm_values["sources"], json!(["crd", "service"]));
         assert_eq!(
             plan.helm_values["labelFilter"],
-            "app.kubernetes.io/managed-by=heterocloud"
+            "dns.heterocloud.io/publish=true"
+        );
+        assert_eq!(
+            plan.endpoint["metadata"]["labels"][DNS_PUBLISH_LABEL],
+            "true"
         );
         assert_eq!(plan.helm_values["policy"], "sync");
         assert_eq!(plan.helm_values["managedRecordTypes"], json!(["A"]));
@@ -1221,14 +1231,15 @@ mod tests {
                 .all(|endpoint| { endpoint["dnsName"] == "heterocloud.example.com" })
         );
         assert_eq!(
-            endpoints[4]["providerSpecific"],
+            endpoints[3]["providerSpecific"],
             json!([{
                 "name": "external-dns.alpha.kubernetes.io/cloudflare-proxied",
                 "value": "true"
             }])
         );
         assert!(endpoints[0].get("providerSpecific").is_none());
-        assert!(endpoints[3].get("providerSpecific").is_none());
+        assert!(endpoints[1].get("providerSpecific").is_none());
+        assert!(endpoints[2].get("providerSpecific").is_none());
         Ok(())
     }
 

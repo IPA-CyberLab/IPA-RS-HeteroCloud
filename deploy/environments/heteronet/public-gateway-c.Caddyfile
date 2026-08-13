@@ -65,7 +65,7 @@ http://flow.heterocloud.mizuame.app {
 	}
 
 	handle /.well-known/acme-challenge/* {
-		reverse_proxy 10.250.0.4:80 {
+		reverse_proxy 10.250.0.10:80 {
 			header_up Host {host}
 			header_up X-HeteroCloud-ACME-Visited-C 1
 		}
@@ -89,9 +89,15 @@ flow.heterocloud.mizuame.app {
 	}
 
 	handle {
-		reverse_proxy http://163.220.236.53:18081 http://163.220.236.51:18081 http://163.220.236.52:18081 {
+		reverse_proxy http://heterocloud-edge-proxy.envoy-gateway-system.svc.cluster.local:18081 {
 			lb_policy first
+			transport http {
+				resolvers 10.96.0.10
+			}
 			health_uri /health/live
+			health_headers {
+				Host flow.heterocloud.mizuame.app
+			}
 			health_interval 5s
 			health_timeout 2s
 			fail_duration 10s

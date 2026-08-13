@@ -23,9 +23,14 @@
 	}
 
 	handle {
-		reverse_proxy http://163.220.236.52:18081 http://163.220.236.53:18081 http://163.220.236.51:18081 {
-			lb_policy first
+		reverse_proxy http://heterocloud-edge-proxy.envoy-gateway-system.svc.cluster.local:18081 {
+			transport http {
+				resolvers 10.96.0.10
+			}
 			health_uri /api/v1/health/live
+			health_headers {
+				Host heterocloud.mizuame.app
+			}
 			health_interval 5s
 			health_timeout 2s
 			fail_duration 10s
@@ -43,21 +48,14 @@ heterocloud.mizuame.app {
 	import heterocloud_frontend
 }
 
-cloud-b.heterocloud.mizuame.app {
-	reverse_proxy http://163.220.236.52:18081 http://163.220.236.53:18081 http://163.220.236.51:18081 {
-		lb_policy first
-		health_uri /api/v1/health/live
-		health_interval 5s
-		health_timeout 2s
-		fail_duration 10s
-		max_fails 2
-	}
+cloud-d.heterocloud.mizuame.app {
+	import heterocloud_frontend
 }
 
 http://flow.heterocloud.mizuame.app {
 	@acme_loop {
 		path /.well-known/acme-challenge/*
-		header X-HeteroCloud-ACME-Visited-B 1
+		header X-HeteroCloud-ACME-Visited-D 1
 	}
 
 	handle @acme_loop {
@@ -65,9 +63,9 @@ http://flow.heterocloud.mizuame.app {
 	}
 
 	handle /.well-known/acme-challenge/* {
-		reverse_proxy 10.250.0.6:80 {
+		reverse_proxy 10.250.0.4:80 {
 			header_up Host {host}
-			header_up X-HeteroCloud-ACME-Visited-B 1
+			header_up X-HeteroCloud-ACME-Visited-D 1
 		}
 	}
 
@@ -90,7 +88,6 @@ flow.heterocloud.mizuame.app {
 
 	handle {
 		reverse_proxy http://heterocloud-edge-proxy.envoy-gateway-system.svc.cluster.local:18081 {
-			lb_policy first
 			transport http {
 				resolvers 10.96.0.10
 			}

@@ -78,7 +78,7 @@ pub struct DnsSourceArgs {
     pub namespace: String,
 
     /// LoadBalancer Service used to discover HeteroNetwork public addresses.
-    #[arg(long, default_value = "heterocloud-flow-livekit-rtc")]
+    #[arg(long, default_value = "heterocloud-flow-turn")]
     pub service: String,
 }
 
