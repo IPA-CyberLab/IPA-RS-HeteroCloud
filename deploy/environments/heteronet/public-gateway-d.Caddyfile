@@ -63,7 +63,7 @@ http://flow.heterocloud.mizuame.app {
 	}
 
 	handle /.well-known/acme-challenge/* {
-		reverse_proxy 10.250.0.4:80 {
+		reverse_proxy 163.220.236.51:80 {
 			header_up Host {host}
 			header_up X-HeteroCloud-ACME-Visited-D 1
 		}
