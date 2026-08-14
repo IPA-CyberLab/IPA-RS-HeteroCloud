@@ -27,14 +27,6 @@
 			transport http {
 				resolvers 10.96.0.10
 			}
-			health_uri /api/v1/health/live
-			health_headers {
-				Host heterocloud.mizuame.app
-			}
-			health_interval 5s
-			health_timeout 2s
-			fail_duration 10s
-			max_fails 2
 		}
 	}
 }
@@ -91,14 +83,6 @@ flow.heterocloud.mizuame.app {
 			transport http {
 				resolvers 10.96.0.10
 			}
-			health_uri /health/live
-			health_headers {
-				Host flow.heterocloud.mizuame.app
-			}
-			health_interval 5s
-			health_timeout 2s
-			fail_duration 10s
-			max_fails 2
 		}
 	}
 }
