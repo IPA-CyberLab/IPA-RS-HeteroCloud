@@ -51,4 +51,14 @@ networkPolicy:
 
 nodeSelector:
   database.heteronetwork.io/proxy-ready: "true"
-  workload.heteronetwork.io/capacity-tier: high
+
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: workload.heteronetwork.io/capacity-tier
+              operator: In
+              values:
+                - high
