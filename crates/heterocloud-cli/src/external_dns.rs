@@ -66,7 +66,7 @@ pub struct ReconcileArgs {
     #[arg(long = "provider-values", value_name = "PATH")]
     pub provider_values: Vec<PathBuf>,
 
-    /// Kubernetes API URL used by the ExternalDNS controller instead of the in-cluster Service IP.
+    /// HA Kubernetes API URL used instead of the recommended in-cluster Service IP. Never use a node-scoped URL.
     #[arg(long, value_name = "HTTPS_URL")]
     pub controller_kube_api_server: Option<String>,
 

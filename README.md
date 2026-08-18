@@ -127,9 +127,10 @@ Use `--provider-arg=--name=value` for non-secret provider flags. Run with
 `DNSEndpoint` before applying it. Re-running the command is idempotent and
 reconciles address changes.
 
-When the cluster Service IP is not a reliable path to the Kubernetes API,
-configure the controller Pod and an explicit API endpoint independently of
-the DNS provider:
+The controller uses the in-cluster Kubernetes Service by default. This is the
+recommended HA path because it follows the surviving API servers. If the
+cluster Service IP is not usable, configure an explicit HA virtual endpoint;
+never point ExternalDNS at one control-plane node:
 
 ```sh
 heterocloud dns reconcile \
@@ -138,13 +139,15 @@ heterocloud dns reconcile \
   --credential-secret CF_API_TOKEN=cloudflare-credentials:api-token \
   --controller-node-selector node-role.kubernetes.io/control-plane= \
   --controller-dns-policy Default \
-  --controller-kube-api-server https://10.250.0.4:6443 \
+  --controller-kube-api-server https://k8s-api.heteronetwork.internal:7443 \
   --kubeconfig /path/to/admin.conf
 ```
 
 The generated ConfigMap contains the API URL and references to the Pod's
 projected service-account CA and token files. The service-account token itself
 remains in the Kubernetes-managed volume and is never stored in the ConfigMap.
+The explicit URL must remain reachable when any two control-plane nodes are
+offline; a node-scoped URL makes DNS reconciliation a single point of failure.
 
 For manual DNS onboarding, generate a copy-paste-ready zone block:
 
