@@ -78,6 +78,10 @@ pub struct ReconcileArgs {
     #[arg(long, value_name = "POLICY")]
     pub controller_dns_policy: Option<String>,
 
+    /// Seconds before an ExternalDNS Pod is evicted from an unreachable node.
+    #[arg(long, default_value_t = 15, value_parser = clap::value_parser!(u64).range(5..=300))]
+    pub controller_failover_seconds: u64,
+
     /// Namespace for ExternalDNS and the managed DNSEndpoint.
     #[arg(long, default_value = "heterocloud-dns")]
     pub controller_namespace: String,
@@ -271,6 +275,21 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
         "logFormat": "json",
         "env": environment,
         "extraArgs": extra_args,
+        "priorityClassName": "system-cluster-critical",
+        "tolerations": [
+            {
+                "key": "node.kubernetes.io/not-ready",
+                "operator": "Exists",
+                "effect": "NoExecute",
+                "tolerationSeconds": args.controller_failover_seconds
+            },
+            {
+                "key": "node.kubernetes.io/unreachable",
+                "operator": "Exists",
+                "effect": "NoExecute",
+                "tolerationSeconds": args.controller_failover_seconds
+            }
+        ],
         "resources": {
             "requests": {"cpu": "25m", "memory": "64Mi"},
             "limits": {"memory": "192Mi"}
@@ -1154,6 +1173,7 @@ mod tests {
             controller_kube_api_server: None,
             controller_node_selectors: Vec::new(),
             controller_dns_policy: None,
+            controller_failover_seconds: 15,
             controller_namespace: "heterocloud-dns".into(),
             controller_release: "heterocloud-dns".into(),
             credential_secret_name: "heterocloud-dns-provider".into(),
@@ -1259,6 +1279,27 @@ mod tests {
         assert_eq!(plan.helm_values["dnsPolicy"], "Default");
         assert!(plan.helm_values.get("hostNetwork").is_none());
         assert_eq!(plan.helm_values["automountServiceAccountToken"], true);
+        assert_eq!(
+            plan.helm_values["priorityClassName"],
+            "system-cluster-critical"
+        );
+        assert_eq!(
+            plan.helm_values["tolerations"],
+            json!([
+                {
+                    "key": "node.kubernetes.io/not-ready",
+                    "operator": "Exists",
+                    "effect": "NoExecute",
+                    "tolerationSeconds": 15
+                },
+                {
+                    "key": "node.kubernetes.io/unreachable",
+                    "operator": "Exists",
+                    "effect": "NoExecute",
+                    "tolerationSeconds": 15
+                }
+            ])
+        );
         assert_eq!(
             plan.helm_values["extraArgs"],
             json!(["--kubeconfig=/etc/heterocloud/external-dns/kubeconfig"])

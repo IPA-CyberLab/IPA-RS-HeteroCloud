@@ -127,6 +127,13 @@ Use `--provider-arg=--name=value` for non-secret provider flags. Run with
 `DNSEndpoint` before applying it. Re-running the command is idempotent and
 reconciles address changes.
 
+ExternalDNS does not support leader election, so the chart intentionally runs
+one writer. The generated Pod uses the `system-cluster-critical` priority and
+15-second `NotReady`/`Unreachable` eviction tolerations so Kubernetes replaces
+that writer on a surviving control-plane node after a machine failure. Override
+the delay with `--controller-failover-seconds` when the cluster's node-failure
+detection policy requires a different value.
+
 The controller uses the in-cluster Kubernetes Service by default. This is the
 recommended HA path because it follows the surviving API servers. If the
 cluster Service IP is not usable, configure an explicit HA virtual endpoint;
