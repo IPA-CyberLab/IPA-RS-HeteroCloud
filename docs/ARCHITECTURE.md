@@ -116,15 +116,18 @@ With host networking enabled, each API process binds only to the downward-API
 `status.hostIP` on port 8443. The production Kubernetes Service is ClusterIP;
 it does not create a HeteroNetwork public LoadBalancer or expose port 10443.
 Public HTTPS terminates only at Caddy on port 443. Each public control-plane
-Caddy instance proxies the three HeteroNetwork node IP upstreams on port 8443,
-so losing one API or control-plane node does not require a public bypass port.
+Caddy instance proxies the HeteroNetwork node IP upstreams, so losing an API or
+control-plane node does not require a public bypass port. Keycloak requests use
+all five control-plane VPN listeners and prefer a remote healthy listener while
+the receiving node is recovering.
 
 Flow uses a different gateway policy. Every Caddy instance serves the same
-`flow.<domain>` host and sends `/rtc` and `/rtc/*` to LiveKit on its local VPN
-address and port 7880, `/v1/signal/*` to local signaling on port 8082, and all
-other public paths to the local Flow API on port 8080. `/internal` is denied at
-the edge. This keeps the selected public gateway and data-plane process on the
-same node.
+`flow.<domain>` host and exposes a VPN-only bridge on port 18082 to the local
+Envoy Gateway Service. Public routes health-check all four bridges, prefer
+remote healthy bridges, and retry connection failures before returning an
+error. A node that has restarted can therefore accept public traffic and use a
+surviving node while its own Kubernetes networking converges. `/internal` is
+denied at the edge.
 
 Each gateway maintains its own public certificate. Flow certificate policies
 disable TLS-ALPN validation and use HTTP-01. If the gateway receiving a

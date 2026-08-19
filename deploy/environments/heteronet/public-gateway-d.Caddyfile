@@ -1,33 +1,53 @@
+(heterocloud_keycloak) {
+	reverse_proxy 10.250.0.4:18079 10.250.0.5:18079 10.250.0.6:18079 10.250.0.8:18079 10.250.0.10:18079 {
+		lb_policy first
+		lb_try_duration 5s
+		lb_try_interval 100ms
+		fail_duration 10s
+		max_fails 1
+		unhealthy_status 5xx
+		health_uri /realms/heterocloud/.well-known/openid-configuration
+		health_interval 2s
+		health_timeout 2s
+		health_status 2xx
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-Port 443
+	}
+}
+
+(heterocloud_envoy) {
+	reverse_proxy 10.250.0.4:18082 10.250.0.5:18082 10.250.0.6:18082 10.250.0.10:18082 {
+		lb_policy first
+		lb_try_duration 5s
+		lb_try_interval 100ms
+		fail_duration 10s
+		max_fails 1
+		unhealthy_status 5xx
+		health_uri {args[0]}
+		health_interval 2s
+		health_timeout 2s
+		health_status 2xx
+	}
+}
+
 (heterocloud_frontend) {
 	@realm path /id/realms/heterocloud /id/realms/heterocloud/*
 	@resources path /id/resources/* /id/robots.txt /resources/* /robots.txt
 
 	handle @realm {
 		uri strip_prefix /id
-		reverse_proxy http://127.0.0.1:18079 {
-			header_up Host {host}
-			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-Host {host}
-			header_up X-Forwarded-Port 443
-		}
+		import heterocloud_keycloak
 	}
 
 	handle @resources {
 		uri strip_prefix /id
-		reverse_proxy http://127.0.0.1:18079 {
-			header_up Host {host}
-			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-Host {host}
-			header_up X-Forwarded-Port 443
-		}
+		import heterocloud_keycloak
 	}
 
 	handle {
-		reverse_proxy http://heterocloud-edge-proxy.envoy-gateway-system.svc.cluster.local:18081 {
-			transport http {
-				resolvers 10.96.0.10
-			}
-		}
+		import heterocloud_envoy /api/v1/health/live
 	}
 }
 
@@ -79,10 +99,21 @@ flow.heterocloud.mizuame.app {
 	}
 
 	handle {
+		import heterocloud_envoy /health/live
+	}
+}
+
+http://:18082 {
+	bind 10.250.0.10
+	@vpn remote_ip 10.250.0.0/16 127.0.0.0/8
+	handle @vpn {
 		reverse_proxy http://heterocloud-edge-proxy.envoy-gateway-system.svc.cluster.local:18081 {
 			transport http {
 				resolvers 10.96.0.10
 			}
 		}
+	}
+	handle {
+		respond 403
 	}
 }

@@ -73,4 +73,39 @@ if gateway_json_is_canonical '{"dial":"10.250.0.4:8082"}'; then
   exit 1
 fi
 
+declare -A gateway_vpn_ip=(
+  [a]=10.250.0.4
+  [b]=10.250.0.5
+  [c]=10.250.0.6
+  [d]=10.250.0.10
+)
+readonly -a envoy_vpn_ips=(10.250.0.4 10.250.0.5 10.250.0.6 10.250.0.10)
+readonly -a keycloak_vpn_ips=(10.250.0.4 10.250.0.5 10.250.0.6 10.250.0.8 10.250.0.10)
+
+for gateway_id in a b c d; do
+  gateway_file="$script_dir/public-gateway-$gateway_id.Caddyfile"
+  local_vpn_ip=${gateway_vpn_ip[$gateway_id]}
+  envoy_upstreams=$(grep -E '^\s*reverse_proxy (10\.250\.0\.[0-9]+:18082\s*){4}' "$gateway_file")
+  keycloak_upstreams=$(grep -E '^\s*reverse_proxy (10\.250\.0\.[0-9]+:18079\s*){5}' "$gateway_file")
+
+  grep -Fq 'http://:18082 {' "$gateway_file"
+  grep -Fq "bind $local_vpn_ip" "$gateway_file"
+  grep -Fq '@vpn remote_ip 10.250.0.0/16 127.0.0.0/8' "$gateway_file"
+  grep -Fq 'health_uri {args[0]}' "$gateway_file"
+  grep -Fq 'lb_try_duration 5s' "$gateway_file"
+  if grep -Fq '127.0.0.1:18079' "$gateway_file"; then
+    echo "gateway $gateway_id still pins Keycloak to localhost" >&2
+    exit 1
+  fi
+
+  for vpn_ip in "${envoy_vpn_ips[@]}"; do
+    grep -Fq "$vpn_ip:18082" <<<"$envoy_upstreams"
+  done
+  for vpn_ip in "${keycloak_vpn_ips[@]}"; do
+    grep -Fq "$vpn_ip:18079" <<<"$keycloak_upstreams"
+  done
+  [[ $envoy_upstreams == *" $local_vpn_ip:18082 {" ]]
+  [[ $keycloak_upstreams == *" $local_vpn_ip:18079 {" ]]
+done
+
 echo "public gateway reconciliation tests passed"
