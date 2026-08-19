@@ -104,8 +104,8 @@ for gateway_id in a b c d; do
   for vpn_ip in "${keycloak_vpn_ips[@]}"; do
     grep -Fq "$vpn_ip:18079" <<<"$keycloak_upstreams"
   done
-  [[ $envoy_upstreams == *" $local_vpn_ip:18082 {" ]]
-  [[ $keycloak_upstreams == *" $local_vpn_ip:18079 {" ]]
+  [[ $envoy_upstreams == *"reverse_proxy $local_vpn_ip:18082 "* ]]
+  [[ $keycloak_upstreams == *"reverse_proxy $local_vpn_ip:18079 "* ]]
 done
 
 echo "public gateway reconciliation tests passed"
