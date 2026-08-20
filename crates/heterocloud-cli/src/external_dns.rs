@@ -270,7 +270,7 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
         "domainFilters": [domain],
         "labelFilter": format!("{DNS_PUBLISH_LABEL}=true"),
         "managedRecordTypes": ["A"],
-        "interval": "30s",
+        "interval": "5s",
         "triggerLoopOnEvent": true,
         "logFormat": "json",
         "env": environment,
