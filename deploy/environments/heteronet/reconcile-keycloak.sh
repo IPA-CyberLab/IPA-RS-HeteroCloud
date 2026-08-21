@@ -9,7 +9,7 @@ readonly client_id="${HETEROCLOUD_KEYCLOAK_CLIENT_ID:-heterocloud-web}"
 readonly public_origin="${HETEROCLOUD_PUBLIC_ORIGIN:-https://heterocloud.mizuame.app}"
 readonly identity_origin="${HETEROCLOUD_IDENTITY_ORIGIN:-${public_origin}/id}"
 readonly callback_url="${HETEROCLOUD_OIDC_CALLBACK_URL:-${public_origin}/api/v1/auth/oidc/callback}"
-readonly owner_origin="${HETEROCLOUD_OWNER_ORIGIN:-http://owner.heterocloud.internal:19443}"
+readonly owner_origin="${HETEROCLOUD_OWNER_ORIGIN:-http://owner.heteronetwork.internal:19443}"
 readonly owner_callback_url="${HETEROCLOUD_OWNER_OIDC_CALLBACK_URL:-${owner_origin}/api/v1/auth/oidc/callback}"
 readonly admin_password_file="${HETEROCLOUD_KEYCLOAK_ADMIN_PASSWORD_FILE:-/etc/heteronetwork/keycloak/bootstrap-admin.password}"
 readonly client_secret_file="${HETEROCLOUD_OIDC_CLIENT_SECRET_FILE:-/etc/heterocloud/oidc/client-secret}"
@@ -28,7 +28,7 @@ fail() {
   || fail "identity origin must be an HTTPS origin ending in /id"
 [[ "$callback_url" == "${public_origin}/api/v1/auth/oidc/callback" ]] \
   || fail "callback URL must use the canonical public origin"
-[[ "$owner_origin" =~ ^https?://owner\.heterocloud\.internal(:[0-9]+)?$ ]] \
+[[ "$owner_origin" =~ ^https?://owner\.heteronetwork\.internal(:[0-9]+)?$ ]] \
   || fail "owner console origin must use the private HeteroNetwork DNS name"
 [[ "$owner_callback_url" == "${owner_origin}/api/v1/auth/oidc/callback" ]] \
   || fail "owner callback URL must use the private owner console origin"

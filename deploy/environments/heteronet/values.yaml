@@ -16,8 +16,8 @@ oidc:
 ownerConsole:
   enabled: true
   replicaCount: 3
-  origin: http://owner.heterocloud.internal:19443
-  oidcPublicCallbackUrl: http://owner.heterocloud.internal:19443/api/v1/auth/oidc/callback
+  origin: http://owner.heteronetwork.internal:19443
+  oidcPublicCallbackUrl: http://owner.heteronetwork.internal:19443/api/v1/auth/oidc/callback
   email: fasutotesuto@gmail.com
   listenPort: 19443
   servicePort: 19443
