@@ -103,6 +103,38 @@ flow.heterocloud.mizuame.app {
 	}
 }
 
+http://registry.heterocloud.mizuame.app {
+	@registry_acme_loop {
+		path /.well-known/acme-challenge/*
+		header X-HeteroCloud-Registry-ACME-Visited-D 1
+	}
+
+	handle @registry_acme_loop {
+		respond 404
+	}
+
+	handle /.well-known/acme-challenge/* {
+		reverse_proxy 163.220.236.51:80 {
+			header_up Host {host}
+			header_up X-HeteroCloud-Registry-ACME-Visited-D 1
+		}
+	}
+
+	handle {
+		redir https://registry.heterocloud.mizuame.app{uri} permanent
+	}
+}
+
+registry.heterocloud.mizuame.app {
+	tls {
+		issuer acme {
+			disable_tlsalpn_challenge
+		}
+	}
+
+	import heterocloud_envoy /api/v2.0/health
+}
+
 http://:18082 {
 	bind 10.250.0.10
 	@vpn remote_ip 10.250.0.0/16 127.0.0.0/8

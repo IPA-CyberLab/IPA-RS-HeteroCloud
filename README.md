@@ -55,15 +55,15 @@ separate [data-plane access contract](contracts/flow-access/v1/README.md).
 ## Public DNS onboarding
 
 The `heterocloud` CLI publishes node-scoped `cloud-<node>` management names
-and two cluster-scoped multi-address names: the canonical console domain and
-`flow.<domain>`. It discovers the public IPv4 addresses from the
+and three cluster-scoped multi-address names: the canonical console domain,
+`flow.<domain>`, and `registry.<domain>`. It discovers the public IPv4 addresses from the
 HeteroNetwork-backed Flow TURN `LoadBalancer` Service by default.
 
 For automatic DNS, `dns reconcile` installs a pinned ExternalDNS controller
 and applies a provider-neutral `DNSEndpoint`. Static console records remain in
-that CRD, while the unified Flow RRset follows the healthy ingress addresses
-reported by the annotated TURN Service. Node failure and recovery therefore
-remove and restore Flow addresses without rerunning the CLI. The provider is
+that CRD, while the unified Flow and registry RRsets follow the healthy ingress
+addresses reported by their annotated LoadBalancer Services. Node failure and
+recovery therefore remove and restore service addresses without rerunning the CLI. The provider is
 an adapter, so
 the same desired records work with Cloudflare, AWS, Google, RFC2136, or an
 ExternalDNS webhook without putting provider API calls in HeteroCloud.
@@ -92,13 +92,12 @@ heterocloud dns reconcile \
 ```
 
 This creates the canonical `heterocloud.mizuame.app` console and identity
-RRset, node-specific `cloud-a/b/c` records, and one dynamically reconciled
-`flow.heterocloud.mizuame.app` RRset containing every healthy public Flow
-gateway address.
+RRset, node-specific `cloud-a/b/c` records, and dynamically reconciled Flow and
+private OCI registry RRsets containing every healthy public gateway address.
 The unified Flow name covers HTTPS, WebSocket, LiveKit, STUN, and TURN client
 configuration; the protocol selects the service port. In this Cloudflare
 deployment only the canonical console and identity endpoint is proxied.
-`flow` and node-specific records remain DNS-only because Cloudflare's HTTP
+`flow`, `registry`, and node-specific records remain DNS-only because Cloudflare's HTTP
 proxy cannot carry the complete RTC and TURN protocol surface. Other
 providers can use their equivalent `--http-edge-property` without changing
 the desired record set. ExternalDNS uses a TXT ownership registry and is

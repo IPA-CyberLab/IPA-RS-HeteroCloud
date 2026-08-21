@@ -9,6 +9,7 @@ import { RegisterPage } from "@/features/auth/register-page";
 import { OrganizationProvider } from "@/features/organizations/organization-context";
 import { createQueryClient } from "@/lib/query-client";
 import { NotFoundPage } from "@/app/not-found-page";
+import { useSession } from "@/features/auth/session";
 
 const queryClient = createQueryClient();
 const OverviewPage = lazy(() =>
@@ -61,6 +62,11 @@ const FlashServiceDetailPage = lazy(() =>
     default: module.FlashServiceDetailPage,
   })),
 );
+const RegistryPage = lazy(() =>
+  import("@/features/registry/registry-page").then((module) => ({
+    default: module.RegistryPage,
+  })),
+);
 const AuditLogsPage = lazy(() =>
   import("@/features/audit/audit-logs-page").then((module) => ({
     default: module.AuditLogsPage,
@@ -71,6 +77,11 @@ const SettingsPage = lazy(() =>
     default: module.SettingsPage,
   })),
 );
+const OwnerQuotasPage = lazy(() =>
+  import("@/features/operator/quotas-page").then((module) => ({
+    default: module.OwnerQuotasPage,
+  })),
+);
 
 function LazyPage({ children }: { children: React.ReactNode }) {
   return (
@@ -78,6 +89,10 @@ function LazyPage({ children }: { children: React.ReactNode }) {
       {children}
     </Suspense>
   );
+}
+
+function OwnerRoute({ children }: { children: React.ReactNode }) {
+  return useSession().data?.owner_console ? children : <Navigate to="/overview" replace />;
 }
 
 export function App() {
@@ -184,6 +199,14 @@ export function App() {
                 }
               />
               <Route
+                path="/registry"
+                element={
+                  <LazyPage>
+                    <RegistryPage />
+                  </LazyPage>
+                }
+              />
+              <Route
                 path="/audit-logs"
                 element={
                   <LazyPage>
@@ -197,6 +220,16 @@ export function App() {
                   <LazyPage>
                     <SettingsPage />
                   </LazyPage>
+                }
+              />
+              <Route
+                path="/owner/quotas"
+                element={
+                  <OwnerRoute>
+                    <LazyPage>
+                      <OwnerQuotasPage />
+                    </LazyPage>
+                  </OwnerRoute>
                 }
               />
               </Route>

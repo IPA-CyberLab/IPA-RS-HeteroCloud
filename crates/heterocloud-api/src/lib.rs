@@ -4,6 +4,7 @@ pub mod flash_provider;
 pub mod flow_access;
 pub mod metrics;
 pub mod oidc;
+pub mod registry;
 pub mod routes;
 
 use std::{path::Path, sync::Arc};

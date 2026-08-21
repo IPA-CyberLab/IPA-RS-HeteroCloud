@@ -20,6 +20,90 @@ export interface Session {
   user: CloudUser;
   memberships: Membership[];
   csrf_token: string;
+  owner_console: boolean;
+}
+
+export interface FlowQuotaLimits {
+  max_services: number;
+  max_rooms_per_service: number;
+  max_total_rooms: number;
+  max_participants_per_service: number;
+  max_rate_limit_requests_per_second: number;
+  max_rate_limit_burst: number;
+  max_developer_credentials_per_service: number;
+}
+
+export interface FlashQuotaLimits {
+  max_services: number;
+  max_replicas_per_service: number;
+  max_cpu_millis_per_vm: number;
+  max_memory_mib_per_vm: number;
+  max_disk_gib_per_vm: number;
+  max_total_replicas: number;
+  max_total_cpu_millis: number;
+  max_total_memory_mib: number;
+  max_total_disk_gib: number;
+}
+
+export interface RegistryQuotaLimits {
+  storage_gib: number;
+  max_credentials: number;
+}
+
+export interface ResourceQuotaLimits {
+  flow: FlowQuotaLimits;
+  flash: FlashQuotaLimits;
+  registry: RegistryQuotaLimits;
+}
+
+export interface ResourceQuotaUsage {
+  flow_services: number;
+  flow_configured_rooms: number;
+  flash_services: number;
+  flash_replicas: number;
+  flash_cpu_millis: number;
+  flash_memory_mib: number;
+  flash_disk_gib: number;
+}
+
+export interface ResourceQuotaTenant {
+  organization: Organization;
+  override_limits: ResourceQuotaLimits | null;
+  effective_limits: ResourceQuotaLimits;
+  usage: ResourceQuotaUsage;
+}
+
+export interface OwnerQuotaOverview {
+  defaults: ResourceQuotaLimits;
+  tenants: ResourceQuotaTenant[];
+}
+
+export interface RegistryCredential {
+  id: string;
+  name: string;
+  username: string | null;
+  status: "active" | "revoked";
+  created_at: string;
+  revoked_at: string | null;
+}
+
+export interface RegistryStatus {
+  endpoint: string;
+  project: string;
+  image_prefix: string;
+  storage_limit_bytes: number;
+  storage_used_bytes: number;
+  max_credentials: number;
+  credentials: RegistryCredential[];
+}
+
+export interface RegistryCredentialSecret {
+  credential: RegistryCredential;
+  username: string;
+  password: string;
+  login_host: string;
+  login_command: string;
+  image_prefix: string;
 }
 
 export interface LoginRequest {

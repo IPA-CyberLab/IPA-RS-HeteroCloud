@@ -35,6 +35,10 @@ function breadcrumbs(pathname: string) {
     items.push({ text: "Flow", href: "/flow/services" });
   } else if (pathname.startsWith("/flash/")) {
     items.push({ text: "Flash", href: "/flash/services" });
+  } else if (pathname.startsWith("/registry")) {
+    items.push({ text: "Registry", href: "/registry" });
+  } else if (pathname.startsWith("/owner/")) {
+    items.push({ text: "所有者管理", href: "/owner/quotas" });
   }
   items.push({ text: routeTitle(pathname), href: pathname });
   return items;
@@ -78,7 +82,7 @@ export function AppShell() {
   const contentType =
     location.pathname === "/overview"
       ? "dashboard"
-      : location.pathname === "/settings"
+      : location.pathname === "/settings" || location.pathname.startsWith("/owner/")
         ? "form"
         : "table";
 
@@ -146,7 +150,7 @@ export function AppShell() {
           <SideNavigation
             header={{ href: "/overview", text: "管理コンソール" }}
             activeHref={location.pathname}
-            items={navigationItems}
+            items={navigationItems(session.owner_console)}
             onFollow={(event) => {
               if (!event.detail.external) {
                 event.preventDefault();

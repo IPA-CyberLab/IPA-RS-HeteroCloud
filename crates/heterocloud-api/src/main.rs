@@ -1,9 +1,9 @@
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use clap::Parser;
 use heterocloud_api::{
     app, config::Config, flash_provider::FlashProviderProxy,
-    metrics::spawn_realtime_metrics_collector, routes::AppState,
+    metrics::spawn_realtime_metrics_collector, registry::RegistryClient, routes::AppState,
 };
 use heterocloud_auth::hash_password;
 use heterocloud_provider::ProviderSigner;
@@ -66,6 +66,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         flash_provider_signer,
         provider_client.clone(),
     );
+    let registry = match (
+        config.registry_internal_endpoint.clone(),
+        config.registry_public_endpoint.clone(),
+        secrets.registry_admin_password,
+    ) {
+        (Some(internal), Some(public), Some(password)) => Some(Arc::new(RegistryClient::new(
+            internal,
+            public,
+            config.registry_admin_username.clone(),
+            password,
+            provider_client.clone(),
+        ))),
+        (None, None, None) => None,
+        _ => return Err("incomplete registry configuration".into()),
+    };
     let runtime = config.runtime(
         secrets.csrf_key,
         secrets.flow_access_secret,
@@ -76,6 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config: runtime,
         flow_client: provider_client,
         flash_provider: Some(Arc::new(flash_provider)),
+        registry,
         registration_limiter: Arc::new(Semaphore::new(4)),
     });
     let _metrics_collector = spawn_realtime_metrics_collector(Arc::clone(&state));
@@ -91,14 +107,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!(listen = %config.listen, tls = true, "HeteroCloud API is ready");
         axum_server::bind_rustls(config.listen, tls)
             .handle(handle)
-            .serve(router.into_make_service())
+            .serve(router.into_make_service_with_connect_info::<SocketAddr>())
             .await?;
     } else {
         let listener = TcpListener::bind(config.listen).await?;
         info!(listen = %config.listen, tls = false, "HeteroCloud API is ready");
-        axum::serve(listener, router)
-            .with_graceful_shutdown(shutdown_signal())
-            .await?;
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     }
     Ok(())
 }

@@ -42,7 +42,7 @@ export const defaultFlashServiceFormValue: FlashServiceFormValue = {
   replicas: 1,
   cpuMillis: 500,
   memoryMib: 512,
-  ephemeralStorageGib: 20,
+  ephemeralStorageGib: 10,
   ports: [
     {
       name: "udp",
@@ -261,18 +261,18 @@ export function FlashServiceForm({
               onChange={({ detail }) => update("replicas", boundedInteger(detail.value, 1, 100, value.replicas))}
             />
           </FormField>
-          <FormField label="ディスク上限" constraintText="コンテナイメージを含む 1〜20 GiB">
+          <FormField label="ディスク上限" constraintText="コンテナイメージを含む 1〜10 GiB">
             <Input
               type="number"
               inputMode="numeric"
               step={1}
-              nativeInputAttributes={{ min: 1, max: 20 }}
+              nativeInputAttributes={{ min: 1, max: 10 }}
               value={String(value.ephemeralStorageGib)}
               disabled={disabled}
               onChange={({ detail }) =>
                 update(
                   "ephemeralStorageGib",
-                  boundedInteger(detail.value, 1, 20, value.ephemeralStorageGib),
+                  boundedInteger(detail.value, 1, 10, value.ephemeralStorageGib),
                 )
               }
             />

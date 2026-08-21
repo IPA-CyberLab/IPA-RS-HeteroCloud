@@ -21,6 +21,7 @@ heterocloud-iam.workspace = true
 heterocloud-provider.workspace = true
 heterocloud-store.workspace = true
 http.workspace = true
+ipnet.workspace = true
 hmac.workspace = true
 jsonwebtoken.workspace = true
 reqwest.workspace = true

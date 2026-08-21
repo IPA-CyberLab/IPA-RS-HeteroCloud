@@ -198,7 +198,9 @@ pub struct IamPolicy {
 pub struct FlowSpec {
     pub region: String,
     pub max_participants: u32,
+    #[serde(default = "default_flow_max_rooms")]
     pub max_rooms: u32,
+    #[serde(default)]
     pub rate_limit: FlowRateLimit,
     pub metadata: Value,
 }
@@ -225,6 +227,13 @@ pub const DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND: u32 = 20;
 pub const DEFAULT_FLOW_RATE_LIMIT_BURST: u32 = 40;
 pub const MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND: u32 = 1_000;
 pub const MAX_FLOW_RATE_LIMIT_BURST: u32 = 5_000;
+pub const MAX_FLOW_PARTICIPANTS: u32 = 100_000;
+pub const MAX_TENANT_SERVICES: u32 = 10_000;
+pub const MAX_TENANT_FLOW_ROOMS: u64 = 100_000_000;
+
+const fn default_flow_max_rooms() -> u32 {
+    DEFAULT_FLOW_MAX_ROOMS
+}
 
 pub const MIN_FLASH_REPLICAS: u32 = 1;
 pub const MAX_FLASH_REPLICAS: u32 = 100;
@@ -233,11 +242,12 @@ pub const MAX_FLASH_CPU_MILLIS: u32 = 4_000;
 pub const MIN_FLASH_MEMORY_MIB: u32 = 16;
 pub const MAX_FLASH_MEMORY_MIB: u32 = 8_128;
 pub const MIN_FLASH_EPHEMERAL_STORAGE_GIB: u32 = 1;
-pub const MAX_FLASH_EPHEMERAL_STORAGE_GIB: u32 = 20;
-pub const DEFAULT_FLASH_EPHEMERAL_STORAGE_GIB: u32 = 20;
+pub const MAX_FLASH_EPHEMERAL_STORAGE_GIB: u32 = 10;
+pub const DEFAULT_FLASH_EPHEMERAL_STORAGE_GIB: u32 = 10;
 pub const MAX_FLASH_ORGANIZATION_CPU_MILLIS: u64 = 20_000;
 pub const MAX_FLASH_ORGANIZATION_MEMORY_MIB: u64 = 32_768;
-pub const MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB: u64 = 200;
+pub const MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB: u64 = 100;
+pub const MAX_FLASH_ORGANIZATION_REPLICAS: u64 = 100;
 pub const MIN_FLASH_SERVICE_PORT: u16 = 30_000;
 pub const MAX_FLASH_SERVICE_PORT: u16 = 32_767;
 pub const MAX_FLASH_PORTS: usize = 16;
@@ -251,6 +261,157 @@ pub const MAX_FLASH_COMMAND_PARTS: usize = 128;
 pub const MAX_FLASH_ARGS: usize = 256;
 pub const MAX_FLASH_PROCESS_VALUE_LENGTH: usize = 4 * 1024;
 pub const MAX_FLASH_METADATA_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceQuotaLimits {
+    pub flow: FlowQuotaLimits,
+    pub flash: FlashQuotaLimits,
+    pub registry: RegistryQuotaLimits,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlowQuotaLimits {
+    pub max_services: u32,
+    pub max_rooms_per_service: u32,
+    pub max_total_rooms: u64,
+    pub max_participants_per_service: u32,
+    pub max_rate_limit_requests_per_second: u32,
+    pub max_rate_limit_burst: u32,
+    pub max_developer_credentials_per_service: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlashQuotaLimits {
+    pub max_services: u32,
+    pub max_replicas_per_service: u32,
+    pub max_cpu_millis_per_vm: u32,
+    pub max_memory_mib_per_vm: u32,
+    pub max_disk_gib_per_vm: u32,
+    pub max_total_replicas: u64,
+    pub max_total_cpu_millis: u64,
+    pub max_total_memory_mib: u64,
+    pub max_total_disk_gib: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistryQuotaLimits {
+    pub storage_gib: u32,
+    pub max_credentials: u32,
+}
+
+impl Default for ResourceQuotaLimits {
+    fn default() -> Self {
+        Self {
+            flow: FlowQuotaLimits {
+                max_services: 100,
+                max_rooms_per_service: MAX_FLOW_ROOMS,
+                max_total_rooms: u64::from(MAX_FLOW_ROOMS),
+                max_participants_per_service: MAX_FLOW_PARTICIPANTS,
+                max_rate_limit_requests_per_second: MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND,
+                max_rate_limit_burst: MAX_FLOW_RATE_LIMIT_BURST,
+                max_developer_credentials_per_service: 100,
+            },
+            flash: FlashQuotaLimits {
+                max_services: 100,
+                max_replicas_per_service: MAX_FLASH_REPLICAS,
+                max_cpu_millis_per_vm: MAX_FLASH_CPU_MILLIS,
+                max_memory_mib_per_vm: MAX_FLASH_MEMORY_MIB,
+                max_disk_gib_per_vm: MAX_FLASH_EPHEMERAL_STORAGE_GIB,
+                max_total_replicas: MAX_FLASH_ORGANIZATION_REPLICAS,
+                max_total_cpu_millis: MAX_FLASH_ORGANIZATION_CPU_MILLIS,
+                max_total_memory_mib: MAX_FLASH_ORGANIZATION_MEMORY_MIB,
+                max_total_disk_gib: MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB,
+            },
+            registry: RegistryQuotaLimits {
+                storage_gib: 10,
+                max_credentials: 10,
+            },
+        }
+    }
+}
+
+impl ResourceQuotaLimits {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        let flow = &self.flow;
+        if !(1..=MAX_TENANT_SERVICES).contains(&flow.max_services) {
+            return Err(invalid_quota(
+                "flow.max_services is outside the safety range",
+            ));
+        }
+        if !(1..=MAX_FLOW_ROOMS).contains(&flow.max_rooms_per_service)
+            || flow.max_total_rooms < u64::from(flow.max_rooms_per_service)
+            || flow.max_total_rooms > MAX_TENANT_FLOW_ROOMS
+        {
+            return Err(invalid_quota(
+                "Flow room limits are inconsistent or outside the safety range",
+            ));
+        }
+        if !(1..=MAX_FLOW_PARTICIPANTS).contains(&flow.max_participants_per_service) {
+            return Err(invalid_quota(
+                "flow.max_participants_per_service is outside the safety range",
+            ));
+        }
+        if !(1..=MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND)
+            .contains(&flow.max_rate_limit_requests_per_second)
+            || !(1..=MAX_FLOW_RATE_LIMIT_BURST).contains(&flow.max_rate_limit_burst)
+            || flow.max_rate_limit_burst < flow.max_rate_limit_requests_per_second
+        {
+            return Err(invalid_quota(
+                "Flow API rate limits are inconsistent or outside the safety range",
+            ));
+        }
+        if !(1..=10_000).contains(&flow.max_developer_credentials_per_service) {
+            return Err(invalid_quota(
+                "flow.max_developer_credentials_per_service is outside the safety range",
+            ));
+        }
+
+        let flash = &self.flash;
+        if !(1..=MAX_TENANT_SERVICES).contains(&flash.max_services)
+            || !(MIN_FLASH_REPLICAS..=MAX_FLASH_REPLICAS).contains(&flash.max_replicas_per_service)
+            || !(MIN_FLASH_CPU_MILLIS..=MAX_FLASH_CPU_MILLIS).contains(&flash.max_cpu_millis_per_vm)
+            || !(MIN_FLASH_MEMORY_MIB..=MAX_FLASH_MEMORY_MIB).contains(&flash.max_memory_mib_per_vm)
+            || !(MIN_FLASH_EPHEMERAL_STORAGE_GIB..=MAX_FLASH_EPHEMERAL_STORAGE_GIB)
+                .contains(&flash.max_disk_gib_per_vm)
+        {
+            return Err(invalid_quota(
+                "Flash per-service limits are outside the safety range",
+            ));
+        }
+        if flash.max_total_replicas < u64::from(flash.max_replicas_per_service)
+            || flash.max_total_replicas > 100_000
+            || flash.max_total_cpu_millis < u64::from(flash.max_cpu_millis_per_vm)
+            || flash.max_total_cpu_millis > 100_000_000
+            || flash.max_total_memory_mib < u64::from(flash.max_memory_mib_per_vm)
+            || flash.max_total_memory_mib > 1_048_576
+            || flash.max_total_disk_gib < u64::from(flash.max_disk_gib_per_vm)
+            || flash.max_total_disk_gib > 1_000_000
+        {
+            return Err(invalid_quota(
+                "Flash tenant totals are inconsistent or outside the safety range",
+            ));
+        }
+        if !(1..=10_240).contains(&self.registry.storage_gib) {
+            return Err(invalid_quota(
+                "registry.storage_gib must be between 1 and 10240",
+            ));
+        }
+        if !(1..=1_000).contains(&self.registry.max_credentials) {
+            return Err(invalid_quota(
+                "registry.max_credentials must be between 1 and 1000",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn invalid_quota(message: impl Into<String>) -> DomainError {
+    DomainError::InvalidResourceQuota(message.into())
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -516,6 +677,9 @@ pub struct ServiceInstance {
 
 #[derive(Debug, Error)]
 pub enum DomainError {
+    #[error("invalid resource quota: {0}")]
+    InvalidResourceQuota(String),
+
     #[error("invalid Flash spec: {0}")]
     InvalidFlashSpec(String),
     #[error("invalid policy: {0}")]
@@ -621,7 +785,7 @@ mod tests {
             replicas: 3,
             cpu_millis: 500,
             memory_mib: 512,
-            ephemeral_storage_gib: 20,
+            ephemeral_storage_gib: 10,
             ports: vec![FlashPort {
                 name: "game-udp".into(),
                 protocol: FlashProtocol::Udp,
@@ -647,7 +811,7 @@ mod tests {
         assert_eq!(value["ports"][0]["protocol"], json!("udp"));
         assert_eq!(value["exposure"]["type"], json!("public"));
         assert_eq!(value["exposure"]["traffic_mode"], json!("direct"));
-        assert_eq!(value["ephemeral_storage_gib"], json!(20));
+        assert_eq!(value["ephemeral_storage_gib"], json!(10));
 
         let mut unknown = value;
         unknown["runtime_class"] = json!("runc");
@@ -664,10 +828,10 @@ mod tests {
             .ok_or("Flash spec must be an object")?
             .remove("ephemeral_storage_gib");
         let defaulted = serde_json::from_value::<FlashSpec>(value)?;
-        assert_eq!(defaulted.ephemeral_storage_gib, 20);
+        assert_eq!(defaulted.ephemeral_storage_gib, 10);
 
         let mut oversized = flash_spec();
-        oversized.ephemeral_storage_gib = 21;
+        oversized.ephemeral_storage_gib = 11;
         assert!(oversized.validate().is_err());
         Ok(())
     }

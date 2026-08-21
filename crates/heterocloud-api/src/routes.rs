@@ -1,9 +1,11 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::{collections::BTreeSet, convert::Infallible, net::SocketAddr, sync::Arc};
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, Query, State, ws::WebSocketUpgrade},
-    http::{HeaderMap, StatusCode, header},
+    extract::{
+        ConnectInfo, DefaultBodyLimit, FromRequestParts, Path, Query, State, ws::WebSocketUpgrade,
+    },
+    http::{HeaderMap, StatusCode, header, request::Parts},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
@@ -17,8 +19,8 @@ use heterocloud_domain::{
     DEFAULT_FLOW_MAX_ROOMS, DEFAULT_FLOW_RATE_LIMIT_BURST,
     DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, FlashSpec, FlowRateLimit, FlowSpec,
     MAX_FLOW_RATE_LIMIT_BURST, MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, MAX_FLOW_ROOMS,
-    OrganizationId, PolicyDocument, PolicyId, PrincipalId, ProjectId, ServiceInstance,
-    ServiceInstanceId, ServiceState, UserStatus,
+    OrganizationId, PolicyDocument, PolicyId, PrincipalId, ProjectId, ResourceQuotaLimits,
+    ServiceInstance, ServiceInstanceId, ServiceState, UserStatus,
 };
 use heterocloud_iam::{AuthorizationRequest, Decision, authorize, semantics_digest};
 use heterocloud_store::{
@@ -48,10 +50,29 @@ use crate::{
         OIDC_TRANSACTION_COOKIE, OidcCallbackQuery, OidcError, OidcLoginIntent,
         clear_transaction_cookie,
     },
+    registry::RegistryClient,
 };
 
 const SESSION_COOKIE: &str = "hc_session";
 const CSRF_HEADER: &str = "x-heterocloud-csrf";
+
+struct PeerAddress(Option<SocketAddr>);
+
+impl<S> FromRequestParts<S> for PeerAddress
+where
+    S: Send + Sync,
+{
+    type Rejection = Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self(
+            parts
+                .extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|ConnectInfo(address)| *address),
+        ))
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -59,6 +80,7 @@ pub struct AppState {
     pub config: RuntimeConfig,
     pub flow_client: reqwest::Client,
     pub flash_provider: Option<Arc<FlashProviderProxy>>,
+    pub registry: Option<Arc<RegistryClient>>,
     pub registration_limiter: Arc<Semaphore>,
 }
 
@@ -72,6 +94,16 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route("/auth/oidc/callback", get(oidc_callback))
         .route("/auth/session", get(session))
         .route("/auth/logout", post(logout))
+        .route("/owner/quotas", get(owner_quota_overview))
+        .route(
+            "/owner/quotas/defaults",
+            axum::routing::put(update_owner_quota_defaults),
+        )
+        .route(
+            "/owner/quotas/organizations/{organization_id}",
+            axum::routing::put(update_owner_organization_quota)
+                .delete(clear_owner_organization_quota),
+        )
         .route("/organizations", get(list_organizations))
         .route(
             "/organizations/{organization_id}/projects",
@@ -124,6 +156,18 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route(
             "/organizations/{organization_id}/flash/services/{service_instance_id}/exec",
             get(exec_flash_container),
+        )
+        .route(
+            "/organizations/{organization_id}/registry",
+            get(get_registry),
+        )
+        .route(
+            "/organizations/{organization_id}/registry/credentials",
+            post(create_registry_credential),
+        )
+        .route(
+            "/organizations/{organization_id}/registry/credentials/{credential_id}",
+            axum::routing::delete(revoke_registry_credential),
         )
         .route(
             "/organizations/{organization_id}/realtime/services/{service_instance_id}/access-credentials",
@@ -187,6 +231,318 @@ async fn ready(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, 
     Ok((StatusCode::OK, Json(json!({ "status": "ready" }))))
 }
 
+async fn owner_quota_overview(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &jar, peer, false).await?;
+    let defaults = state
+        .store
+        .resource_quota_defaults()
+        .await
+        .map_err(ApiError::from_store)?;
+    let tenants = state
+        .store
+        .list_resource_quota_tenants()
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(json!({ "defaults": defaults, "tenants": tenants })))
+}
+
+async fn update_owner_quota_defaults(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
+    Json(limits): Json<ResourceQuotaLimits>,
+) -> Result<Json<ResourceQuotaLimits>, ApiError> {
+    require_owner(&state, &headers, &jar, peer, true).await?;
+    let limits = state
+        .store
+        .update_resource_quota_defaults(&limits)
+        .await
+        .map_err(ApiError::from_store)?;
+    schedule_registry_quota_reconcile(Arc::clone(&state), None);
+    Ok(Json(limits))
+}
+
+async fn update_owner_organization_quota(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
+    Json(limits): Json<ResourceQuotaLimits>,
+) -> Result<Json<ResourceQuotaLimits>, ApiError> {
+    require_owner(&state, &headers, &jar, peer, true).await?;
+    let limits = state
+        .store
+        .set_organization_resource_quota(OrganizationId(organization_id), &limits)
+        .await
+        .map_err(ApiError::from_store)?;
+    schedule_registry_quota_reconcile(
+        Arc::clone(&state),
+        Some((OrganizationId(organization_id), limits.clone())),
+    );
+    Ok(Json(limits))
+}
+
+async fn clear_owner_organization_quota(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
+) -> Result<Json<ResourceQuotaLimits>, ApiError> {
+    require_owner(&state, &headers, &jar, peer, true).await?;
+    let limits = state
+        .store
+        .clear_organization_resource_quota(OrganizationId(organization_id))
+        .await
+        .map_err(ApiError::from_store)?;
+    schedule_registry_quota_reconcile(
+        Arc::clone(&state),
+        Some((OrganizationId(organization_id), limits.clone())),
+    );
+    Ok(Json(limits))
+}
+
+fn schedule_registry_quota_reconcile(
+    state: Arc<AppState>,
+    target: Option<(OrganizationId, ResourceQuotaLimits)>,
+) {
+    let Some(registry) = state.registry.clone() else {
+        return;
+    };
+    tokio::spawn(async move {
+        let targets = match target {
+            Some(target) => vec![target],
+            None => match state.store.list_resource_quota_tenants().await {
+                Ok(tenants) => tenants
+                    .into_iter()
+                    .map(|tenant| (tenant.organization.id, tenant.effective_limits))
+                    .collect(),
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to list registry quota reconciliation targets");
+                    return;
+                }
+            },
+        };
+        for (organization_id, limits) in targets {
+            if let Err(error) = registry.ensure_project(organization_id, &limits).await {
+                tracing::warn!(
+                    %organization_id,
+                    error = %error,
+                    "registry quota reconciliation failed"
+                );
+            }
+        }
+    });
+}
+
+async fn get_registry(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "registry:GetRegistry",
+        &organization_resource(organization_id, "registry/*"),
+    )
+    .await?;
+    let limits = state
+        .store
+        .effective_resource_quota(OrganizationId(organization_id))
+        .await
+        .map_err(ApiError::from_store)?;
+    let registry = state
+        .registry
+        .as_deref()
+        .ok_or(ApiError::RegistryProviderUnavailable)?;
+    let project = registry
+        .ensure_project(OrganizationId(organization_id), &limits)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%organization_id, error = %error, "registry project reconciliation failed");
+            ApiError::RegistryProviderUnavailable
+        })?;
+    let credentials = state
+        .store
+        .list_registry_credentials(OrganizationId(organization_id))
+        .await
+        .map_err(ApiError::from_store)?;
+    let image_prefix = format!(
+        "{}/{}",
+        project.endpoint.as_str().trim_end_matches('/'),
+        project.name
+    );
+    Ok(Json(json!({
+        "endpoint": project.endpoint,
+        "project": project.name,
+        "image_prefix": image_prefix,
+        "storage_limit_bytes": project.storage_limit_bytes,
+        "storage_used_bytes": project.storage_used_bytes,
+        "max_credentials": limits.registry.max_credentials,
+        "credentials": credentials,
+    })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateRegistryCredential {
+    name: String,
+}
+
+async fn create_registry_credential(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<CreateRegistryCredential>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    validate_name(&request.name)?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "registry:CreateCredential",
+        &organization_resource(organization_id, "registry/credential/*"),
+    )
+    .await?;
+    let limits = state
+        .store
+        .effective_resource_quota(OrganizationId(organization_id))
+        .await
+        .map_err(ApiError::from_store)?;
+    let registry = state
+        .registry
+        .as_deref()
+        .ok_or(ApiError::RegistryProviderUnavailable)?;
+    let project = registry
+        .ensure_project(OrganizationId(organization_id), &limits)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%organization_id, error = %error, "registry project reconciliation failed");
+            ApiError::RegistryProviderUnavailable
+        })?;
+    let reservation = state
+        .store
+        .reserve_registry_credential(
+            OrganizationId(organization_id),
+            authorization.principal_id,
+            request.name.trim(),
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    let robot_name = format!("hc-{}", reservation.id.simple());
+    let secret = match registry.create_push_credential(&project, &robot_name).await {
+        Ok(secret) => secret,
+        Err(error) => {
+            let _ = state
+                .store
+                .cancel_registry_credential_reservation(
+                    OrganizationId(organization_id),
+                    reservation.id,
+                )
+                .await;
+            tracing::warn!(%organization_id, error = %error, "registry credential creation failed");
+            return Err(ApiError::RegistryProviderUnavailable);
+        }
+    };
+    let credential = match state
+        .store
+        .activate_registry_credential(
+            OrganizationId(organization_id),
+            reservation.id,
+            secret.robot_id,
+            &secret.username,
+        )
+        .await
+    {
+        Ok(credential) => credential,
+        Err(error) => {
+            let _ = registry.revoke_credential(secret.robot_id).await;
+            let _ = state
+                .store
+                .cancel_registry_credential_reservation(
+                    OrganizationId(organization_id),
+                    reservation.id,
+                )
+                .await;
+            return Err(ApiError::from_store(error));
+        }
+    };
+    let login_host = project
+        .endpoint
+        .host_str()
+        .ok_or(ApiError::RegistryProviderUnavailable)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "credential": credential,
+            "username": secret.username,
+            "password": secret.password,
+            "login_host": login_host,
+            "login_command": format!("docker login {login_host} --username '{}' --password-stdin", credential.username.as_deref().unwrap_or("")),
+            "image_prefix": format!("{}/{}", project.endpoint.as_str().trim_end_matches('/'), project.name),
+        })),
+    ))
+}
+
+async fn revoke_registry_credential(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, credential_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "registry:RevokeCredential",
+        &organization_resource(
+            organization_id,
+            &format!("registry/credential/{credential_id}"),
+        ),
+    )
+    .await?;
+    let credential = state
+        .store
+        .registry_credential_for_revoke(OrganizationId(organization_id), credential_id)
+        .await
+        .map_err(ApiError::from_store)?;
+    if credential.status != "active" {
+        return Err(ApiError::Conflict);
+    }
+    let robot_id = credential.harbor_robot_id.ok_or(ApiError::Internal)?;
+    let registry = state
+        .registry
+        .as_deref()
+        .ok_or(ApiError::RegistryProviderUnavailable)?;
+    registry
+        .revoke_credential(robot_id)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%organization_id, %credential_id, error = %error, "registry credential revocation failed");
+            ApiError::RegistryProviderUnavailable
+        })?;
+    state
+        .store
+        .revoke_registry_credential(OrganizationId(organization_id), credential_id)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LoginRequest {
@@ -242,7 +598,7 @@ async fn login(
     );
     Ok((
         jar.add(cookie),
-        Json(SessionResponse::new(session_user, csrf)),
+        Json(SessionResponse::new(session_user, csrf, false)),
     ))
 }
 
@@ -371,12 +727,21 @@ async fn oidc_callback(
 
 async fn session(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
 ) -> Result<Json<SessionResponse>, ApiError> {
     let authenticated = authenticated_session(&state, &jar).await?;
+    let owner_console = owner_request_allowed(
+        &state.config,
+        &headers,
+        peer,
+        &authenticated.user.user.email,
+    );
     Ok(Json(SessionResponse::new(
         authenticated.user,
         authenticated.csrf,
+        owner_console,
     )))
 }
 
@@ -2210,7 +2575,7 @@ async fn issue_session(
     let (cookie, csrf) = create_session_cookie(state, session_user.user.id).await?;
     Ok((
         jar.add(cookie),
-        Json(SessionResponse::new(session_user, csrf)),
+        Json(SessionResponse::new(session_user, csrf, false)),
     ))
 }
 
@@ -2280,6 +2645,61 @@ async fn authenticated_mutation(
     let authenticated = authenticated_session(state, jar).await?;
     require_csrf(headers, &authenticated.csrf)?;
     Ok(authenticated)
+}
+
+async fn require_owner(
+    state: &AppState,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+    peer: Option<SocketAddr>,
+    mutation: bool,
+) -> Result<AuthenticatedSession, ApiError> {
+    let authenticated = if mutation {
+        authenticated_mutation(state, headers, jar).await?
+    } else {
+        authenticated_session(state, jar).await?
+    };
+    if !owner_request_allowed(&state.config, headers, peer, &authenticated.user.user.email) {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(authenticated)
+}
+
+fn owner_request_allowed(
+    config: &RuntimeConfig,
+    headers: &HeaderMap,
+    peer: Option<SocketAddr>,
+    email: &str,
+) -> bool {
+    let (Some(origin), Some(owner_email), Some(peer)) = (
+        config.owner_origin.as_ref(),
+        config.owner_email.as_deref(),
+        peer,
+    ) else {
+        return false;
+    };
+    if !email.eq_ignore_ascii_case(owner_email)
+        || !config
+            .owner_allowed_networks
+            .iter()
+            .any(|network| network.contains(&peer.ip()))
+    {
+        return false;
+    }
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let Some(expected_host) = origin.host_str() else {
+        return false;
+    };
+    let expected_authority = match origin.port() {
+        Some(port) => format!("{expected_host}:{port}"),
+        None => expected_host.to_owned(),
+    };
+    host.eq_ignore_ascii_case(&expected_authority)
 }
 
 async fn authenticated_actor(
@@ -2645,14 +3065,16 @@ struct SessionResponse {
     user: heterocloud_domain::User,
     memberships: Vec<heterocloud_store::Membership>,
     csrf_token: String,
+    owner_console: bool,
 }
 
 impl SessionResponse {
-    fn new(session: SessionUser, csrf_token: SecretString) -> Self {
+    fn new(session: SessionUser, csrf_token: SecretString, owner_console: bool) -> Self {
         Self {
             user: session.user,
             memberships: session.memberships,
             csrf_token: csrf_token.expose_secret().to_owned(),
+            owner_console,
         }
     }
 }
@@ -2776,7 +3198,7 @@ mod tests {
             replicas: 2,
             cpu_millis: 500,
             memory_mib: 512,
-            ephemeral_storage_gib: 20,
+            ephemeral_storage_gib: 10,
             ports: vec![FlashPort {
                 name: "game-udp".into(),
                 protocol: FlashProtocol::Udp,

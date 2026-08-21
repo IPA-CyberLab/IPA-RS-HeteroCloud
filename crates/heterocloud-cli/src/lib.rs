@@ -16,6 +16,7 @@ pub use external_dns::ReconcileArgs;
 
 const NODE_SCOPED_SERVICE_PREFIXES: [&str; 1] = ["cloud"];
 const FLOW_SERVICE_PREFIX: &str = "flow";
+const REGISTRY_SERVICE_PREFIX: &str = "registry";
 const MAX_BASE_DOMAIN_LENGTH: usize = 230;
 
 #[derive(Debug, Parser)]
@@ -346,7 +347,7 @@ fn validate_addresses(addresses: &[Ipv4Addr], allow_non_public: bool) -> Result<
 }
 
 pub fn build_records(domain: &str, addresses: &[Ipv4Addr], ttl: u32) -> Vec<DnsRecord> {
-    let mut records = Vec::with_capacity(addresses.len() * 3);
+    let mut records = Vec::with_capacity(addresses.len() * 4);
     for (index, address) in addresses.iter().enumerate() {
         let node = node_label(index);
         for service in NODE_SCOPED_SERVICE_PREFIXES {
@@ -377,6 +378,16 @@ pub fn build_records(domain: &str, addresses: &[Ipv4Addr], ttl: u32) -> Vec<DnsR
             value: *address,
             ttl,
             service: FLOW_SERVICE_PREFIX,
+            node: "cluster".to_owned(),
+        });
+    }
+    for address in addresses {
+        records.push(DnsRecord {
+            record_type: "A",
+            name: format!("{REGISTRY_SERVICE_PREFIX}.{domain}"),
+            value: *address,
+            ttl,
+            service: REGISTRY_SERVICE_PREFIX,
             node: "cluster".to_owned(),
         });
     }
@@ -566,14 +577,14 @@ mod tests {
     }
 
     #[test]
-    fn generates_node_scoped_cloud_and_cluster_scoped_flow_records() {
+    fn generates_node_and_cluster_scoped_service_records() {
         let addresses = vec![
             Ipv4Addr::new(163, 220, 236, 51),
             Ipv4Addr::new(163, 220, 236, 52),
             Ipv4Addr::new(163, 220, 236, 53),
         ];
         let records = build_records("hc.example.com", &addresses, 60);
-        assert_eq!(records.len(), 9);
+        assert_eq!(records.len(), 12);
         assert_eq!(records[0].name, "cloud-a.hc.example.com");
         assert_eq!(records[1].name, "cloud-b.hc.example.com");
         assert_eq!(records[2].name, "cloud-c.hc.example.com");
@@ -581,6 +592,8 @@ mod tests {
         assert_eq!(records[5].name, "hc.example.com");
         assert_eq!(records[6].name, "flow.hc.example.com");
         assert_eq!(records[8].name, "flow.hc.example.com");
+        assert_eq!(records[9].name, "registry.hc.example.com");
+        assert_eq!(records[11].name, "registry.hc.example.com");
         assert!(records.iter().all(|record| {
             !record.name.starts_with("flow-")
                 && !record.name.starts_with("rtc-")
@@ -643,6 +656,7 @@ mod tests {
         let output = render_records(&records, OutputFormat::Zone, "hc.example.com", &addresses)?;
         assert!(output.contains("cloud-a.hc.example.com.\t60\tIN\tA\t163.220.236.51"));
         assert!(output.contains("flow.hc.example.com.\t60\tIN\tA\t163.220.236.51"));
+        assert!(output.contains("registry.hc.example.com.\t60\tIN\tA\t163.220.236.51"));
         assert!(output.contains(
             "; heterocloud dns verify --domain hc.example.com --public-ip 163.220.236.51"
         ));

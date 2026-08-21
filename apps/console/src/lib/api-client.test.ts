@@ -21,6 +21,7 @@ const session: Session = {
     },
   ],
   csrf_token: "csrf-session-token",
+  owner_console: false,
 };
 
 function jsonResponse(body: unknown, status = 200) {

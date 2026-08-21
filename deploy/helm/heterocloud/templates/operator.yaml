@@ -1,11 +1,13 @@
+{{- if .Values.ownerConsole.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "heterocloud.fullname" . }}
+  name: {{ include "heterocloud.fullname" . }}-owner-console
   labels:
     {{- include "heterocloud.labels" . | nindent 4 }}
+    app.kubernetes.io/component: owner-console
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.ownerConsole.replicaCount }}
   revisionHistoryLimit: 5
   strategy:
     type: RollingUpdate
@@ -14,16 +16,18 @@ spec:
       maxSurge: 0
   selector:
     matchLabels:
-      {{- include "heterocloud.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/name: {{ include "heterocloud.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: owner-console
   template:
     metadata:
       labels:
-        {{- include "heterocloud.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/name: {{ include "heterocloud.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: owner-console
     spec:
-      hostNetwork: {{ .Values.hostNetwork }}
-      {{- if .Values.hostNetwork }}
+      hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      {{- end }}
       serviceAccountName: {{ include "heterocloud.fullname" . }}
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 40
@@ -40,32 +44,27 @@ spec:
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
-              {{- include "heterocloud.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/name: {{ include "heterocloud.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: owner-console
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             - topologyKey: kubernetes.io/hostname
               labelSelector:
                 matchLabels:
-                  {{- include "heterocloud.selectorLabels" . | nindent 18 }}
+                  app.kubernetes.io/name: {{ include "heterocloud.name" . }}
+                  app.kubernetes.io/instance: {{ .Release.Name }}
+                  app.kubernetes.io/component: owner-console
         {{- with .Values.affinity }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       containers:
-        - name: api
+        - name: owner-console
           image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          env:
-            - name: HOST_IP
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.hostIP
           args:
-            {{- if .Values.hostNetwork }}
-            - --listen=$(HOST_IP):8443
-            {{- else }}
-            - --listen=0.0.0.0:8443
-            {{- end }}
+            - --listen=0.0.0.0:{{ .Values.ownerConsole.listenPort }}
             - --database-url-file=/var/run/secrets/runtime/database-url
             - --csrf-key-file=/var/run/secrets/runtime/csrf-key
             - --flow-access-secret-file=/var/run/secrets/flow-access/hmac-secret
@@ -84,38 +83,28 @@ spec:
             - --provider-issuer={{ .Values.flashExec.providerIssuer }}
             - --flash-audience={{ .Values.flashExec.audience }}
             - --provider-key-id={{ .Values.flashExec.providerKeyId }}
-            - --public-origin={{ required "publicOrigin is required" .Values.publicOrigin }}
-            {{- if .Values.additionalOrigins }}
-            - --additional-origins={{ join "," .Values.additionalOrigins }}
-            {{- end }}
-            - --secure-cookie={{ .Values.secureCookie }}
+            - --public-origin={{ required "ownerConsole.origin is required" .Values.ownerConsole.origin }}
+            - --secure-cookie=false
             - --session-ttl-seconds={{ .Values.sessionTtlSeconds }}
             - --database-max-connections={{ .Values.databaseMaxConnections }}
+            - --owner-origin={{ required "ownerConsole.origin is required" .Values.ownerConsole.origin }}
+            - --owner-email={{ required "ownerConsole.email is required" .Values.ownerConsole.email }}
+            - --owner-allowed-networks={{ join "," .Values.ownerConsole.allowedNetworks }}
             {{- if .Values.oidc.enabled }}
             - --oidc-issuer-url={{ required "oidc.issuerUrl is required" .Values.oidc.issuerUrl }}
             - --oidc-client-id={{ required "oidc.clientId is required" .Values.oidc.clientId }}
             - --oidc-client-secret-file=/var/run/secrets/oidc/client-secret
-            - --oidc-public-callback-url={{ required "oidc.publicCallbackUrl is required" .Values.oidc.publicCallbackUrl }}
+            - --oidc-public-callback-url={{ required "ownerConsole.oidcPublicCallbackUrl is required" .Values.ownerConsole.oidcPublicCallbackUrl }}
             {{- end }}
             - --console-dir=/opt/heterocloud/console
-            - --tls-cert-file=/var/run/secrets/tls/tls.crt
-            - --tls-key-file=/var/run/secrets/tls/tls.key
-            {{- if .Values.bootstrap.enabled }}
-            - --bootstrap-email={{ required "bootstrap.email is required" .Values.bootstrap.email }}
-            - --bootstrap-password-file=/var/run/secrets/runtime/bootstrap-password
-            - --bootstrap-display-name={{ .Values.bootstrap.displayName }}
-            - --bootstrap-organization-slug={{ .Values.bootstrap.organizationSlug }}
-            - --bootstrap-organization-name={{ .Values.bootstrap.organizationName }}
-            {{- end }}
           ports:
-            - name: https
-              containerPort: 8443
+            - name: http-owner
+              containerPort: {{ .Values.ownerConsole.listenPort }}
               protocol: TCP
           readinessProbe:
             httpGet:
               path: /api/v1/health/ready
-              port: https
-              scheme: HTTPS
+              port: http-owner
             initialDelaySeconds: 3
             periodSeconds: 5
             timeoutSeconds: 2
@@ -123,8 +112,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /api/v1/health/live
-              port: https
-              scheme: HTTPS
+              port: http-owner
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 2
@@ -135,14 +123,10 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
-              drop:
-                - ALL
+              drop: ["ALL"]
           volumeMounts:
             - name: runtime
               mountPath: /var/run/secrets/runtime
-              readOnly: true
-            - name: tls
-              mountPath: /var/run/secrets/tls
               readOnly: true
             - name: flow-access
               mountPath: /var/run/secrets/flow-access
@@ -172,14 +156,6 @@ spec:
                 path: database-url
               - key: {{ .Values.secrets.csrfKeyKey }}
                 path: csrf-key
-              {{- if .Values.bootstrap.enabled }}
-              - key: {{ .Values.secrets.bootstrapPasswordKey }}
-                path: bootstrap-password
-              {{- end }}
-        - name: tls
-          secret:
-            secretName: {{ .Values.secrets.tlsSecretName }}
-            defaultMode: 0400
         - name: flow-access
           secret:
             secretName: {{ .Values.secrets.flowAccessSecretName }}
@@ -215,15 +191,47 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "heterocloud.fullname" . }}-owner-console
+  labels:
+    {{- include "heterocloud.labels" . | nindent 4 }}
+    app.kubernetes.io/component: owner-console
+spec:
+  type: ClusterIP
+  {{- with .Values.ownerConsole.externalIPs }}
+  externalIPs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  ports:
+    - name: http-owner
+      port: {{ .Values.ownerConsole.servicePort }}
+      targetPort: http-owner
+      protocol: TCP
+      appProtocol: http
+  selector:
+    app.kubernetes.io/name: {{ include "heterocloud.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: owner-console
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "heterocloud.fullname" . }}-owner-console
+  labels:
+    {{- include "heterocloud.labels" . | nindent 4 }}
+    app.kubernetes.io/component: owner-console
+spec:
+  minAvailable: {{ .Values.ownerConsole.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "heterocloud.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: owner-console
+{{- end }}

@@ -455,11 +455,15 @@ async fn test_state() -> Result<
             flow_public_endpoints: vec![Url::parse("https://flow.example.test")?],
             flow_internal_endpoint: Url::parse("http://flow.example.test")?,
             oidc: None,
+            owner_origin: None,
+            owner_email: None,
+            owner_allowed_networks: Vec::new(),
         },
         flow_client: reqwest::Client::builder()
             .tls_certs_only(Vec::<reqwest::tls::Certificate>::new())
             .build()?,
         flash_provider: None,
+        registry: None,
         registration_limiter: Arc::new(Semaphore::new(2)),
     });
     Ok(Some((

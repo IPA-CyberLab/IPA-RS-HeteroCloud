@@ -2,11 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use heterocloud_domain::{
-    FlashProtocol, FlashSpec, IamPolicy, MAX_FLASH_ORGANIZATION_CPU_MILLIS,
-    MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB, MAX_FLASH_ORGANIZATION_MEMORY_MIB,
-    MAX_FLASH_SERVICE_PORT, MIN_FLASH_SERVICE_PORT, Organization, OrganizationId, PolicyDocument,
-    PolicyId, Principal, PrincipalId, PrincipalKind, Project, ProjectId, ServiceInstance,
-    ServiceInstanceId, ServiceState, User, UserId, UserStatus,
+    FlashProtocol, FlashSpec, FlowSpec, IamPolicy, MAX_FLASH_SERVICE_PORT, MIN_FLASH_SERVICE_PORT,
+    Organization, OrganizationId, PolicyDocument, PolicyId, Principal, PrincipalId, PrincipalKind,
+    Project, ProjectId, ResourceQuotaLimits, ServiceInstance, ServiceInstanceId, ServiceState,
+    User, UserId, UserStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -50,6 +49,156 @@ impl Store {
     pub async fn ping(&self) -> Result<(), StoreError> {
         sqlx::query("SELECT 1").execute(&self.pool).await?;
         Ok(())
+    }
+
+    pub async fn resource_quota_defaults(&self) -> Result<ResourceQuotaLimits, StoreError> {
+        let limits = sqlx::query_scalar::<_, Value>(
+            "SELECT limits FROM resource_quota_defaults WHERE singleton = true",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        parse_resource_quota(limits)
+    }
+
+    pub async fn effective_resource_quota(
+        &self,
+        organization_id: OrganizationId,
+    ) -> Result<ResourceQuotaLimits, StoreError> {
+        let limits = sqlx::query_scalar::<_, Value>(
+            "SELECT COALESCE(q.limits, d.limits)
+             FROM organizations o
+             CROSS JOIN resource_quota_defaults d
+             LEFT JOIN organization_resource_quotas q ON q.organization_id = o.id
+             WHERE o.id = $1 AND d.singleton = true",
+        )
+        .bind(organization_id.0)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        parse_resource_quota(limits)
+    }
+
+    pub async fn update_resource_quota_defaults(
+        &self,
+        limits: &ResourceQuotaLimits,
+    ) -> Result<ResourceQuotaLimits, StoreError> {
+        validate_resource_quota(limits)?;
+        let value = serde_json::to_value(limits)?;
+        let stored = sqlx::query_scalar::<_, Value>(
+            "UPDATE resource_quota_defaults
+             SET limits = $1, updated_at = now()
+             WHERE singleton = true
+             RETURNING limits",
+        )
+        .bind(value)
+        .fetch_one(&self.pool)
+        .await?;
+        parse_resource_quota(stored)
+    }
+
+    pub async fn set_organization_resource_quota(
+        &self,
+        organization_id: OrganizationId,
+        limits: &ResourceQuotaLimits,
+    ) -> Result<ResourceQuotaLimits, StoreError> {
+        validate_resource_quota(limits)?;
+        let value = serde_json::to_value(limits)?;
+        let stored = sqlx::query_scalar::<_, Value>(
+            "INSERT INTO organization_resource_quotas (organization_id, limits)
+             SELECT id, $2 FROM organizations WHERE id = $1
+             ON CONFLICT (organization_id) DO UPDATE
+             SET limits = EXCLUDED.limits, updated_at = now()
+             RETURNING limits",
+        )
+        .bind(organization_id.0)
+        .bind(value)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        parse_resource_quota(stored)
+    }
+
+    pub async fn clear_organization_resource_quota(
+        &self,
+        organization_id: OrganizationId,
+    ) -> Result<ResourceQuotaLimits, StoreError> {
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM organizations WHERE id = $1)",
+        )
+        .bind(organization_id.0)
+        .fetch_one(&self.pool)
+        .await?;
+        if !exists {
+            return Err(StoreError::NotFound);
+        }
+        sqlx::query("DELETE FROM organization_resource_quotas WHERE organization_id = $1")
+            .bind(organization_id.0)
+            .execute(&self.pool)
+            .await?;
+        self.resource_quota_defaults().await
+    }
+
+    pub async fn list_resource_quota_tenants(
+        &self,
+    ) -> Result<Vec<ResourceQuotaTenant>, StoreError> {
+        let defaults = self.resource_quota_defaults().await?;
+        let rows = sqlx::query_as::<_, ResourceQuotaTenantRow>(
+            "SELECT o.id, o.slug, o.name, o.created_at, q.limits AS override_limits
+             FROM organizations o
+             LEFT JOIN organization_resource_quotas q ON q.organization_id = o.id
+             ORDER BY lower(o.name), o.id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let allocations = sqlx::query_as::<_, TenantServiceAllocationRow>(
+            "SELECT organization_id, provider, spec
+             FROM service_instances
+             WHERE provider IN ('flow', 'flash') AND state <> 'deleting'",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                let override_limits = row.override_limits.map(parse_resource_quota).transpose()?;
+                let effective_limits = override_limits.clone().unwrap_or_else(|| defaults.clone());
+                let mut usage = ResourceQuotaUsage::default();
+                for allocation in allocations
+                    .iter()
+                    .filter(|allocation| allocation.organization_id == row.id)
+                {
+                    match allocation.provider.as_str() {
+                        "flow" => {
+                            let spec: FlowSpec = serde_json::from_value(allocation.spec.clone())?;
+                            usage.flow_services += 1;
+                            usage.flow_configured_rooms += u64::from(spec.max_rooms);
+                        }
+                        "flash" => {
+                            let spec: FlashSpec = serde_json::from_value(allocation.spec.clone())?;
+                            usage.flash_services += 1;
+                            usage.flash_replicas += u64::from(spec.replicas);
+                            usage.flash_cpu_millis +=
+                                u64::from(spec.replicas) * u64::from(spec.cpu_millis);
+                            usage.flash_memory_mib +=
+                                u64::from(spec.replicas) * u64::from(spec.memory_mib);
+                            usage.flash_disk_gib +=
+                                u64::from(spec.replicas) * u64::from(spec.ephemeral_storage_gib);
+                        }
+                        _ => return Err(StoreError::Invariant("unknown quota provider")),
+                    }
+                }
+                Ok(ResourceQuotaTenant {
+                    organization: Organization {
+                        id: OrganizationId(row.id),
+                        slug: row.slug,
+                        name: row.name,
+                        created_at: row.created_at,
+                    },
+                    override_limits,
+                    effective_limits,
+                    usage,
+                })
+            })
+            .collect()
     }
 
     pub async fn bootstrap_admin(
@@ -497,6 +646,153 @@ impl Store {
         .collect()
     }
 
+    pub async fn organization(
+        &self,
+        organization_id: OrganizationId,
+    ) -> Result<Option<Organization>, StoreError> {
+        sqlx::query_as::<_, OrganizationRow>(
+            "SELECT id, slug, name, created_at FROM organizations WHERE id = $1",
+        )
+        .bind(organization_id.0)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(Organization::try_from)
+        .transpose()
+    }
+
+    pub async fn reserve_registry_credential(
+        &self,
+        organization_id: OrganizationId,
+        principal_id: PrincipalId,
+        name: &str,
+    ) -> Result<RegistryCredentialRecord, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        lock_tenant_allocations(&mut transaction, organization_id).await?;
+        let quota = resource_quota_in_transaction(&mut transaction, organization_id).await?;
+        let active = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM registry_credentials
+             WHERE organization_id = $1 AND status IN ('provisioning', 'active')",
+        )
+        .bind(organization_id.0)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if active >= i64::from(quota.registry.max_credentials) {
+            return Err(StoreError::RequestRejected(format!(
+                "registry credential limit exceeded: limit is {}",
+                quota.registry.max_credentials
+            )));
+        }
+        let record = sqlx::query_as::<_, RegistryCredentialRecord>(
+            "INSERT INTO registry_credentials
+                (id, organization_id, created_by, name, status)
+             SELECT $1, $2, p.id, $4, 'provisioning'
+             FROM principals p
+             WHERE p.id = $3 AND p.organization_id = $2 AND p.enabled = true
+             RETURNING id, name, username, harbor_robot_id, status, created_at, revoked_at",
+        )
+        .bind(Uuid::now_v7())
+        .bind(organization_id.0)
+        .bind(principal_id.0)
+        .bind(name)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        transaction.commit().await?;
+        Ok(record)
+    }
+
+    pub async fn activate_registry_credential(
+        &self,
+        organization_id: OrganizationId,
+        credential_id: Uuid,
+        harbor_robot_id: i64,
+        username: &str,
+    ) -> Result<RegistryCredentialRecord, StoreError> {
+        sqlx::query_as::<_, RegistryCredentialRecord>(
+            "UPDATE registry_credentials
+             SET harbor_robot_id = $3, username = $4, status = 'active'
+             WHERE id = $1 AND organization_id = $2 AND status = 'provisioning'
+             RETURNING id, name, username, harbor_robot_id, status, created_at, revoked_at",
+        )
+        .bind(credential_id)
+        .bind(organization_id.0)
+        .bind(harbor_robot_id)
+        .bind(username)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(StoreError::Conflict)
+    }
+
+    pub async fn cancel_registry_credential_reservation(
+        &self,
+        organization_id: OrganizationId,
+        credential_id: Uuid,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            "DELETE FROM registry_credentials
+             WHERE id = $1 AND organization_id = $2 AND status = 'provisioning'",
+        )
+        .bind(credential_id)
+        .bind(organization_id.0)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_registry_credentials(
+        &self,
+        organization_id: OrganizationId,
+    ) -> Result<Vec<RegistryCredentialRecord>, StoreError> {
+        sqlx::query_as::<_, RegistryCredentialRecord>(
+            "SELECT id, name, username, harbor_robot_id, status, created_at, revoked_at
+             FROM registry_credentials
+             WHERE organization_id = $1 AND status <> 'provisioning'
+             ORDER BY created_at DESC, id DESC
+             LIMIT 100",
+        )
+        .bind(organization_id.0)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StoreError::from)
+    }
+
+    pub async fn registry_credential_for_revoke(
+        &self,
+        organization_id: OrganizationId,
+        credential_id: Uuid,
+    ) -> Result<RegistryCredentialRecord, StoreError> {
+        sqlx::query_as::<_, RegistryCredentialRecord>(
+            "SELECT id, name, username, harbor_robot_id, status, created_at, revoked_at
+             FROM registry_credentials
+             WHERE id = $1 AND organization_id = $2",
+        )
+        .bind(credential_id)
+        .bind(organization_id.0)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(StoreError::NotFound)
+    }
+
+    pub async fn revoke_registry_credential(
+        &self,
+        organization_id: OrganizationId,
+        credential_id: Uuid,
+    ) -> Result<(), StoreError> {
+        let updated = sqlx::query(
+            "UPDATE registry_credentials
+             SET status = 'revoked', revoked_at = now()
+             WHERE id = $1 AND organization_id = $2 AND status = 'active'",
+        )
+        .bind(credential_id)
+        .bind(organization_id.0)
+        .execute(&self.pool)
+        .await?;
+        if updated.rows_affected() == 0 {
+            return Err(StoreError::Conflict);
+        }
+        Ok(())
+    }
+
     pub async fn list_projects(
         &self,
         organization_id: OrganizationId,
@@ -923,6 +1219,8 @@ impl Store {
             return Err(StoreError::Conflict);
         }
         let mut transaction = self.pool.begin().await?;
+        lock_tenant_allocations(&mut transaction, input.organization_id).await?;
+        let quota = resource_quota_in_transaction(&mut transaction, input.organization_id).await?;
         let service_exists = sqlx::query_scalar::<_, Uuid>(
             "SELECT id
              FROM service_instances
@@ -947,8 +1245,11 @@ impl Store {
         .bind(input.service_instance_id.0)
         .fetch_one(&mut *transaction)
         .await?;
-        if active_count >= MAX_FLOW_DEVELOPER_CREDENTIALS_PER_SERVICE {
-            return Err(StoreError::Conflict);
+        if active_count >= i64::from(quota.flow.max_developer_credentials_per_service) {
+            return Err(StoreError::RequestRejected(format!(
+                "Flow developer credential limit exceeded: limit is {} per service",
+                quota.flow.max_developer_credentials_per_service
+            )));
         }
         let row = sqlx::query_as::<_, FlowDeveloperCredentialRecord>(
             "INSERT INTO flow_developer_credentials
@@ -1490,11 +1791,22 @@ impl Store {
     ) -> Result<ServiceInstance, StoreError> {
         let id = ServiceInstanceId::new();
         let mut transaction = self.pool.begin().await?;
-        let spec = if provider == "flash" {
-            lock_flash_allocations(&mut transaction).await?;
-            prepare_flash_spec(&mut transaction, organization_id, None, None, spec).await?
-        } else {
-            spec
+        let spec = match provider {
+            "flow" => {
+                lock_tenant_allocations(&mut transaction, organization_id).await?;
+                let quota =
+                    resource_quota_in_transaction(&mut transaction, organization_id).await?;
+                prepare_flow_spec(&mut transaction, organization_id, None, spec, &quota).await?
+            }
+            "flash" => {
+                lock_tenant_allocations(&mut transaction, organization_id).await?;
+                lock_flash_allocations(&mut transaction).await?;
+                let quota =
+                    resource_quota_in_transaction(&mut transaction, organization_id).await?;
+                prepare_flash_spec(&mut transaction, organization_id, None, None, spec, &quota)
+                    .await?
+            }
+            _ => spec,
         };
         let row = sqlx::query_as::<_, ServiceRow>(
             "INSERT INTO service_instances
@@ -1544,6 +1856,9 @@ impl Store {
         spec: Value,
     ) -> Result<ServiceInstance, StoreError> {
         let mut transaction = self.pool.begin().await?;
+        if matches!(provider, "flow" | "flash") {
+            lock_tenant_allocations(&mut transaction, organization_id).await?;
+        }
         if provider == "flash" {
             lock_flash_allocations(&mut transaction).await?;
         }
@@ -1567,17 +1882,26 @@ impl Store {
             transaction.rollback().await?;
             return Err(StoreError::Conflict);
         }
-        let spec = if provider == "flash" {
-            prepare_flash_spec(
-                &mut transaction,
-                organization_id,
-                Some(id),
-                Some(&existing.spec),
-                spec,
-            )
-            .await?
-        } else {
-            spec
+        let spec = match provider {
+            "flow" => {
+                let quota =
+                    resource_quota_in_transaction(&mut transaction, organization_id).await?;
+                prepare_flow_spec(&mut transaction, organization_id, Some(id), spec, &quota).await?
+            }
+            "flash" => {
+                let quota =
+                    resource_quota_in_transaction(&mut transaction, organization_id).await?;
+                prepare_flash_spec(
+                    &mut transaction,
+                    organization_id,
+                    Some(id),
+                    Some(&existing.spec),
+                    spec,
+                    &quota,
+                )
+                .await?
+            }
+            _ => spec,
         };
         let generation = existing
             .generation
@@ -1866,6 +2190,108 @@ impl Store {
     }
 }
 
+fn parse_resource_quota(value: Value) -> Result<ResourceQuotaLimits, StoreError> {
+    let limits: ResourceQuotaLimits = serde_json::from_value(value)?;
+    validate_resource_quota(&limits)?;
+    Ok(limits)
+}
+
+fn validate_resource_quota(limits: &ResourceQuotaLimits) -> Result<(), StoreError> {
+    limits
+        .validate()
+        .map_err(|error| StoreError::RequestRejected(error.to_string()))
+}
+
+async fn lock_tenant_allocations(
+    transaction: &mut Transaction<'_, Postgres>,
+    organization_id: OrganizationId,
+) -> Result<(), StoreError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text, 1))")
+        .bind(organization_id.0)
+        .execute(&mut **transaction)
+        .await?;
+    Ok(())
+}
+
+async fn resource_quota_in_transaction(
+    transaction: &mut Transaction<'_, Postgres>,
+    organization_id: OrganizationId,
+) -> Result<ResourceQuotaLimits, StoreError> {
+    let limits = sqlx::query_scalar::<_, Value>(
+        "SELECT COALESCE(q.limits, d.limits)
+         FROM organizations o
+         CROSS JOIN resource_quota_defaults d
+         LEFT JOIN organization_resource_quotas q ON q.organization_id = o.id
+         WHERE o.id = $1 AND d.singleton = true",
+    )
+    .bind(organization_id.0)
+    .fetch_optional(&mut **transaction)
+    .await?
+    .ok_or(StoreError::NotFound)?;
+    parse_resource_quota(limits)
+}
+
+async fn prepare_flow_spec(
+    transaction: &mut Transaction<'_, Postgres>,
+    organization_id: OrganizationId,
+    excluded_service_id: Option<ServiceInstanceId>,
+    spec: Value,
+    quota: &ResourceQuotaLimits,
+) -> Result<Value, StoreError> {
+    let requested: FlowSpec = serde_json::from_value(spec)?;
+    if requested.max_rooms > quota.flow.max_rooms_per_service {
+        return Err(StoreError::RequestRejected(format!(
+            "Flow room limit exceeded: {} requested, limit is {} per service",
+            requested.max_rooms, quota.flow.max_rooms_per_service
+        )));
+    }
+    if requested.max_participants > quota.flow.max_participants_per_service {
+        return Err(StoreError::RequestRejected(format!(
+            "Flow participant limit exceeded: {} requested, limit is {} per service",
+            requested.max_participants, quota.flow.max_participants_per_service
+        )));
+    }
+    if requested.rate_limit.requests_per_second > quota.flow.max_rate_limit_requests_per_second
+        || requested.rate_limit.burst > quota.flow.max_rate_limit_burst
+    {
+        return Err(StoreError::RequestRejected(format!(
+            "Flow API rate limit exceeds the tenant ceiling of {} RPS and {} burst",
+            quota.flow.max_rate_limit_requests_per_second, quota.flow.max_rate_limit_burst
+        )));
+    }
+    let rows = sqlx::query_as::<_, FlowAllocationRow>(
+        "SELECT id, spec
+         FROM service_instances
+         WHERE organization_id = $1 AND provider = 'flow' AND state <> 'deleting'",
+    )
+    .bind(organization_id.0)
+    .fetch_all(&mut **transaction)
+    .await?;
+    let mut services = 1_u64;
+    let mut rooms = u64::from(requested.max_rooms);
+    for row in rows {
+        if excluded_service_id.is_some_and(|id| id.0 == row.id) {
+            continue;
+        }
+        let stored: FlowSpec = serde_json::from_value(row.spec)?;
+        services += 1;
+        rooms = rooms.saturating_add(u64::from(stored.max_rooms));
+    }
+    if services > u64::from(quota.flow.max_services) {
+        return Err(StoreError::RequestRejected(format!(
+            "Flow service limit exceeded: {services} requested, limit is {}",
+            quota.flow.max_services
+        )));
+    }
+    if rooms > quota.flow.max_total_rooms {
+        return Err(StoreError::RequestRejected(format!(
+            "Flow tenant room limit exceeded: {rooms} requested, limit is {}",
+            quota.flow.max_total_rooms
+        )));
+    }
+    Ok(serde_json::to_value(requested)?)
+}
+
 async fn lock_flash_allocations(
     transaction: &mut Transaction<'_, Postgres>,
 ) -> Result<(), StoreError> {
@@ -1883,16 +2309,34 @@ async fn prepare_flash_spec(
     excluded_service_id: Option<ServiceInstanceId>,
     existing_spec: Option<&Value>,
     spec: Value,
+    quota: &ResourceQuotaLimits,
 ) -> Result<Value, StoreError> {
     let mut requested: FlashSpec = serde_json::from_value(spec)?;
     requested
         .validate_request()
         .map_err(|error| StoreError::RequestRejected(error.to_string()))?;
+    if requested.replicas > quota.flash.max_replicas_per_service {
+        return Err(StoreError::RequestRejected(format!(
+            "Flash replica limit exceeded: {} requested, limit is {} per service",
+            requested.replicas, quota.flash.max_replicas_per_service
+        )));
+    }
+    if requested.cpu_millis > quota.flash.max_cpu_millis_per_vm
+        || requested.memory_mib > quota.flash.max_memory_mib_per_vm
+        || requested.ephemeral_storage_gib > quota.flash.max_disk_gib_per_vm
+    {
+        return Err(StoreError::RequestRejected(format!(
+            "Flash VM resources exceed the tenant ceiling of {} millicores, {} MiB memory, and {} GiB disk",
+            quota.flash.max_cpu_millis_per_vm,
+            quota.flash.max_memory_mib_per_vm,
+            quota.flash.max_disk_gib_per_vm
+        )));
+    }
 
     let rows = sqlx::query_as::<_, FlashAllocationRow>(
         "SELECT id, organization_id, spec
          FROM service_instances
-         WHERE provider = 'flash'",
+         WHERE provider = 'flash' AND state <> 'deleting'",
     )
     .fetch_all(&mut **transaction)
     .await?;
@@ -1900,6 +2344,8 @@ async fn prepare_flash_spec(
     let mut organization_cpu_millis = 0_u64;
     let mut organization_memory_mib = 0_u64;
     let mut organization_ephemeral_storage_gib = 0_u64;
+    let mut organization_replicas = 0_u64;
+    let mut organization_services = 1_u64;
     for row in &rows {
         if excluded_service_id.is_some_and(|id| id.0 == row.id) {
             continue;
@@ -1912,6 +2358,8 @@ async fn prepare_flash_spec(
                 .map(|port| (port.protocol, port.service_port)),
         );
         if row.organization_id == organization_id.0 {
+            organization_services += 1;
+            organization_replicas += u64::from(stored.replicas);
             organization_cpu_millis += u64::from(stored.replicas) * u64::from(stored.cpu_millis);
             organization_memory_mib += u64::from(stored.replicas) * u64::from(stored.memory_mib);
             organization_ephemeral_storage_gib +=
@@ -1952,21 +2400,37 @@ async fn prepare_flash_spec(
 
     organization_cpu_millis += u64::from(requested.replicas) * u64::from(requested.cpu_millis);
     organization_memory_mib += u64::from(requested.replicas) * u64::from(requested.memory_mib);
+    organization_replicas += u64::from(requested.replicas);
     organization_ephemeral_storage_gib +=
         u64::from(requested.replicas) * u64::from(requested.ephemeral_storage_gib);
-    if organization_cpu_millis > MAX_FLASH_ORGANIZATION_CPU_MILLIS {
+    if organization_services > u64::from(quota.flash.max_services) {
         return Err(StoreError::RequestRejected(format!(
-            "Flash account CPU limit exceeded: {organization_cpu_millis} millicores requested, limit is {MAX_FLASH_ORGANIZATION_CPU_MILLIS}"
+            "Flash service limit exceeded: {organization_services} requested, limit is {}",
+            quota.flash.max_services
         )));
     }
-    if organization_memory_mib > MAX_FLASH_ORGANIZATION_MEMORY_MIB {
+    if organization_replicas > quota.flash.max_total_replicas {
         return Err(StoreError::RequestRejected(format!(
-            "Flash account memory limit exceeded: {organization_memory_mib} MiB requested, limit is {MAX_FLASH_ORGANIZATION_MEMORY_MIB} MiB"
+            "Flash tenant replica limit exceeded: {organization_replicas} requested, limit is {}",
+            quota.flash.max_total_replicas
         )));
     }
-    if organization_ephemeral_storage_gib > MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB {
+    if organization_cpu_millis > quota.flash.max_total_cpu_millis {
         return Err(StoreError::RequestRejected(format!(
-            "Flash account ephemeral storage limit exceeded: {organization_ephemeral_storage_gib} GiB requested, limit is {MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB} GiB"
+            "Flash tenant CPU limit exceeded: {organization_cpu_millis} millicores requested, limit is {}",
+            quota.flash.max_total_cpu_millis
+        )));
+    }
+    if organization_memory_mib > quota.flash.max_total_memory_mib {
+        return Err(StoreError::RequestRejected(format!(
+            "Flash tenant memory limit exceeded: {organization_memory_mib} MiB requested, limit is {} MiB",
+            quota.flash.max_total_memory_mib
+        )));
+    }
+    if organization_ephemeral_storage_gib > quota.flash.max_total_disk_gib {
+        return Err(StoreError::RequestRejected(format!(
+            "Flash tenant disk limit exceeded: {organization_ephemeral_storage_gib} GiB requested, limit is {} GiB",
+            quota.flash.max_total_disk_gib
         )));
     }
     requested
@@ -2136,6 +2600,37 @@ pub struct Membership {
 pub struct SessionUser {
     pub user: User,
     pub memberships: Vec<Membership>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ResourceQuotaUsage {
+    pub flow_services: u64,
+    pub flow_configured_rooms: u64,
+    pub flash_services: u64,
+    pub flash_replicas: u64,
+    pub flash_cpu_millis: u64,
+    pub flash_memory_mib: u64,
+    pub flash_disk_gib: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ResourceQuotaTenant {
+    pub organization: Organization,
+    pub override_limits: Option<ResourceQuotaLimits>,
+    pub effective_limits: ResourceQuotaLimits,
+    pub usage: ResourceQuotaUsage,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, sqlx::FromRow)]
+pub struct RegistryCredentialRecord {
+    pub id: Uuid,
+    pub name: String,
+    pub username: Option<String>,
+    #[serde(skip_serializing)]
+    pub harbor_robot_id: Option<i64>,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub revoked_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug)]
@@ -2519,6 +3014,28 @@ struct ServiceRow {
 struct FlashAllocationRow {
     id: Uuid,
     organization_id: Uuid,
+    spec: Value,
+}
+
+#[derive(sqlx::FromRow)]
+struct FlowAllocationRow {
+    id: Uuid,
+    spec: Value,
+}
+
+#[derive(sqlx::FromRow)]
+struct ResourceQuotaTenantRow {
+    id: Uuid,
+    slug: String,
+    name: String,
+    created_at: DateTime<Utc>,
+    override_limits: Option<Value>,
+}
+
+#[derive(sqlx::FromRow)]
+struct TenantServiceAllocationRow {
+    organization_id: Uuid,
+    provider: String,
     spec: Value,
 }
 

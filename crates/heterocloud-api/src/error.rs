@@ -27,6 +27,8 @@ pub enum ApiError {
     ServiceInstanceNotReady,
     #[error("realtime provider is unavailable")]
     RealtimeProviderUnavailable,
+    #[error("container registry is unavailable")]
+    RegistryProviderUnavailable,
     #[error("too many requests")]
     TooManyRequests,
     #[error("authentication required")]
@@ -104,6 +106,11 @@ impl IntoResponse for ApiError {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "realtime_provider_unavailable",
                 "The realtime data plane is temporarily unavailable.",
+            ),
+            Self::RegistryProviderUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "registry_provider_unavailable",
+                "The container registry is temporarily unavailable.",
             ),
             Self::TooManyRequests => (
                 StatusCode::TOO_MANY_REQUESTS,

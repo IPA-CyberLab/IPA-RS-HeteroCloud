@@ -321,10 +321,12 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
         }]);
     }
     let mut grouped_targets = BTreeMap::<(String, &'static str, u32), BTreeSet<String>>::new();
-    for record in records
-        .iter()
-        .filter(|record| record.service != super::FLOW_SERVICE_PREFIX)
-    {
+    for record in records.iter().filter(|record| {
+        !matches!(
+            record.service,
+            super::FLOW_SERVICE_PREFIX | super::REGISTRY_SERVICE_PREFIX
+        )
+    }) {
         grouped_targets
             .entry((record.name.clone(), record.record_type, record.ttl))
             .or_default()
@@ -1199,7 +1201,7 @@ mod tests {
     }
 
     #[test]
-    fn static_endpoint_excludes_service_managed_flow_record()
+    fn static_endpoint_excludes_service_managed_flow_and_registry_records()
     -> Result<(), Box<dyn std::error::Error>> {
         let plan = build_plan(&base_args("inmemory"))?;
         let endpoints = plan.endpoint["spec"]["endpoints"]
@@ -1218,6 +1220,11 @@ mod tests {
             endpoints
                 .iter()
                 .all(|endpoint| { endpoint["dnsName"] != "flow.heterocloud.example.com" })
+        );
+        assert!(
+            endpoints
+                .iter()
+                .all(|endpoint| { endpoint["dnsName"] != "registry.heterocloud.example.com" })
         );
         assert_eq!(plan.helm_values["sources"], json!(["crd", "service"]));
         assert_eq!(
@@ -1243,7 +1250,7 @@ mod tests {
         let endpoints = plan.endpoint["spec"]["endpoints"]
             .as_array()
             .ok_or("endpoints must be an array")?;
-        assert_eq!(plan.verification_records.len(), 6);
+        assert_eq!(plan.verification_records.len(), 9);
         assert!(
             endpoints
                 .iter()

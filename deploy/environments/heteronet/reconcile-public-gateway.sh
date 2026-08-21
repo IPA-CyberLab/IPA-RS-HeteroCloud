@@ -187,10 +187,13 @@ EOF
     if active_gateway_is_canonical "$admin_socket" \
       && curl --fail --silent --show-error --insecure --max-time 3 \
         --resolve "flow.heterocloud.mizuame.app:443:$public_ip" \
-        https://flow.heterocloud.mizuame.app/health/live >/dev/null; then
+        https://flow.heterocloud.mizuame.app/health/live >/dev/null \
+      && curl --fail --silent --show-error --insecure --max-time 3 \
+        --resolve "registry.heterocloud.mizuame.app:443:$public_ip" \
+        https://registry.heterocloud.mizuame.app/api/v2.0/health >/dev/null; then
       consecutive_successes=$((consecutive_successes + 1))
       if ((consecutive_successes >= 5)); then
-        echo "Flow gateway $gateway_id is ready on $public_ip with only the Envoy route active."
+        echo "Flow and registry gateway $gateway_id are ready on $public_ip with only the Envoy route active."
         exit 0
       fi
     else
@@ -199,7 +202,7 @@ EOF
     sleep 2
   done
 
-  echo "Flow gateway $gateway_id did not sustain a canonical healthy route on $public_ip" >&2
+  echo "Flow and registry gateway $gateway_id did not sustain canonical healthy routes on $public_ip" >&2
   exit 1
 }
 

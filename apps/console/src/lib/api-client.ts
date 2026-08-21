@@ -18,6 +18,7 @@ import type {
   InvitationResponse,
   LoginRequest,
   Organization,
+  OwnerQuotaOverview,
   Principal,
   Project,
   RealtimeAccessCredential,
@@ -29,6 +30,9 @@ import type {
   RealtimeServiceMetrics,
   RealtimeMetricsRange,
   RegisterRequest,
+  ResourceQuotaLimits,
+  RegistryCredentialSecret,
+  RegistryStatus,
   Session,
   UpdateRealtimeServiceRequest,
   UpdateFlashServiceRequest,
@@ -231,6 +235,48 @@ export class HeteroCloudApiClient {
       this.request<CollectionResponse<Organization>>("/organizations", {
         signal,
       }),
+  };
+
+  readonly owner = {
+    quotas: {
+      overview: (signal?: AbortSignal) =>
+        this.request<OwnerQuotaOverview>("/owner/quotas", { signal }),
+      updateDefaults: (limits: ResourceQuotaLimits) =>
+        this.request<ResourceQuotaLimits>("/owner/quotas/defaults", {
+          method: "PUT",
+          body: limits,
+        }),
+      updateOrganization: (organizationId: string, limits: ResourceQuotaLimits) =>
+        this.request<ResourceQuotaLimits>(
+          `/owner/quotas/organizations/${encodeURIComponent(organizationId)}`,
+          { method: "PUT", body: limits },
+        ),
+      clearOrganization: (organizationId: string) =>
+        this.request<ResourceQuotaLimits>(
+          `/owner/quotas/organizations/${encodeURIComponent(organizationId)}`,
+          { method: "DELETE" },
+        ),
+    },
+  };
+
+  readonly registry = {
+    get: (organizationId: string, signal?: AbortSignal) =>
+      this.request<RegistryStatus>(organizationPath(organizationId, "registry"), {
+        signal,
+      }),
+    createCredential: (organizationId: string, name: string) =>
+      this.request<RegistryCredentialSecret>(
+        organizationPath(organizationId, "registry/credentials"),
+        { method: "POST", body: { name } },
+      ),
+    revokeCredential: (organizationId: string, credentialId: string) =>
+      this.request<void>(
+        organizationPath(
+          organizationId,
+          `registry/credentials/${encodeURIComponent(credentialId)}`,
+        ),
+        { method: "DELETE" },
+      ),
   };
 
   readonly projects = {

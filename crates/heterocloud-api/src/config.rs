@@ -5,6 +5,7 @@ use std::{
 };
 
 use clap::Parser;
+use ipnet::IpNet;
 use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 use tokio::fs;
@@ -143,6 +144,36 @@ pub struct Config {
     #[arg(long, env = "HETEROCLOUD_OIDC_PUBLIC_CALLBACK_URL")]
     pub oidc_public_callback_url: Option<Url>,
 
+    #[arg(long, env = "HETEROCLOUD_OWNER_ORIGIN")]
+    pub owner_origin: Option<Url>,
+
+    #[arg(long, env = "HETEROCLOUD_OWNER_EMAIL")]
+    pub owner_email: Option<String>,
+
+    #[arg(
+        long,
+        env = "HETEROCLOUD_OWNER_ALLOWED_NETWORKS",
+        value_delimiter = ',',
+        default_value = "10.250.0.0/24"
+    )]
+    pub owner_allowed_networks: Vec<IpNet>,
+
+    #[arg(long, env = "HETEROCLOUD_REGISTRY_INTERNAL_ENDPOINT")]
+    pub registry_internal_endpoint: Option<Url>,
+
+    #[arg(long, env = "HETEROCLOUD_REGISTRY_PUBLIC_ENDPOINT")]
+    pub registry_public_endpoint: Option<Url>,
+
+    #[arg(
+        long,
+        env = "HETEROCLOUD_REGISTRY_ADMIN_USERNAME",
+        default_value = "admin"
+    )]
+    pub registry_admin_username: String,
+
+    #[arg(long, env = "HETEROCLOUD_REGISTRY_ADMIN_PASSWORD_FILE")]
+    pub registry_admin_password_file: Option<PathBuf>,
+
     #[arg(long, env = "HETEROCLOUD_BOOTSTRAP_EMAIL")]
     pub bootstrap_email: Option<String>,
 
@@ -182,6 +213,9 @@ pub struct RuntimeConfig {
     pub flow_public_endpoints: Vec<Url>,
     pub flow_internal_endpoint: Url,
     pub oidc: Option<OidcConfig>,
+    pub owner_origin: Option<Url>,
+    pub owner_email: Option<String>,
+    pub owner_allowed_networks: Vec<IpNet>,
 }
 
 impl Config {
@@ -212,12 +246,22 @@ impl Config {
             (Some(_), Some(_), Some(path), Some(_)) => Some(read_secret(path).await?),
             _ => return Err(ConfigError::IncompleteOidc),
         };
+        let registry_admin_password = match (
+            &self.registry_internal_endpoint,
+            &self.registry_public_endpoint,
+            &self.registry_admin_password_file,
+        ) {
+            (None, None, None) => None,
+            (Some(_), Some(_), Some(path)) => Some(read_secret(path).await?),
+            _ => return Err(ConfigError::IncompleteRegistry),
+        };
         if self.bootstrap_email.is_some() != bootstrap_password.is_some() {
             return Err(ConfigError::IncompleteBootstrap);
         }
         if self.tls_cert_file.is_some() != self.tls_key_file.is_some() {
             return Err(ConfigError::IncompleteTls);
         }
+        validate_owner_config(self.owner_origin.as_ref(), self.owner_email.as_deref())?;
         if self.secure_cookie
             && (self.public_origin.scheme() != "https"
                 || self
@@ -230,6 +274,11 @@ impl Config {
         validate_flow_public_endpoints(&self.flow_public_endpoints, self.secure_cookie)?;
         validate_flow_internal_endpoint(&self.flow_internal_endpoint)?;
         validate_flash_internal_endpoint(&self.flash_internal_endpoint)?;
+        validate_registry_config(
+            self.registry_internal_endpoint.as_ref(),
+            self.registry_public_endpoint.as_ref(),
+            &self.registry_admin_username,
+        )?;
         Ok(LoadedSecrets {
             database_url,
             csrf_key,
@@ -237,6 +286,7 @@ impl Config {
             provider_signing_key,
             bootstrap_password,
             oidc_client_secret,
+            registry_admin_password,
         })
     }
 
@@ -246,6 +296,7 @@ impl Config {
         flow_access_secret: SecretString,
         oidc_client_secret: Option<SecretString>,
     ) -> Result<RuntimeConfig, ConfigError> {
+        validate_owner_config(self.owner_origin.as_ref(), self.owner_email.as_deref())?;
         validate_flow_public_endpoints(&self.flow_public_endpoints, self.secure_cookie)?;
         validate_flow_internal_endpoint(&self.flow_internal_endpoint)?;
         validate_flash_internal_endpoint(&self.flash_internal_endpoint)?;
@@ -294,6 +345,9 @@ impl Config {
             flow_public_endpoints,
             flow_internal_endpoint: self.flow_internal_endpoint.clone(),
             oidc,
+            owner_origin: self.owner_origin.clone(),
+            owner_email: self.owner_email.as_ref().map(|email| email.to_lowercase()),
+            owner_allowed_networks: self.owner_allowed_networks.clone(),
         })
     }
 }
@@ -305,6 +359,7 @@ pub struct LoadedSecrets {
     pub provider_signing_key: SecretString,
     pub bootstrap_password: Option<SecretString>,
     pub oidc_client_secret: Option<SecretString>,
+    pub registry_admin_password: Option<SecretString>,
 }
 
 async fn read_secret(path: &Path) -> Result<SecretString, ConfigError> {
@@ -397,8 +452,67 @@ fn validate_flash_internal_endpoint(endpoint: &Url) -> Result<(), ConfigError> {
     Ok(())
 }
 
+fn validate_owner_config(origin: Option<&Url>, email: Option<&str>) -> Result<(), ConfigError> {
+    if origin.is_some() != email.is_some() {
+        return Err(ConfigError::IncompleteOwner);
+    }
+    if let Some(origin) = origin
+        && (!matches!(origin.scheme(), "http" | "https")
+            || !origin.has_host()
+            || !origin.username().is_empty()
+            || origin.password().is_some()
+            || origin.query().is_some()
+            || origin.fragment().is_some()
+            || !matches!(origin.path(), "" | "/"))
+    {
+        return Err(ConfigError::InvalidOwnerOrigin);
+    }
+    if email.is_some_and(|email| !email_address::EmailAddress::is_valid(email)) {
+        return Err(ConfigError::InvalidOwnerEmail);
+    }
+    Ok(())
+}
+
+fn validate_registry_config(
+    internal_endpoint: Option<&Url>,
+    public_endpoint: Option<&Url>,
+    username: &str,
+) -> Result<(), ConfigError> {
+    if internal_endpoint.is_some() != public_endpoint.is_some() {
+        return Err(ConfigError::IncompleteRegistry);
+    }
+    if username.trim().is_empty() || username.len() > 255 {
+        return Err(ConfigError::InvalidRegistryUsername);
+    }
+    for endpoint in [internal_endpoint, public_endpoint].into_iter().flatten() {
+        if !matches!(endpoint.scheme(), "http" | "https")
+            || !endpoint.has_host()
+            || !endpoint.username().is_empty()
+            || endpoint.password().is_some()
+            || endpoint.query().is_some()
+            || endpoint.fragment().is_some()
+            || !matches!(endpoint.path(), "" | "/")
+        {
+            return Err(ConfigError::InvalidRegistryEndpoint);
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
+    #[error("owner origin and owner email must be configured together")]
+    IncompleteOwner,
+    #[error("owner origin must be an absolute HTTP(S) origin")]
+    InvalidOwnerOrigin,
+    #[error("owner email is invalid")]
+    InvalidOwnerEmail,
+    #[error("registry endpoints and administrator password file must be configured together")]
+    IncompleteRegistry,
+    #[error("registry endpoints must be absolute HTTP(S) origins")]
+    InvalidRegistryEndpoint,
+    #[error("registry administrator username is invalid")]
+    InvalidRegistryUsername,
     #[error("bootstrap email and password file must be configured together")]
     IncompleteBootstrap,
     #[error("TLS certificate and key files must be configured together")]

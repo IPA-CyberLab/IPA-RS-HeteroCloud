@@ -67,6 +67,28 @@ bootstrap:
   organizationSlug: heterocloud
   organizationName: HeteroCloud
 
+ownerConsole:
+  enabled: false
+  replicaCount: 3
+  origin: http://owner.heterocloud.internal:19443
+  oidcPublicCallbackUrl: http://owner.heterocloud.internal:19443/api/v1/auth/oidc/callback
+  email: ""
+  listenPort: 19443
+  servicePort: 19443
+  allowedNetworks:
+    - 10.250.0.0/24
+  externalIPs: []
+  podDisruptionBudget:
+    minAvailable: 2
+
+registry:
+  enabled: false
+  internalEndpoint: http://harbor-core.heterocloud-registry.svc.cluster.local/
+  publicEndpoint: https://registry.heterocloud.mizuame.app
+  adminUsername: admin
+  adminSecretName: heterocloud-registry-admin
+  adminPasswordKey: HARBOR_ADMIN_PASSWORD
+
 service:
   # The public HTTP entry point is the GitOps-managed Envoy Gateway. Keeping
   # this Service private removes the direct HeteroNetwork L4 bypass.
@@ -96,6 +118,9 @@ networkPolicy:
   providerCidrs:
     - 10.96.0.0/12
   providerPort: 8080
+  registryCidrs:
+    - 10.96.0.0/12
+  registryPort: 80
   oidcCidrs:
     - 0.0.0.0/0
     - ::/0

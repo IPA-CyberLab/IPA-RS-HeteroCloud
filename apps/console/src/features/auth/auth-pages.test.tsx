@@ -26,6 +26,7 @@ const invitedSession: Session = {
     },
   ],
   csrf_token: "csrf-token",
+  owner_console: false,
 };
 
 function renderRoute(path: string, element: React.ReactNode) {

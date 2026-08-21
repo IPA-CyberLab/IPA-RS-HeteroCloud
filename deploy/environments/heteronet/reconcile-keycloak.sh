@@ -9,6 +9,8 @@ readonly client_id="${HETEROCLOUD_KEYCLOAK_CLIENT_ID:-heterocloud-web}"
 readonly public_origin="${HETEROCLOUD_PUBLIC_ORIGIN:-https://heterocloud.mizuame.app}"
 readonly identity_origin="${HETEROCLOUD_IDENTITY_ORIGIN:-${public_origin}/id}"
 readonly callback_url="${HETEROCLOUD_OIDC_CALLBACK_URL:-${public_origin}/api/v1/auth/oidc/callback}"
+readonly owner_origin="${HETEROCLOUD_OWNER_ORIGIN:-http://owner.heterocloud.internal:19443}"
+readonly owner_callback_url="${HETEROCLOUD_OWNER_OIDC_CALLBACK_URL:-${owner_origin}/api/v1/auth/oidc/callback}"
 readonly admin_password_file="${HETEROCLOUD_KEYCLOAK_ADMIN_PASSWORD_FILE:-/etc/heteronetwork/keycloak/bootstrap-admin.password}"
 readonly client_secret_file="${HETEROCLOUD_OIDC_CLIENT_SECRET_FILE:-/etc/heterocloud/oidc/client-secret}"
 readonly kcadm="${HETEROCLOUD_KCADM:-/opt/heteronetwork/keycloak/bin/kcadm.sh}"
@@ -26,6 +28,10 @@ fail() {
   || fail "identity origin must be an HTTPS origin ending in /id"
 [[ "$callback_url" == "${public_origin}/api/v1/auth/oidc/callback" ]] \
   || fail "callback URL must use the canonical public origin"
+[[ "$owner_origin" =~ ^https?://owner\.heterocloud\.internal(:[0-9]+)?$ ]] \
+  || fail "owner console origin must use the private HeteroNetwork DNS name"
+[[ "$owner_callback_url" == "${owner_origin}/api/v1/auth/oidc/callback" ]] \
+  || fail "owner callback URL must use the private owner console origin"
 [[ -x "$kcadm" ]] || fail "kcadm is unavailable"
 [[ -f "$admin_password_file" && ! -L "$admin_password_file" ]] \
   || fail "bootstrap administrator password is unavailable"
@@ -124,11 +130,13 @@ jq -n \
   --arg client_id "$client_id" \
   --arg public_origin "$public_origin" \
   --arg callback_url "$callback_url" \
+  --arg owner_origin "$owner_origin" \
+  --arg owner_callback_url "$owner_callback_url" \
   --rawfile client_secret "$client_secret_file" \
   '{
     clientId: $client_id,
     name: "HeteroCloud Web",
-    description: "Public HeteroCloud console",
+    description: "HeteroCloud public console and private owner console",
     enabled: true,
     protocol: "openid-connect",
     publicClient: false,
@@ -143,11 +151,11 @@ jq -n \
     secret: ($client_secret | rtrimstr("\n")),
     rootUrl: $public_origin,
     baseUrl: $public_origin,
-    redirectUris: [$callback_url],
-    webOrigins: [$public_origin],
+    redirectUris: [$callback_url, $owner_callback_url],
+    webOrigins: [$public_origin, $owner_origin],
     attributes: {
       "pkce.code.challenge.method": "S256",
-      "post.logout.redirect.uris": ($public_origin + "/*"),
+      "post.logout.redirect.uris": (($public_origin + "/*") + "##" + ($owner_origin + "/*")),
       "oauth2.device.authorization.grant.enabled": "false",
       "backchannel.logout.session.required": "true",
       "backchannel.logout.revoke.offline.tokens": "false"
