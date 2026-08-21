@@ -25,6 +25,7 @@ export interface FlashServiceFormValue {
   replicas: number;
   cpuMillis: number;
   memoryMib: number;
+  ephemeralStorageGib: number;
   ports: FlashPortInput[];
   exposureType: FlashExposure["type"];
   trafficMode: FlashExposure["traffic_mode"];
@@ -41,6 +42,7 @@ export const defaultFlashServiceFormValue: FlashServiceFormValue = {
   replicas: 1,
   cpuMillis: 500,
   memoryMib: 512,
+  ephemeralStorageGib: 20,
   ports: [
     {
       name: "udp",
@@ -134,6 +136,7 @@ export function flashSpecFromForm(
     replicas: value.replicas,
     cpu_millis: value.cpuMillis,
     memory_mib: value.memoryMib,
+    ephemeral_storage_gib: value.ephemeralStorageGib,
     ports: value.ports,
     exposure: {
       type: value.exposureType,
@@ -162,6 +165,7 @@ export function flashFormFromService(
     replicas: service.spec.replicas,
     cpuMillis: service.spec.cpu_millis,
     memoryMib: service.spec.memory_mib,
+    ephemeralStorageGib: service.spec.ephemeral_storage_gib,
     ports: service.spec.ports.map(({ name, protocol, container_port }) => ({
       name,
       protocol,
@@ -236,7 +240,7 @@ export function FlashServiceForm({
             onChange={({ detail }) => update("image", detail.value.slice(0, 500))}
           />
         </FormField>
-        <ColumnLayout columns={4}>
+        <ColumnLayout columns={3}>
           <FormField label="リージョン">
             <Select
               ariaLabel="リージョン"
@@ -257,6 +261,24 @@ export function FlashServiceForm({
               onChange={({ detail }) => update("replicas", boundedInteger(detail.value, 1, 100, value.replicas))}
             />
           </FormField>
+          <FormField label="一時ディスク" constraintText="1〜20 GiB">
+            <Input
+              type="number"
+              inputMode="numeric"
+              step={1}
+              nativeInputAttributes={{ min: 1, max: 20 }}
+              value={String(value.ephemeralStorageGib)}
+              disabled={disabled}
+              onChange={({ detail }) =>
+                update(
+                  "ephemeralStorageGib",
+                  boundedInteger(detail.value, 1, 20, value.ephemeralStorageGib),
+                )
+              }
+            />
+          </FormField>
+        </ColumnLayout>
+        <ColumnLayout columns={2}>
           <FormField label="CPU" constraintText="10〜4,000 millicores">
             <Input
               type="number"

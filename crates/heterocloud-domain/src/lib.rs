@@ -232,8 +232,12 @@ pub const MIN_FLASH_CPU_MILLIS: u32 = 10;
 pub const MAX_FLASH_CPU_MILLIS: u32 = 4_000;
 pub const MIN_FLASH_MEMORY_MIB: u32 = 16;
 pub const MAX_FLASH_MEMORY_MIB: u32 = 8_128;
+pub const MIN_FLASH_EPHEMERAL_STORAGE_GIB: u32 = 1;
+pub const MAX_FLASH_EPHEMERAL_STORAGE_GIB: u32 = 20;
+pub const DEFAULT_FLASH_EPHEMERAL_STORAGE_GIB: u32 = 20;
 pub const MAX_FLASH_ORGANIZATION_CPU_MILLIS: u64 = 20_000;
 pub const MAX_FLASH_ORGANIZATION_MEMORY_MIB: u64 = 32_768;
+pub const MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB: u64 = 200;
 pub const MIN_FLASH_SERVICE_PORT: u16 = 30_000;
 pub const MAX_FLASH_SERVICE_PORT: u16 = 32_767;
 pub const MAX_FLASH_PORTS: usize = 16;
@@ -295,6 +299,8 @@ pub struct FlashSpec {
     pub replicas: u32,
     pub cpu_millis: u32,
     pub memory_mib: u32,
+    #[serde(default = "default_flash_ephemeral_storage_gib")]
+    pub ephemeral_storage_gib: u32,
     pub ports: Vec<FlashPort>,
     pub exposure: FlashExposure,
     pub env: BTreeMap<String, String>,
@@ -348,6 +354,13 @@ impl FlashSpec {
         if !(MIN_FLASH_MEMORY_MIB..=MAX_FLASH_MEMORY_MIB).contains(&self.memory_mib) {
             return Err(invalid_flash_spec(format!(
                 "memory_mib must be between {MIN_FLASH_MEMORY_MIB} and {MAX_FLASH_MEMORY_MIB}"
+            )));
+        }
+        if !(MIN_FLASH_EPHEMERAL_STORAGE_GIB..=MAX_FLASH_EPHEMERAL_STORAGE_GIB)
+            .contains(&self.ephemeral_storage_gib)
+        {
+            return Err(invalid_flash_spec(format!(
+                "ephemeral_storage_gib must be between {MIN_FLASH_EPHEMERAL_STORAGE_GIB} and {MAX_FLASH_EPHEMERAL_STORAGE_GIB}"
             )));
         }
         if self.ports.is_empty() || self.ports.len() > MAX_FLASH_PORTS {
@@ -421,6 +434,10 @@ impl FlashSpec {
         }
         Ok(())
     }
+}
+
+const fn default_flash_ephemeral_storage_gib() -> u32 {
+    DEFAULT_FLASH_EPHEMERAL_STORAGE_GIB
 }
 
 fn valid_flash_port_name(name: &str) -> bool {
@@ -604,6 +621,7 @@ mod tests {
             replicas: 3,
             cpu_millis: 500,
             memory_mib: 512,
+            ephemeral_storage_gib: 20,
             ports: vec![FlashPort {
                 name: "game-udp".into(),
                 protocol: FlashProtocol::Udp,
@@ -629,10 +647,28 @@ mod tests {
         assert_eq!(value["ports"][0]["protocol"], json!("udp"));
         assert_eq!(value["exposure"]["type"], json!("public"));
         assert_eq!(value["exposure"]["traffic_mode"], json!("direct"));
+        assert_eq!(value["ephemeral_storage_gib"], json!(20));
 
         let mut unknown = value;
         unknown["runtime_class"] = json!("runc");
         assert!(serde_json::from_value::<FlashSpec>(unknown).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn flash_spec_defaults_and_bounds_ephemeral_storage() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut value = serde_json::to_value(flash_spec())?;
+        value
+            .as_object_mut()
+            .ok_or("Flash spec must be an object")?
+            .remove("ephemeral_storage_gib");
+        let defaulted = serde_json::from_value::<FlashSpec>(value)?;
+        assert_eq!(defaulted.ephemeral_storage_gib, 20);
+
+        let mut oversized = flash_spec();
+        oversized.ephemeral_storage_gib = 21;
+        assert!(oversized.validate().is_err());
         Ok(())
     }
 

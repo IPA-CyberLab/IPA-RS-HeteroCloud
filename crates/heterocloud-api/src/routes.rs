@@ -2776,6 +2776,7 @@ mod tests {
             replicas: 2,
             cpu_millis: 500,
             memory_mib: 512,
+            ephemeral_storage_gib: 20,
             ports: vec![FlashPort {
                 name: "game-udp".into(),
                 protocol: FlashProtocol::Udp,

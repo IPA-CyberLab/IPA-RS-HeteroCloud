@@ -3,9 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::{DateTime, Utc};
 use heterocloud_domain::{
     FlashProtocol, FlashSpec, IamPolicy, MAX_FLASH_ORGANIZATION_CPU_MILLIS,
-    MAX_FLASH_ORGANIZATION_MEMORY_MIB, MAX_FLASH_SERVICE_PORT, MIN_FLASH_SERVICE_PORT,
-    Organization, OrganizationId, PolicyDocument, PolicyId, Principal, PrincipalId, PrincipalKind,
-    Project, ProjectId, ServiceInstance, ServiceInstanceId, ServiceState, User, UserId, UserStatus,
+    MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB, MAX_FLASH_ORGANIZATION_MEMORY_MIB,
+    MAX_FLASH_SERVICE_PORT, MIN_FLASH_SERVICE_PORT, Organization, OrganizationId, PolicyDocument,
+    PolicyId, Principal, PrincipalId, PrincipalKind, Project, ProjectId, ServiceInstance,
+    ServiceInstanceId, ServiceState, User, UserId, UserStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1898,6 +1899,7 @@ async fn prepare_flash_spec(
     let mut occupied_ports = BTreeSet::new();
     let mut organization_cpu_millis = 0_u64;
     let mut organization_memory_mib = 0_u64;
+    let mut organization_ephemeral_storage_gib = 0_u64;
     for row in &rows {
         if excluded_service_id.is_some_and(|id| id.0 == row.id) {
             continue;
@@ -1912,6 +1914,8 @@ async fn prepare_flash_spec(
         if row.organization_id == organization_id.0 {
             organization_cpu_millis += u64::from(stored.replicas) * u64::from(stored.cpu_millis);
             organization_memory_mib += u64::from(stored.replicas) * u64::from(stored.memory_mib);
+            organization_ephemeral_storage_gib +=
+                u64::from(stored.replicas) * u64::from(stored.ephemeral_storage_gib);
         }
     }
 
@@ -1948,6 +1952,8 @@ async fn prepare_flash_spec(
 
     organization_cpu_millis += u64::from(requested.replicas) * u64::from(requested.cpu_millis);
     organization_memory_mib += u64::from(requested.replicas) * u64::from(requested.memory_mib);
+    organization_ephemeral_storage_gib +=
+        u64::from(requested.replicas) * u64::from(requested.ephemeral_storage_gib);
     if organization_cpu_millis > MAX_FLASH_ORGANIZATION_CPU_MILLIS {
         return Err(StoreError::RequestRejected(format!(
             "Flash account CPU limit exceeded: {organization_cpu_millis} millicores requested, limit is {MAX_FLASH_ORGANIZATION_CPU_MILLIS}"
@@ -1956,6 +1962,11 @@ async fn prepare_flash_spec(
     if organization_memory_mib > MAX_FLASH_ORGANIZATION_MEMORY_MIB {
         return Err(StoreError::RequestRejected(format!(
             "Flash account memory limit exceeded: {organization_memory_mib} MiB requested, limit is {MAX_FLASH_ORGANIZATION_MEMORY_MIB} MiB"
+        )));
+    }
+    if organization_ephemeral_storage_gib > MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB {
+        return Err(StoreError::RequestRejected(format!(
+            "Flash account ephemeral storage limit exceeded: {organization_ephemeral_storage_gib} GiB requested, limit is {MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB} GiB"
         )));
     }
     requested

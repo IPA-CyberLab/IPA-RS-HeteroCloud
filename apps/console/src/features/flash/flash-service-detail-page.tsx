@@ -259,6 +259,7 @@ export function FlashServiceDetailPage() {
               { label: "リージョン", value: item.spec.region },
               { label: "CPU", value: `${formatNumber(item.spec.cpu_millis)} millicores` },
               { label: "メモリ", value: `${formatNumber(item.spec.memory_mib)} MiB` },
+              { label: "一時ディスク", value: `${formatNumber(item.spec.ephemeral_storage_gib)} GiB` },
               { label: "接続", value: flashExposureLabel(item.spec.exposure) },
               { label: "更新日時", value: formatDateTime(item.updated_at) },
             ]}

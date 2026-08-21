@@ -196,6 +196,7 @@ export interface FlashServiceSpec {
   replicas: number;
   cpu_millis: number;
   memory_mib: number;
+  ephemeral_storage_gib: number;
   ports: FlashPort[];
   exposure: FlashExposure;
   env: Record<string, string>;

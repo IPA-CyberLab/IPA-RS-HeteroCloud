@@ -169,6 +169,7 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
         "replicas": 1,
         "cpu_millis": 500,
         "memory_mib": 512,
+        "ephemeral_storage_gib": 20,
         "ports": [{
             "name": "game-udp",
             "protocol": "udp",
@@ -286,7 +287,7 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
         flash.spec["ports"][0]["service_port"]
     );
 
-    let mut over_quota = flash_request;
+    let mut over_quota = flash_request.clone();
     over_quota["replicas"] = json!(6);
     over_quota["cpu_millis"] = json!(4_000);
     assert!(matches!(
@@ -309,6 +310,7 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
         "replicas": 5,
         "cpu_millis": 500,
         "memory_mib": 8_128,
+        "ephemeral_storage_gib": 20,
         "ports": [{
             "name": "memory-udp",
             "protocol": "udp",
@@ -333,6 +335,22 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
             )
             .await,
         Err(StoreError::RequestRejected(message)) if message.contains("memory limit")
+    ));
+
+    let mut over_storage_quota = flash_request;
+    over_storage_quota["replicas"] = json!(8);
+    assert!(matches!(
+        store
+            .create_service_instance(
+                organization_id,
+                ProjectId(project.id.0),
+                membership.principal_id,
+                "flash",
+                "over-storage-quota",
+                over_storage_quota,
+            )
+            .await,
+        Err(StoreError::RequestRejected(message)) if message.contains("ephemeral storage limit")
     ));
     assert!(matches!(
         store

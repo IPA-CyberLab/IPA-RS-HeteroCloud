@@ -399,6 +399,7 @@ describe("HeteroCloudApiClient", () => {
         replicas: 3,
         cpu_millis: 1_000,
         memory_mib: 2_048,
+        ephemeral_storage_gib: 20,
         ports: [
           {
             name: "game",
