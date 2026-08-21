@@ -26,6 +26,9 @@
 		max_fails 1
 		unhealthy_status 5xx
 		health_uri {args[0]}
+		health_headers {
+			Host {args[1]}
+		}
 		health_interval 2s
 		health_timeout 2s
 		health_status 2xx
@@ -47,7 +50,7 @@
 	}
 
 	handle {
-		import heterocloud_envoy /api/v1/health/live
+		import heterocloud_envoy /api/v1/health/live heterocloud.mizuame.app
 	}
 }
 
@@ -99,7 +102,7 @@ flow.heterocloud.mizuame.app {
 	}
 
 	handle {
-		import heterocloud_envoy /health/live
+		import heterocloud_envoy /health/live flow.heterocloud.mizuame.app
 	}
 }
 
@@ -132,7 +135,7 @@ registry.heterocloud.mizuame.app {
 		}
 	}
 
-	import heterocloud_envoy /api/v2.0/health
+	import heterocloud_envoy /api/v2.0/health registry.heterocloud.mizuame.app
 }
 
 http://:18082 {
