@@ -1,5 +1,6 @@
 pub mod config;
 pub mod error;
+pub mod flash_provider;
 pub mod flow_access;
 pub mod metrics;
 pub mod oidc;

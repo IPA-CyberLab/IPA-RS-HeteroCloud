@@ -30,6 +30,12 @@ flowPublicEndpoints:
   - https://flow.example.com
 flowInternalEndpoint: http://heterocloud-flow-api.heterocloud-flow.svc.cluster.local:8080/
 
+flashExec:
+  endpoint: http://heterocloud-flash-api.heterocloud-flash.svc.cluster.local:8080/
+  providerIssuer: heterocloud
+  audience: heterocloud-flash
+  providerKeyId: heterocloud-provider-1
+
 worker:
   replicaCount: 3
   flowEndpoint: http://heterocloud-flow-api.heterocloud-flow.svc.cluster.local:8080/

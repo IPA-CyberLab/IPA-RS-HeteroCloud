@@ -6,7 +6,11 @@ import Container from "@cloudscape-design/components/container";
 import Header from "@cloudscape-design/components/header";
 import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 import Modal from "@cloudscape-design/components/modal";
+import Select from "@cloudscape-design/components/select";
 import SpaceBetween from "@cloudscape-design/components/space-between";
+import StatusIndicator, {
+  type StatusIndicatorProps,
+} from "@cloudscape-design/components/status-indicator";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { type FormEvent, useState } from "react";
@@ -35,6 +39,10 @@ import {
   type FlashServiceFormValue,
 } from "./flash-service-form";
 import {
+  FlashWebShell,
+  type FlashShellConnectionState,
+} from "./flash-web-shell";
+import {
   flashExposureLabel,
   flashProviderStatus,
   flashProtocolLabel,
@@ -53,6 +61,16 @@ const portColumns: ColumnDef<FlashPort, unknown>[] = [
   { accessorKey: "service_port", header: "サービスポート" },
 ];
 
+const shellStatuses: Record<
+  FlashShellConnectionState,
+  { type: StatusIndicatorProps.Type; label: string }
+> = {
+  connecting: { type: "loading", label: "接続中" },
+  connected: { type: "success", label: "接続済み" },
+  closed: { type: "stopped", label: "切断済み" },
+  error: { type: "error", label: "接続エラー" },
+};
+
 export function FlashServiceDetailPage() {
   const { serviceId = "" } = useParams<{ serviceId: string }>();
   const { activeOrganization } = useActiveOrganization();
@@ -66,7 +84,27 @@ export function FlashServiceDetailPage() {
   const projects = useQuery(projectsQueryOptions(organizationId));
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [shellOpen, setShellOpen] = useState(false);
+  const [shellPod, setShellPod] = useState<string | null>(null);
+  const [shellSession, setShellSession] = useState(0);
+  const [shellState, setShellState] =
+    useState<FlashShellConnectionState>("closed");
   const [editForm, setEditForm] = useState<FlashServiceFormValue | null>(null);
+  const containers = useQuery({
+    queryKey: [
+      "organizations",
+      organizationId,
+      "flash",
+      "services",
+      serviceId,
+      "containers",
+    ],
+    queryFn: ({ signal }) =>
+      api.flash.services.listContainers(organizationId, serviceId, signal),
+    enabled:
+      Boolean(serviceId) && shellOpen && service.data?.state === "ready",
+    refetchInterval: shellOpen ? 10_000 : false,
+  });
   const updateService = useMutation({
     mutationFn: (value: FlashServiceFormValue) =>
       api.flash.services.update(organizationId, serviceId, {
@@ -129,6 +167,14 @@ export function FlashServiceDetailPage() {
     typeof providerStatus.message === "string" ? providerStatus.message : null;
   const validationError = editForm ? flashFormValidationError(editForm) : null;
   const environmentKeys = Object.keys(item.spec.env);
+  const runningContainers = (containers.data?.items ?? []).filter(
+    (container) => container.phase === "Running" && container.ready,
+  );
+  const selectedPod =
+    runningContainers.find((container) => container.name === shellPod)?.name ??
+    runningContainers[0]?.name ??
+    null;
+  const shellStatus = shellStatuses[shellState];
   const submitEdit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (editForm && !validationError) updateService.mutate(editForm);
@@ -148,6 +194,18 @@ export function FlashServiceDetailPage() {
               ariaLabel="更新"
               onClick={() => void service.refetch()}
             />
+            <Button
+              iconName="script"
+              disabled={disabled || item.state !== "ready"}
+              onClick={() => {
+                setShellPod(null);
+                setShellSession(0);
+                setShellState("closed");
+                setShellOpen(true);
+              }}
+            >
+              Web Shell
+            </Button>
             <Button
               iconName="edit"
               disabled={disabled}
@@ -229,6 +287,93 @@ export function FlashServiceDetailPage() {
           emptyDescription="編集画面からポートを追加してください。"
         />
       </Container>
+      <Modal
+        visible={shellOpen}
+        onDismiss={() => {
+          setShellSession(0);
+          setShellOpen(false);
+        }}
+        size="max"
+        header={`${item.name} Web Shell`}
+        footer={
+          <Box float="right">
+            <Button
+              onClick={() => {
+                setShellSession(0);
+                setShellOpen(false);
+              }}
+            >
+              閉じる
+            </Button>
+          </Box>
+        }
+      >
+        <SpaceBetween size="m">
+          <SpaceBetween direction="horizontal" size="xs" alignItems="end">
+            <Box>
+              <Box variant="awsui-key-label">コンテナ</Box>
+              <Select
+                ariaLabel="コンテナ"
+                selectedOption={
+                  selectedPod
+                    ? { value: selectedPod, label: selectedPod }
+                    : null
+                }
+                options={runningContainers.map((container) => ({
+                  value: container.name,
+                  label: container.name,
+                }))}
+                placeholder={containers.isPending ? "取得中" : "稼働中のコンテナなし"}
+                loadingText="コンテナを取得しています"
+                statusType={containers.isPending ? "loading" : "finished"}
+                disabled={containers.isPending || runningContainers.length === 0}
+                onChange={({ detail }) => {
+                  setShellSession(0);
+                  setShellState("closed");
+                  setShellPod(detail.selectedOption.value ?? null);
+                }}
+              />
+            </Box>
+            <Button
+              variant="primary"
+              iconName="script"
+              disabled={!selectedPod || containers.isPending}
+              onClick={() => {
+                setShellState("connecting");
+                setShellSession((session) => session + 1);
+              }}
+            >
+              {shellSession > 0 ? "再接続" : "接続"}
+            </Button>
+            <Button
+              disabled={shellSession === 0}
+              onClick={() => {
+                setShellSession(0);
+                setShellState("closed");
+              }}
+            >
+              切断
+            </Button>
+            <StatusIndicator type={shellStatus.type}>
+              {shellStatus.label}
+            </StatusIndicator>
+          </SpaceBetween>
+          {containers.isError ? (
+            <Alert type="error">コンテナ一覧を取得できませんでした。</Alert>
+          ) : null}
+          {shellSession > 0 && selectedPod ? (
+            <FlashWebShell
+              key={`${selectedPod}-${shellSession}`}
+              url={api.flash.services.execWebSocketUrl(
+                organizationId,
+                serviceId,
+                selectedPod,
+              )}
+              onStateChange={setShellState}
+            />
+          ) : null}
+        </SpaceBetween>
+      </Modal>
       <Modal
         visible={editOpen}
         onDismiss={() => setEditOpen(false)}

@@ -13,6 +13,7 @@ import type {
   CreateServiceAccountRequest,
   ErrorEnvelope,
   FlashService,
+  FlashContainerList,
   IamPolicy,
   InvitationResponse,
   LoginRequest,
@@ -527,6 +528,32 @@ export class HeteroCloudApiClient {
           ),
           { method: "DELETE" },
         ),
+      listContainers: (
+        organizationId: string,
+        serviceId: string,
+        signal?: AbortSignal,
+      ) =>
+        this.request<FlashContainerList>(
+          organizationPath(
+            organizationId,
+            `flash/services/${encodeURIComponent(serviceId)}/containers`,
+          ),
+          { signal },
+        ),
+      execWebSocketUrl: (
+        organizationId: string,
+        serviceId: string,
+        pod: string,
+      ) => {
+        const path = organizationPath(
+          organizationId,
+          `flash/services/${encodeURIComponent(serviceId)}/exec`,
+        );
+        const url = new URL(`${this.baseUrl}${path}`, window.location.href);
+        url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+        url.searchParams.set("pod", pod);
+        return url.toString();
+      },
     },
   };
 

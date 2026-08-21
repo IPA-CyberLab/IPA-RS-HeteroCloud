@@ -227,6 +227,7 @@ async fn test_state() -> Result<Option<(Store, Arc<AppState>)>, Box<dyn Error>> 
             oidc: None,
         },
         flow_client: reqwest::Client::new(),
+        flash_provider: None,
         registration_limiter: Arc::new(Semaphore::new(2)),
     });
     Ok(Some((store, state)))

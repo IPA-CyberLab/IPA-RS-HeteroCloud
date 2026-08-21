@@ -73,6 +73,11 @@ spec:
             - --flow-access-audience={{ .Values.flowAccess.audience }}
             - --flow-public-endpoints={{ join "," (required "flowPublicEndpoints is required" .Values.flowPublicEndpoints) }}
             - --flow-internal-endpoint={{ required "flowInternalEndpoint is required" .Values.flowInternalEndpoint }}
+            - --flash-internal-endpoint={{ required "flashExec.endpoint is required" .Values.flashExec.endpoint }}
+            - --provider-signing-key-file=/var/run/secrets/provider/ed25519-private.pem
+            - --provider-issuer={{ .Values.flashExec.providerIssuer }}
+            - --flash-audience={{ .Values.flashExec.audience }}
+            - --provider-key-id={{ .Values.flashExec.providerKeyId }}
             - --public-origin={{ required "publicOrigin is required" .Values.publicOrigin }}
             {{- if .Values.additionalOrigins }}
             - --additional-origins={{ join "," .Values.additionalOrigins }}
@@ -136,6 +141,9 @@ spec:
             - name: flow-access
               mountPath: /var/run/secrets/flow-access
               readOnly: true
+            - name: provider
+              mountPath: /var/run/secrets/provider
+              readOnly: true
             {{- if .Values.oidc.enabled }}
             - name: oidc
               mountPath: /var/run/secrets/oidc
@@ -168,6 +176,13 @@ spec:
             items:
               - key: {{ .Values.secrets.flowAccessSecretKey }}
                 path: hmac-secret
+        - name: provider
+          secret:
+            secretName: {{ .Values.secrets.providerSigningSecretName }}
+            defaultMode: 0400
+            items:
+              - key: {{ .Values.secrets.providerSigningKeyKey }}
+                path: ed25519-private.pem
         {{- if .Values.oidc.enabled }}
         - name: oidc
           secret:

@@ -83,6 +83,13 @@ tokens are short-lived, audience-bound, and contain only opaque tenant
 context. A Flow compromise must not grant access to HeteroCloud password
 hashes, sessions, IAM policy storage, or provider signing keys.
 
+Flash Web Shell access is protected by same-origin browser checks and the
+instance-scoped `flash:ExecInstance` IAM action. The Flash provider accepts
+only short-lived signed commands, verifies the service generation and tenant
+scope, and permits `/bin/sh` only in the ready `workload` container of a Pod
+owned by that service. Sessions are bounded to 30 minutes and Kubernetes API
+errors are not returned to the browser.
+
 Flow data-plane contexts expire after 30 to 300 seconds and contain exact,
 allow-listed permissions. Wildcards are rejected. Their HMAC secret is a
 dedicated file readable only by the API process owner or its dedicated runtime

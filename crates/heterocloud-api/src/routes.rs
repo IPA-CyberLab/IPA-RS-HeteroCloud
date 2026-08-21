@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, State, ws::WebSocketUpgrade},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -39,6 +39,9 @@ use uuid::Uuid;
 use crate::{
     config::RuntimeConfig,
     error::ApiError,
+    flash_provider::{
+        FlashContainerList, FlashProviderContext, FlashProviderProxy, bridge_websockets,
+    },
     flow_access::{FlowAccessInput, SignedFlowAccessContext},
     metrics::fetch_and_record_realtime_metrics,
     oidc::{
@@ -55,6 +58,7 @@ pub struct AppState {
     pub store: Store,
     pub config: RuntimeConfig,
     pub flow_client: reqwest::Client,
+    pub flash_provider: Option<Arc<FlashProviderProxy>>,
     pub registration_limiter: Arc<Semaphore>,
 }
 
@@ -112,6 +116,14 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             get(get_flash_service)
                 .put(update_flash_service)
                 .delete(delete_flash_service),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/services/{service_instance_id}/containers",
+            get(list_flash_containers),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/services/{service_instance_id}/exec",
+            get(exec_flash_container),
         )
         .route(
             "/organizations/{organization_id}/realtime/services/{service_instance_id}/access-credentials",
@@ -1080,6 +1092,121 @@ async fn delete_flash_service(
         .await
         .map_err(ApiError::from_store)?;
     Ok((StatusCode::ACCEPTED, Json(instance)))
+}
+
+async fn list_flash_containers(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<FlashContainerList>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:ExecInstance",
+        &flash_service_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let instance = flash_service(&state, organization_id, service_instance_id).await?;
+    if instance.state != ServiceState::Ready {
+        return Err(ApiError::ServiceInstanceNotReady);
+    }
+    let provider = state
+        .flash_provider
+        .as_ref()
+        .ok_or(ApiError::FlashProviderUnavailable)?;
+    let containers = provider
+        .list_containers(flash_provider_context(
+            &instance,
+            authorization.principal_id,
+        ))
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = %error, "Flash container discovery failed");
+            ApiError::FlashProviderUnavailable
+        })?;
+    Ok(Json(containers))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FlashExecQuery {
+    pod: String,
+}
+
+async fn exec_flash_container(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<FlashExecQuery>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    upgrade: WebSocketUpgrade,
+) -> Result<impl IntoResponse, ApiError> {
+    require_same_origin(&state.config, &headers)?;
+    if !valid_kubernetes_name(&query.pod) {
+        return Err(ApiError::BadRequest("pod is invalid".into()));
+    }
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:ExecInstance",
+        &flash_service_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let instance = flash_service(&state, organization_id, service_instance_id).await?;
+    if instance.state != ServiceState::Ready {
+        return Err(ApiError::ServiceInstanceNotReady);
+    }
+    let provider = state
+        .flash_provider
+        .as_ref()
+        .ok_or(ApiError::FlashProviderUnavailable)?;
+    let provider_socket = provider
+        .connect_exec(
+            flash_provider_context(&instance, authorization.principal_id),
+            &query.pod,
+        )
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = %error, "Flash exec connection failed");
+            ApiError::FlashProviderUnavailable
+        })?;
+    Ok(upgrade
+        .max_message_size(64 * 1024)
+        .on_upgrade(move |browser_socket| bridge_websockets(browser_socket, provider_socket)))
+}
+
+fn flash_provider_context(
+    instance: &ServiceInstance,
+    principal_id: PrincipalId,
+) -> FlashProviderContext {
+    FlashProviderContext {
+        principal_id,
+        organization_id: instance.organization_id,
+        project_id: instance.project_id,
+        service_instance_id: instance.id,
+        generation: instance.generation,
+    }
+}
+
+fn valid_kubernetes_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 253
+        && value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && value
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'.')
+        })
 }
 
 #[derive(Deserialize)]
@@ -2558,10 +2685,11 @@ mod tests {
         INVITATION_MAX_TTL_HOURS, RealtimeMetricHistoryRange, RealtimeMetricHistoryResponse,
         SESSION_COOKIE, deserialize_stored_flow_spec, flash_collection_resource,
         flash_service_resource, flow_permission_iam_action, parse_api_key_prefix,
-        parse_flow_developer_credential_prefix, validate_developer_credential_expiry,
-        validate_developer_credential_name, validate_flash_spec, validate_flow_access_target,
-        validate_flow_access_ttl, validate_flow_permissions, validate_flow_spec,
-        validate_invitation_ttl, validate_list_limit, validate_slug,
+        parse_flow_developer_credential_prefix, valid_kubernetes_name,
+        validate_developer_credential_expiry, validate_developer_credential_name,
+        validate_flash_spec, validate_flow_access_target, validate_flow_access_ttl,
+        validate_flow_permissions, validate_flow_spec, validate_invitation_ttl,
+        validate_list_limit, validate_slug,
     };
 
     #[test]
@@ -2575,6 +2703,18 @@ mod tests {
         assert!(validate_slug("realtime-prod").is_ok());
         assert!(validate_slug("-invalid").is_err());
         assert!(validate_slug("Invalid").is_err());
+    }
+
+    #[test]
+    fn validates_flash_exec_pod_names() {
+        assert!(valid_kubernetes_name("flash-api-7bdbd985d7-x8k2m"));
+        assert!(valid_kubernetes_name("flash.worker-1"));
+        assert!(!valid_kubernetes_name(""));
+        assert!(!valid_kubernetes_name("-flash-worker"));
+        assert!(!valid_kubernetes_name("flash-worker-"));
+        assert!(!valid_kubernetes_name("Flash-worker"));
+        assert!(!valid_kubernetes_name("flash_worker"));
+        assert!(!valid_kubernetes_name(&"a".repeat(254)));
     }
 
     #[test]

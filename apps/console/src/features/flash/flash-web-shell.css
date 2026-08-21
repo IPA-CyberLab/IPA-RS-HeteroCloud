@@ -1,0 +1,21 @@
+.flash-web-shell {
+  width: 100%;
+  height: min(58vh, 560px);
+  min-height: 360px;
+  padding: 8px;
+  overflow: hidden;
+  background: #111418;
+  border: 1px solid #414750;
+  border-radius: 4px;
+}
+
+.flash-web-shell .xterm {
+  height: 100%;
+}
+
+@media (max-width: 680px) {
+  .flash-web-shell {
+    height: 52vh;
+    min-height: 300px;
+  }
+}

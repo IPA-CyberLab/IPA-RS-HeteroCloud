@@ -61,6 +61,37 @@ pub struct Config {
 
     #[arg(
         long,
+        env = "HETEROCLOUD_FLASH_INTERNAL_ENDPOINT",
+        default_value = "http://heterocloud-flash-api.heterocloud-flash.svc.cluster.local:8080/"
+    )]
+    pub flash_internal_endpoint: Url,
+
+    #[arg(long, env = "HETEROCLOUD_PROVIDER_SIGNING_KEY_FILE")]
+    pub provider_signing_key_file: PathBuf,
+
+    #[arg(
+        long,
+        env = "HETEROCLOUD_PROVIDER_ISSUER",
+        default_value = "heterocloud"
+    )]
+    pub provider_issuer: String,
+
+    #[arg(
+        long,
+        env = "HETEROCLOUD_FLASH_AUDIENCE",
+        default_value = "heterocloud-flash"
+    )]
+    pub flash_audience: String,
+
+    #[arg(
+        long,
+        env = "HETEROCLOUD_PROVIDER_KEY_ID",
+        default_value = "heterocloud-provider-1"
+    )]
+    pub provider_key_id: String,
+
+    #[arg(
+        long,
         env = "HETEROCLOUD_PUBLIC_ORIGIN",
         default_value = "http://localhost:8080"
     )]
@@ -161,6 +192,7 @@ impl Config {
             return Err(ConfigError::WeakCsrfKey);
         }
         let flow_access_secret = read_secret(&self.flow_access_secret_file).await?;
+        let provider_signing_key = read_secret(&self.provider_signing_key_file).await?;
         FlowAccessSigner::new(
             self.flow_access_issuer.clone(),
             self.flow_access_audience.clone(),
@@ -197,10 +229,12 @@ impl Config {
         }
         validate_flow_public_endpoints(&self.flow_public_endpoints, self.secure_cookie)?;
         validate_flow_internal_endpoint(&self.flow_internal_endpoint)?;
+        validate_flash_internal_endpoint(&self.flash_internal_endpoint)?;
         Ok(LoadedSecrets {
             database_url,
             csrf_key,
             flow_access_secret,
+            provider_signing_key,
             bootstrap_password,
             oidc_client_secret,
         })
@@ -214,6 +248,7 @@ impl Config {
     ) -> Result<RuntimeConfig, ConfigError> {
         validate_flow_public_endpoints(&self.flow_public_endpoints, self.secure_cookie)?;
         validate_flow_internal_endpoint(&self.flow_internal_endpoint)?;
+        validate_flash_internal_endpoint(&self.flash_internal_endpoint)?;
         let mut allowed_origins = vec![self.public_origin.origin().ascii_serialization()];
         for origin in &self.additional_origins {
             let serialized = origin.origin().ascii_serialization();
@@ -267,6 +302,7 @@ pub struct LoadedSecrets {
     pub database_url: SecretString,
     pub csrf_key: SecretString,
     pub flow_access_secret: SecretString,
+    pub provider_signing_key: SecretString,
     pub bootstrap_password: Option<SecretString>,
     pub oidc_client_secret: Option<SecretString>,
 }
@@ -347,6 +383,20 @@ fn validate_flow_internal_endpoint(endpoint: &Url) -> Result<(), ConfigError> {
     Ok(())
 }
 
+fn validate_flash_internal_endpoint(endpoint: &Url) -> Result<(), ConfigError> {
+    if !matches!(endpoint.scheme(), "http" | "https")
+        || !endpoint.has_host()
+        || !endpoint.username().is_empty()
+        || endpoint.password().is_some()
+        || endpoint.query().is_some()
+        || endpoint.fragment().is_some()
+        || !matches!(endpoint.path(), "" | "/")
+    {
+        return Err(ConfigError::InvalidFlashInternalEndpoint);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("bootstrap email and password file must be configured together")]
@@ -365,6 +415,8 @@ pub enum ConfigError {
     InvalidFlowPublicEndpoint,
     #[error("Flow internal endpoint must be an absolute HTTP(S) base URL")]
     InvalidFlowInternalEndpoint,
+    #[error("Flash internal endpoint must be an absolute HTTP(S) base URL")]
+    InvalidFlashInternalEndpoint,
     #[error("between one and sixteen Flow public endpoints are required")]
     MissingFlowPublicEndpoints,
     #[error("secret file is empty: {0}")]

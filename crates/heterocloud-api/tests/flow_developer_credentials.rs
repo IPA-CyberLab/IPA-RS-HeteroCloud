@@ -459,6 +459,7 @@ async fn test_state() -> Result<
         flow_client: reqwest::Client::builder()
             .tls_certs_only(Vec::<reqwest::tls::Certificate>::new())
             .build()?,
+        flash_provider: None,
         registration_limiter: Arc::new(Semaphore::new(2)),
     });
     Ok(Some((

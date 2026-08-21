@@ -2,9 +2,11 @@ use std::sync::Arc;
 
 use clap::Parser;
 use heterocloud_api::{
-    app, config::Config, metrics::spawn_realtime_metrics_collector, routes::AppState,
+    app, config::Config, flash_provider::FlashProviderProxy,
+    metrics::spawn_realtime_metrics_collector, routes::AppState,
 };
 use heterocloud_auth::hash_password;
+use heterocloud_provider::ProviderSigner;
 use heterocloud_store::{BootstrapAdmin, Store};
 use secrecy::ExposeSecret;
 use tokio::sync::Semaphore;
@@ -49,6 +51,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    let flash_provider_signer = ProviderSigner::from_ed25519_pem(
+        &config.provider_issuer,
+        &config.flash_audience,
+        &config.provider_key_id,
+        secrets.provider_signing_key.expose_secret().as_bytes(),
+    )?;
+    let provider_client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+    let flash_provider = FlashProviderProxy::new(
+        config.flash_internal_endpoint.clone(),
+        flash_provider_signer,
+        provider_client.clone(),
+    );
     let runtime = config.runtime(
         secrets.csrf_key,
         secrets.flow_access_secret,
@@ -57,10 +74,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(AppState {
         store,
         config: runtime,
-        flow_client: reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(3))
-            .timeout(std::time::Duration::from_secs(10))
-            .build()?,
+        flow_client: provider_client,
+        flash_provider: Some(Arc::new(flash_provider)),
         registration_limiter: Arc::new(Semaphore::new(4)),
     });
     let _metrics_collector = spawn_realtime_metrics_collector(Arc::clone(&state));

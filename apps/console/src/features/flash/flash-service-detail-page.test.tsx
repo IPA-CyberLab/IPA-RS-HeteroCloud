@@ -58,6 +58,11 @@ const service: FlashService = {
 describe("FlashServiceDetailPage", () => {
   beforeEach(() => {
     vi.spyOn(api.flash.services, "get").mockResolvedValue(service);
+    vi.spyOn(api.flash.services, "listContainers").mockResolvedValue({
+      items: [
+        { name: "game-server-7bdbd985d7-x8k2m", phase: "Running", ready: true },
+      ],
+    });
     vi.spyOn(api.projects, "list").mockResolvedValue({
       items: [
         {
@@ -98,5 +103,37 @@ describe("FlashServiceDetailPage", () => {
     expect(screen.getByRole("dialog", { name: "Flashサービスを編集" })).toBeInTheDocument();
     expect(screen.queryByText(/gVisor/)).not.toBeInTheDocument();
     expect(screen.getByDisplayValue("ghcr.io/example/game-server:v1")).toBeInTheDocument();
+  });
+
+  it("稼働中コンテナを選択するWeb Shellを開く", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={[`/flash/services/${service.id}`]}>
+          <Routes>
+            <Route path="/flash/services/:serviceId" element={<FlashServiceDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByRole("heading", { name: "game-server" });
+    await user.click(screen.getByRole("button", { name: "Web Shell" }));
+
+    expect(
+      screen.getByRole("dialog", { name: "game-server Web Shell" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText("game-server-7bdbd985d7-x8k2m"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "接続" })).toBeEnabled();
+    expect(api.flash.services.listContainers).toHaveBeenCalledWith(
+      "organization-1",
+      "flash-1",
+      expect.any(AbortSignal),
+    );
   });
 });

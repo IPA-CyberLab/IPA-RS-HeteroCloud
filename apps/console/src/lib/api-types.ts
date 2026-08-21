@@ -243,6 +243,16 @@ export interface FlashService {
   updated_at: string;
 }
 
+export interface FlashContainer {
+  name: string;
+  phase: string;
+  ready: boolean;
+}
+
+export interface FlashContainerList {
+  items: FlashContainer[];
+}
+
 export interface CreateFlashServiceRequest {
   project_id: string;
   name: string;

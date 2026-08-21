@@ -91,6 +91,10 @@ Flash uses the same policy semantics with provider-scoped names, for example
 `flash:ListInstances` and `flash:CreateInstance` against
 `hc:org:<organization UUID>:flash/*`. Instance reads and mutations use
 `hc:org:<organization UUID>:flash/instance/<instance UUID>`.
+Interactive container access requires the separate `flash:ExecInstance`
+action against that exact instance resource. The management API verifies the
+browser session and origin, then proxies a WebSocket using a 60-second,
+instance-scoped provider JWT. Kubernetes credentials never reach the browser.
 
 Only exact matches and terminal-prefix wildcards are accepted. Unknown fields,
 middle wildcards, unknown policy versions, empty statements, and oversized
