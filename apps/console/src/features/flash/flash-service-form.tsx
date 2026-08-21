@@ -261,7 +261,7 @@ export function FlashServiceForm({
               onChange={({ detail }) => update("replicas", boundedInteger(detail.value, 1, 100, value.replicas))}
             />
           </FormField>
-          <FormField label="一時ディスク" constraintText="1〜20 GiB">
+          <FormField label="ディスク上限" constraintText="コンテナイメージを含む 1〜20 GiB">
             <Input
               type="number"
               inputMode="numeric"
