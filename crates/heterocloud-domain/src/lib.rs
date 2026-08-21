@@ -198,7 +198,6 @@ pub struct IamPolicy {
 pub struct FlowSpec {
     pub region: String,
     pub max_participants: u32,
-    #[serde(default = "default_flow_max_rooms")]
     pub max_rooms: u32,
     #[serde(default)]
     pub rate_limit: FlowRateLimit,
@@ -230,10 +229,6 @@ pub const MAX_FLOW_RATE_LIMIT_BURST: u32 = 5_000;
 pub const MAX_FLOW_PARTICIPANTS: u32 = 100_000;
 pub const MAX_TENANT_SERVICES: u32 = 10_000;
 pub const MAX_TENANT_FLOW_ROOMS: u64 = 100_000_000;
-
-const fn default_flow_max_rooms() -> u32 {
-    DEFAULT_FLOW_MAX_ROOMS
-}
 
 pub const MIN_FLASH_REPLICAS: u32 = 1;
 pub const MAX_FLASH_REPLICAS: u32 = 100;

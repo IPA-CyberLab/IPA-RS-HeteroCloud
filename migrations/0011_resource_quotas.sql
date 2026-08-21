@@ -4,6 +4,10 @@ CREATE TABLE resource_quota_defaults (
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+UPDATE service_instances
+SET spec = jsonb_set(spec, '{max_rooms}', '100'::jsonb, true)
+WHERE provider = 'flow' AND NOT (spec ? 'max_rooms');
+
 INSERT INTO resource_quota_defaults (singleton, limits)
 VALUES (
     true,
