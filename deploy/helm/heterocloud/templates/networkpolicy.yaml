@@ -16,6 +16,16 @@ spec:
     - ports:
         - port: 8443
           protocol: TCP
+    {{- if .Values.ownerConsole.enabled }}
+    - from:
+        {{- range .Values.ownerConsole.allowedNetworks }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.ownerConsole.listenPort }}
+          protocol: TCP
+    {{- end }}
   egress:
     - to:
         - namespaceSelector:

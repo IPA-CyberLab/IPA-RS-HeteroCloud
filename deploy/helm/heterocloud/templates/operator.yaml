@@ -26,8 +26,8 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: owner-console
     spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
+      hostNetwork: {{ .Values.ownerConsole.hostNetwork }}
+      dnsPolicy: {{ ternary "ClusterFirstWithHostNet" "ClusterFirst" .Values.ownerConsole.hostNetwork }}
       serviceAccountName: {{ include "heterocloud.fullname" . }}
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 40

@@ -70,11 +70,12 @@ bootstrap:
 ownerConsole:
   enabled: false
   replicaCount: 3
-  origin: http://owner.heteronetwork.internal:19443
-  oidcPublicCallbackUrl: http://owner.heteronetwork.internal:19443/api/v1/auth/oidc/callback
+  origin: http://owner.heteronetwork.internal:21443
+  oidcPublicCallbackUrl: http://owner.heteronetwork.internal:21443/api/v1/auth/oidc/callback
   email: ""
-  listenPort: 19443
-  servicePort: 19443
+  hostNetwork: false
+  listenPort: 21443
+  servicePort: 21443
   allowedNetworks:
     - 10.250.0.0/24
   externalIPs: []
