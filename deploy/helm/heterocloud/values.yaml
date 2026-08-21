@@ -76,6 +76,10 @@ ownerConsole:
   hostNetwork: false
   listenPort: 21443
   servicePort: 21443
+  databaseProxy:
+    enabled: true
+    endpoint: postgres-ha-connector.kube-system.svc.cluster.local:25432
+    image: docker.io/library/haproxy:3.2.7-alpine@sha256:3b80483d47e1c7d1fc7eb4b9104f33d9a51259769be299eb675524dca2bc8157
   allowedNetworks:
     - 10.250.0.0/24
   externalIPs: []

@@ -1,4 +1,35 @@
 {{- if .Values.ownerConsole.enabled }}
+{{- if .Values.ownerConsole.databaseProxy.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "heterocloud.fullname" . }}-owner-database-proxy
+  labels:
+    {{- include "heterocloud.labels" . | nindent 4 }}
+    app.kubernetes.io/component: owner-console
+data:
+  haproxy.cfg: |
+    global
+        log stdout format raw local0
+        maxconn 256
+
+    defaults
+        log global
+        mode tcp
+        option tcplog
+        timeout connect 3s
+        timeout client 1m
+        timeout server 1m
+
+    frontend local_postgres
+        bind 127.0.0.1:25432
+        default_backend cluster_postgres
+
+    backend cluster_postgres
+        option tcp-check
+        server cluster {{ required "ownerConsole.databaseProxy.endpoint is required" .Values.ownerConsole.databaseProxy.endpoint }} check inter 2s fall 2 rise 1
+---
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -146,6 +177,44 @@ spec:
             {{- end }}
             - name: tmp
               mountPath: /tmp
+        {{- if .Values.ownerConsole.databaseProxy.enabled }}
+        - name: database-proxy
+          image: {{ required "ownerConsole.databaseProxy.image is required" .Values.ownerConsole.databaseProxy.image | quote }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - -f
+            - /usr/local/etc/haproxy/haproxy.cfg
+          readinessProbe:
+            tcpSocket:
+              host: 127.0.0.1
+              port: 25432
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              host: 127.0.0.1
+              port: 25432
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: database-proxy
+              mountPath: /usr/local/etc/haproxy
+              readOnly: true
+        {{- end }}
       volumes:
         - name: runtime
           secret:
@@ -191,6 +260,11 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        {{- if .Values.ownerConsole.databaseProxy.enabled }}
+        - name: database-proxy
+          configMap:
+            name: {{ include "heterocloud.fullname" . }}-owner-database-proxy
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
