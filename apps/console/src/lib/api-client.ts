@@ -3,6 +3,7 @@ import type {
   BindingResponse,
   CollectionResponse,
   CreateBindingRequest,
+  CreateFlashServiceRequest,
   CreateInvitationRequest,
   CreatePolicyRequest,
   CreateProjectRequest,
@@ -11,6 +12,7 @@ import type {
   CreateRealtimeServiceRequest,
   CreateServiceAccountRequest,
   ErrorEnvelope,
+  FlashService,
   IamPolicy,
   InvitationResponse,
   LoginRequest,
@@ -28,6 +30,7 @@ import type {
   RegisterRequest,
   Session,
   UpdateRealtimeServiceRequest,
+  UpdateFlashServiceRequest,
 } from "@/lib/api-types";
 
 const API_BASE_URL = "/api/v1";
@@ -470,6 +473,59 @@ export class HeteroCloudApiClient {
             `projects/${encodeURIComponent(projectId)}/realtime/services/${encodeURIComponent(serviceId)}/metrics/history`,
           )}${queryString({ range })}`,
           { signal },
+        ),
+    },
+  };
+
+  readonly flash = {
+    services: {
+      list: (organizationId: string, signal?: AbortSignal) =>
+        this.request<CollectionResponse<FlashService>>(
+          organizationPath(organizationId, "flash/services"),
+          { signal },
+        ),
+      create: (organizationId: string, input: CreateFlashServiceRequest) =>
+        this.request<FlashService>(
+          organizationPath(organizationId, "flash/services"),
+          {
+            method: "POST",
+            body: input,
+          },
+        ),
+      get: (
+        organizationId: string,
+        serviceId: string,
+        signal?: AbortSignal,
+      ) =>
+        this.request<FlashService>(
+          organizationPath(
+            organizationId,
+            `flash/services/${encodeURIComponent(serviceId)}`,
+          ),
+          { signal },
+        ),
+      update: (
+        organizationId: string,
+        serviceId: string,
+        input: UpdateFlashServiceRequest,
+      ) =>
+        this.request<FlashService>(
+          organizationPath(
+            organizationId,
+            `flash/services/${encodeURIComponent(serviceId)}`,
+          ),
+          {
+            method: "PUT",
+            body: input,
+          },
+        ),
+      delete: (organizationId: string, serviceId: string) =>
+        this.request<FlashService>(
+          organizationPath(
+            organizationId,
+            `flash/services/${encodeURIComponent(serviceId)}`,
+          ),
+          { method: "DELETE" },
         ),
     },
   };

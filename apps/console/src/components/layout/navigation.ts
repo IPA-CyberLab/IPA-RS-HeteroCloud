@@ -17,7 +17,10 @@ export const navigationItems: SideNavigationProps.Item[] = [
   {
     type: "section",
     text: "サービス",
-    items: [{ type: "link", text: "Flow", href: "/flow/services" }],
+    items: [
+      { type: "link", text: "Flow", href: "/flow/services" },
+      { type: "link", text: "Flash", href: "/flash/services" },
+    ],
   },
   {
     type: "section",
@@ -37,6 +40,7 @@ export const routeTitles: Record<string, string> = {
   "/iam/policies": "ポリシー",
   "/iam/bindings": "バインディング",
   "/flow/services": "Flow",
+  "/flash/services": "Flash",
   "/audit-logs": "監査ログ",
   "/settings": "設定",
 };

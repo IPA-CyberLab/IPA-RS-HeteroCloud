@@ -3,7 +3,7 @@
 HeteroCloud is the public control plane for services running on a
 HeteroNetwork Kubernetes cluster. It owns customer identity, organizations,
 projects, IAM, quotas, service lifecycle metadata, and audit records. Service
-data planes such as Flow remain independent repositories and are connected
+data planes such as Flow and Flash remain independent repositories and are connected
 through a versioned provider contract.
 
 HeteroCloud does not own VPN membership, node reachability, public-IP
@@ -19,7 +19,7 @@ selection, packet forwarding, LiveKit, TURN, or matchmaking.
   revocation.
 - Origin and CSRF validation on every cookie-authenticated mutation.
 - Organizations, projects, user and service-account principals, IAM policies,
-  policy bindings, Flow service instances, an outbox, and audit events.
+  policy bindings, Flow and Flash service instances, an outbox, and audit events.
 - Default-deny IAM with explicit-deny precedence and an organization boundary.
 - A Lean 4 authorization kernel proving the final decision invariants.
 - IAM-authorized, five-minute-or-shorter Flow data-plane access contexts.
@@ -39,6 +39,8 @@ HeteroCloud
       v
 HeteroCloud Flow
   rooms, matching, P2P signaling, LiveKit, STUN/TURN, usage
+HeteroCloud Flash
+  gVisor-isolated containers, TCP/UDP Services, workload lifecycle
       |
       | Kubernetes Services
       v

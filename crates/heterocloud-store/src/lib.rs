@@ -1528,6 +1528,7 @@ impl Store {
         &self,
         organization_id: OrganizationId,
         id: ServiceInstanceId,
+        provider: &str,
         principal_id: PrincipalId,
         name: &str,
         spec: Value,
@@ -1537,15 +1538,20 @@ impl Store {
             "SELECT id, organization_id, project_id, provider, name, generation,
                     state, spec, status, created_at, updated_at
              FROM service_instances
-             WHERE id = $1 AND organization_id = $2 AND provider = 'flow'
+             WHERE id = $1 AND organization_id = $2 AND provider = $3
              FOR UPDATE",
         )
         .bind(id.0)
         .bind(organization_id.0)
+        .bind(provider)
         .fetch_optional(&mut *transaction)
-        .await?
-        .ok_or(StoreError::NotFound)?;
+        .await?;
+        let Some(existing) = existing else {
+            transaction.rollback().await?;
+            return Err(StoreError::NotFound);
+        };
         if existing.state == "deleting" {
+            transaction.rollback().await?;
             return Err(StoreError::Conflict);
         }
         let generation = existing
@@ -1554,14 +1560,15 @@ impl Store {
             .ok_or(StoreError::Invariant("service generation overflow"))?;
         let row = sqlx::query_as::<_, ServiceRow>(
             "UPDATE service_instances
-             SET name = $3, spec = $4, generation = $5, state = 'updating',
+             SET name = $4, spec = $5, generation = $6, state = 'updating',
                  status = '{}'::jsonb, updated_at = now()
-             WHERE id = $1 AND organization_id = $2 AND provider = 'flow'
+             WHERE id = $1 AND organization_id = $2 AND provider = $3
              RETURNING id, organization_id, project_id, provider, name, generation,
                        state, spec, status, created_at, updated_at",
         )
         .bind(id.0)
         .bind(organization_id.0)
+        .bind(provider)
         .bind(name)
         .bind(spec)
         .bind(generation)
@@ -1578,7 +1585,7 @@ impl Store {
             "organization_id": organization_id,
             "project_id": ProjectId(existing.project_id),
             "principal_id": principal_id,
-            "provider": "flow",
+            "provider": provider,
             "generation": generation,
         }))
         .execute(&mut *transaction)
@@ -1591,6 +1598,7 @@ impl Store {
         &self,
         organization_id: OrganizationId,
         id: ServiceInstanceId,
+        provider: &str,
         principal_id: PrincipalId,
     ) -> Result<ServiceInstance, StoreError> {
         let mut transaction = self.pool.begin().await?;
@@ -1598,14 +1606,18 @@ impl Store {
             "SELECT id, organization_id, project_id, provider, name, generation,
                     state, spec, status, created_at, updated_at
              FROM service_instances
-             WHERE id = $1 AND organization_id = $2 AND provider = 'flow'
+             WHERE id = $1 AND organization_id = $2 AND provider = $3
              FOR UPDATE",
         )
         .bind(id.0)
         .bind(organization_id.0)
+        .bind(provider)
         .fetch_optional(&mut *transaction)
-        .await?
-        .ok_or(StoreError::NotFound)?;
+        .await?;
+        let Some(existing) = existing else {
+            transaction.rollback().await?;
+            return Err(StoreError::NotFound);
+        };
         if existing.state == "deleting" {
             transaction.commit().await?;
             return ServiceInstance::try_from(existing);
@@ -1616,14 +1628,15 @@ impl Store {
             .ok_or(StoreError::Invariant("service generation overflow"))?;
         let row = sqlx::query_as::<_, ServiceRow>(
             "UPDATE service_instances
-             SET generation = $3, state = 'deleting', status = '{}'::jsonb,
+             SET generation = $4, state = 'deleting', status = '{}'::jsonb,
                  updated_at = now()
-             WHERE id = $1 AND organization_id = $2 AND provider = 'flow'
+             WHERE id = $1 AND organization_id = $2 AND provider = $3
              RETURNING id, organization_id, project_id, provider, name, generation,
                        state, spec, status, created_at, updated_at",
         )
         .bind(id.0)
         .bind(organization_id.0)
+        .bind(provider)
         .bind(generation)
         .fetch_one(&mut *transaction)
         .await?;
@@ -1638,7 +1651,7 @@ impl Store {
             "organization_id": organization_id,
             "project_id": ProjectId(existing.project_id),
             "principal_id": principal_id,
-            "provider": "flow",
+            "provider": provider,
             "generation": generation,
         }))
         .execute(&mut *transaction)
@@ -1650,15 +1663,17 @@ impl Store {
     pub async fn complete_delete_service_instance(
         &self,
         id: ServiceInstanceId,
+        provider: &str,
         generation: i64,
     ) -> Result<bool, StoreError> {
         let result = sqlx::query(
             "DELETE FROM service_instances
-             WHERE id = $1 AND generation = $2 AND provider = 'flow'
+             WHERE id = $1 AND generation = $2 AND provider = $3
                AND state = 'deleting'",
         )
         .bind(id.0)
         .bind(generation)
+        .bind(provider)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() == 1)
@@ -1683,6 +1698,7 @@ impl Store {
     pub async fn mark_service_instance_ready(
         &self,
         id: ServiceInstanceId,
+        provider: &str,
         generation: i64,
         operation_id: Uuid,
         provider_status: Value,
@@ -1693,11 +1709,12 @@ impl Store {
         });
         let result = sqlx::query(
             "UPDATE service_instances
-             SET state = 'ready', status = $3, updated_at = now()
-             WHERE id = $1 AND generation = $2 AND provider = 'flow'",
+             SET state = 'ready', status = $4, updated_at = now()
+             WHERE id = $1 AND generation = $2 AND provider = $3",
         )
         .bind(id.0)
         .bind(generation)
+        .bind(provider)
         .bind(status)
         .execute(&self.pool)
         .await?;

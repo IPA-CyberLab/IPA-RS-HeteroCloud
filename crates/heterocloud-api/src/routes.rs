@@ -15,7 +15,7 @@ use heterocloud_auth::{
 };
 use heterocloud_domain::{
     DEFAULT_FLOW_MAX_ROOMS, DEFAULT_FLOW_RATE_LIMIT_BURST,
-    DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, FlowRateLimit, FlowSpec,
+    DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, FlashSpec, FlowRateLimit, FlowSpec,
     MAX_FLOW_RATE_LIMIT_BURST, MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, MAX_FLOW_ROOMS,
     OrganizationId, PolicyDocument, PolicyId, PrincipalId, ProjectId, ServiceInstance,
     ServiceInstanceId, ServiceState, UserStatus,
@@ -102,6 +102,16 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             get(get_realtime_service)
                 .patch(update_realtime_service)
                 .delete(delete_realtime_service),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/services",
+            get(list_flash_services).post(create_flash_service),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/services/{service_instance_id}",
+            get(get_flash_service)
+                .put(update_flash_service)
+                .delete(delete_flash_service),
         )
         .route(
             "/organizations/{organization_id}/realtime/services/{service_instance_id}/access-credentials",
@@ -870,6 +880,7 @@ async fn update_realtime_service(
         .update_service_instance(
             OrganizationId(organization_id),
             ServiceInstanceId(service_instance_id),
+            "flow",
             authorization.principal_id,
             &name,
             serde_json::to_value(spec).map_err(|_| ApiError::Internal)?,
@@ -899,11 +910,176 @@ async fn delete_realtime_service(
         .begin_delete_service_instance(
             OrganizationId(organization_id),
             ServiceInstanceId(service_instance_id),
+            "flow",
             authorization.principal_id,
         )
         .await
         .map_err(ApiError::from_store)?;
     Ok((StatusCode::ACCEPTED, Json(service)))
+}
+
+#[derive(Default, Deserialize)]
+struct FlashListQuery {
+    project_id: Option<Uuid>,
+}
+
+async fn list_flash_services(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    Query(query): Query<FlashListQuery>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:ListInstances",
+        &flash_collection_resource(organization_id),
+    )
+    .await?;
+    let items = state
+        .store
+        .list_service_instances(
+            OrganizationId(organization_id),
+            query.project_id.map(ProjectId),
+            Some("flash"),
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(json!({ "items": items })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateFlashService {
+    project_id: Uuid,
+    name: String,
+    spec: FlashSpec,
+}
+
+async fn create_flash_service(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<CreateFlashService>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    validate_name(&request.name)?;
+    validate_flash_spec(&request.spec)?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:CreateInstance",
+        &flash_collection_resource(organization_id),
+    )
+    .await?;
+    let instance = state
+        .store
+        .create_service_instance(
+            OrganizationId(organization_id),
+            ProjectId(request.project_id),
+            authorization.principal_id,
+            "flash",
+            &request.name,
+            serde_json::to_value(request.spec).map_err(|_| ApiError::Internal)?,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::ACCEPTED, Json(instance)))
+}
+
+async fn get_flash_service(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<ServiceInstance>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:GetInstance",
+        &flash_service_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    Ok(Json(
+        flash_service(&state, organization_id, service_instance_id).await?,
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateFlashService {
+    name: String,
+    spec: FlashSpec,
+}
+
+async fn update_flash_service(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<UpdateFlashService>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    flash_service(&state, organization_id, service_instance_id).await?;
+    validate_name(&request.name)?;
+    validate_flash_spec(&request.spec)?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:UpdateInstance",
+        &flash_service_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let instance = state
+        .store
+        .update_service_instance(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_instance_id),
+            "flash",
+            authorization.principal_id,
+            &request.name,
+            serde_json::to_value(request.spec).map_err(|_| ApiError::Internal)?,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::ACCEPTED, Json(instance)))
+}
+
+async fn delete_flash_service(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    flash_service(&state, organization_id, service_instance_id).await?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:DeleteInstance",
+        &flash_service_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let instance = state
+        .store
+        .begin_delete_service_instance(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_instance_id),
+            "flash",
+            authorization.principal_id,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::ACCEPTED, Json(instance)))
 }
 
 #[derive(Deserialize)]
@@ -1839,6 +2015,23 @@ async fn realtime_service(
         .ok_or(ApiError::NotFound)
 }
 
+async fn flash_service(
+    state: &AppState,
+    organization_id: Uuid,
+    service_instance_id: Uuid,
+) -> Result<ServiceInstance, ApiError> {
+    state
+        .store
+        .service_instance(ServiceInstanceId(service_instance_id))
+        .await
+        .map_err(ApiError::from_store)?
+        .filter(|service| {
+            service.organization_id == OrganizationId(organization_id)
+                && service.provider == "flash"
+        })
+        .ok_or(ApiError::NotFound)
+}
+
 #[derive(Default, Deserialize)]
 struct AuditQuery {
     limit: Option<i64>,
@@ -2234,6 +2427,17 @@ fn realtime_service_resource(organization_id: Uuid, service_instance_id: Uuid) -
     )
 }
 
+fn flash_collection_resource(organization_id: Uuid) -> String {
+    organization_resource(organization_id, "flash/*")
+}
+
+fn flash_service_resource(organization_id: Uuid, service_instance_id: Uuid) -> String {
+    organization_resource(
+        organization_id,
+        &format!("flash/instance/{service_instance_id}"),
+    )
+}
+
 fn deserialize_stored_flow_spec(mut value: Value) -> Result<FlowSpec, ApiError> {
     let object = value.as_object_mut().ok_or(ApiError::Internal)?;
     object
@@ -2279,6 +2483,11 @@ fn validate_flow_spec(spec: &FlowSpec) -> Result<(), ApiError> {
         return Err(ApiError::BadRequest("metadata must be an object".into()));
     }
     Ok(())
+}
+
+fn validate_flash_spec(spec: &FlashSpec) -> Result<(), ApiError> {
+    spec.validate()
+        .map_err(|error| ApiError::BadRequest(error.to_string()))
 }
 
 fn validate_invitation_ttl(expires_in_hours: i64) -> Result<(), ApiError> {
@@ -2332,6 +2541,7 @@ mod tests {
 
     use chrono::Utc;
     use heterocloud_domain::{
+        FlashExposure, FlashExposureType, FlashPort, FlashProtocol, FlashSpec, FlashTrafficMode,
         FlowRateLimit, FlowSpec, MAX_FLOW_ROOMS, OrganizationId, ProjectId, ServiceInstance,
         ServiceInstanceId, ServiceState,
     };
@@ -2346,11 +2556,12 @@ mod tests {
         FLOW_DEVELOPER_CREDENTIAL_MAX_TTL_DAYS, FLOW_DEVELOPER_CREDENTIAL_MIN_TTL_DAYS,
         FlowDeveloperCredentialCreationResponse, FlowDeveloperCredentialResponse,
         INVITATION_MAX_TTL_HOURS, RealtimeMetricHistoryRange, RealtimeMetricHistoryResponse,
-        SESSION_COOKIE, deserialize_stored_flow_spec, flow_permission_iam_action,
-        parse_api_key_prefix, parse_flow_developer_credential_prefix,
-        validate_developer_credential_expiry, validate_developer_credential_name,
-        validate_flow_access_target, validate_flow_access_ttl, validate_flow_permissions,
-        validate_flow_spec, validate_invitation_ttl, validate_list_limit, validate_slug,
+        SESSION_COOKIE, deserialize_stored_flow_spec, flash_collection_resource,
+        flash_service_resource, flow_permission_iam_action, parse_api_key_prefix,
+        parse_flow_developer_credential_prefix, validate_developer_credential_expiry,
+        validate_developer_credential_name, validate_flash_spec, validate_flow_access_target,
+        validate_flow_access_ttl, validate_flow_permissions, validate_flow_spec,
+        validate_invitation_ttl, validate_list_limit, validate_slug,
     };
 
     #[test]
@@ -2405,6 +2616,42 @@ mod tests {
             )),
             Some((100, 20, 40))
         );
+    }
+
+    #[test]
+    fn flash_validation_and_iam_resources_are_provider_scoped() {
+        let organization_id = Uuid::from_u128(1);
+        let service_id = Uuid::from_u128(2);
+        assert_eq!(
+            flash_collection_resource(organization_id),
+            format!("hc:org:{organization_id}:flash/*")
+        );
+        assert_eq!(
+            flash_service_resource(organization_id, service_id),
+            format!("hc:org:{organization_id}:flash/instance/{service_id}")
+        );
+        let spec = FlashSpec {
+            region: "heteronet-global".into(),
+            image: "ghcr.io/example/udp-server:v1".into(),
+            replicas: 2,
+            cpu_millis: 500,
+            memory_mib: 512,
+            ports: vec![FlashPort {
+                name: "game-udp".into(),
+                protocol: FlashProtocol::Udp,
+                container_port: 7777,
+                service_port: 7777,
+            }],
+            exposure: FlashExposure {
+                exposure_type: FlashExposureType::Public,
+                traffic_mode: FlashTrafficMode::Direct,
+            },
+            env: Default::default(),
+            command: Vec::new(),
+            args: Vec::new(),
+            metadata: Default::default(),
+        };
+        assert!(validate_flash_spec(&spec).is_ok());
     }
 
     #[test]

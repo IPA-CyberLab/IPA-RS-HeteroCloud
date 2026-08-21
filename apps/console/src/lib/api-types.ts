@@ -173,6 +173,80 @@ export interface UpdateRealtimeServiceRequest {
   spec?: RealtimeServiceSpec;
 }
 
+export type FlashPortProtocol = "tcp" | "udp";
+
+export interface FlashPort {
+  name: string;
+  protocol: FlashPortProtocol;
+  container_port: number;
+  service_port: number;
+}
+
+export interface FlashExposure {
+  type: "internal" | "public";
+  traffic_mode: "forwarded" | "direct";
+}
+
+export interface FlashServiceSpec {
+  region: string;
+  image: string;
+  replicas: number;
+  cpu_millis: number;
+  memory_mib: number;
+  ports: FlashPort[];
+  exposure: FlashExposure;
+  env: Record<string, string>;
+  command: string[];
+  args: string[];
+  metadata: Record<string, unknown>;
+}
+
+export interface FlashServiceEndpoint {
+  name?: string;
+  protocol?: FlashPortProtocol | Uppercase<FlashPortProtocol>;
+  host?: string;
+  address?: string;
+  port?: number;
+  url?: string;
+}
+
+export interface FlashServiceStatus {
+  [key: string]: unknown;
+  operation_id?: string;
+  status?: FlashServiceStatus;
+  observed_generation?: number;
+  ready_replicas?: number;
+  available_replicas?: number;
+  runtime_class?: string;
+  message?: string;
+  endpoints?: FlashServiceEndpoint[] | Record<string, unknown>;
+}
+
+export interface FlashService {
+  id: string;
+  organization_id: string;
+  project_id: string;
+  provider: "flash";
+  name: string;
+  generation: number;
+  state: ServiceState;
+  spec: FlashServiceSpec;
+  status: FlashServiceStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateFlashServiceRequest {
+  project_id: string;
+  name: string;
+  spec: FlashServiceSpec;
+}
+
+export interface UpdateFlashServiceRequest {
+  name: string;
+  spec: FlashServiceSpec;
+}
+
 export interface RealtimeServiceMetrics {
   active_rooms: number;
   concurrent_connections: number;

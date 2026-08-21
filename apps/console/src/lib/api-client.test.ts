@@ -388,6 +388,95 @@ describe("HeteroCloudApiClient", () => {
       });
   });
 
+  it("Flashの管理API契約をGET/POST/PUT/DELETEで使う", async () => {
+    const serviceId = "flash-service-1";
+    const input = {
+      project_id: "project-1",
+      name: "game-server",
+      spec: {
+        region: "heteronet-global",
+        image: "ghcr.io/example/game-server:v1",
+        replicas: 3,
+        cpu_millis: 1_000,
+        memory_mib: 2_048,
+        ports: [
+          {
+            name: "game",
+            protocol: "udp" as const,
+            container_port: 7777,
+            service_port: 7777,
+          },
+        ],
+        exposure: { type: "public" as const, traffic_mode: "forwarded" as const },
+        env: { GAME_MODE: "production" },
+        command: ["/app/server"],
+        args: ["--listen", "0.0.0.0:7777"],
+        metadata: {},
+      },
+    };
+    const service = {
+      id: serviceId,
+      organization_id: organizationId,
+      provider: "flash",
+      generation: 1,
+      state: "provisioning",
+      status: {},
+      created_at: "2026-08-21T08:00:00Z",
+      updated_at: "2026-08-21T08:00:00Z",
+      ...input,
+    };
+    const fetcher = vi.fn(
+      async (request: string | URL | Request) => {
+        if (String(request).endsWith("/auth/session")) return jsonResponse(session);
+        if (String(request).endsWith("/flash/services")) {
+          return jsonResponse({ items: [service] });
+        }
+        return jsonResponse(service);
+      },
+    ) as unknown as typeof fetch;
+    const client = new HeteroCloudApiClient("/api/v1", fetcher);
+
+    await client.auth.session();
+    await client.flash.services.list(organizationId);
+    await client.flash.services.create(organizationId, input);
+    await client.flash.services.get(organizationId, serviceId);
+    await client.flash.services.update(organizationId, serviceId, {
+      name: input.name,
+      spec: input.spec,
+    });
+    await client.flash.services.delete(organizationId, serviceId);
+
+    const calls = vi.mocked(fetcher).mock.calls.slice(1);
+    const collection = `/api/v1/organizations/${organizationId}/flash/services`;
+    const item = `${collection}/${serviceId}`;
+    expect(calls.map(([url]) => String(url))).toEqual([
+      collection,
+      collection,
+      item,
+      item,
+      item,
+    ]);
+    expect(calls.map(([, options]) => options?.method ?? "GET")).toEqual([
+      "GET",
+      "POST",
+      "GET",
+      "PUT",
+      "DELETE",
+    ]);
+    expect(JSON.parse(String(calls[1][1]?.body))).toEqual(input);
+    expect(JSON.parse(String(calls[3][1]?.body))).toEqual({
+      name: input.name,
+      spec: input.spec,
+    });
+    calls
+      .filter(([, options]) => ["POST", "PUT", "DELETE"].includes(options?.method ?? ""))
+      .forEach(([, options]) => {
+        expect(new Headers(options?.headers).get("x-heterocloud-csrf")).toBe(
+          session.csrf_token,
+        );
+      });
+  });
+
   it("セッション取得前のcookie mutationを送信しない", async () => {
     const fetcher = vi.fn() as unknown as typeof fetch;
     const client = new HeteroCloudApiClient("/api/v1", fetcher);

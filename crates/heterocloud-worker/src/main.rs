@@ -31,6 +31,9 @@ struct Config {
     #[arg(long, env = "HETEROCLOUD_FLOW_ENDPOINT")]
     flow_endpoint: Url,
 
+    #[arg(long, env = "HETEROCLOUD_FLASH_ENDPOINT")]
+    flash_endpoint: Url,
+
     #[arg(
         long,
         env = "HETEROCLOUD_PROVIDER_ISSUER",
@@ -44,6 +47,13 @@ struct Config {
         default_value = "heterocloud-flow"
     )]
     flow_audience: String,
+
+    #[arg(
+        long,
+        env = "HETEROCLOUD_FLASH_AUDIENCE",
+        default_value = "heterocloud-flash"
+    )]
+    flash_audience: String,
 
     #[arg(
         long,
@@ -80,12 +90,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::parse();
     let database_url = read_secret(&config.database_url_file).await?;
     let signing_key = read_secret_bytes(&config.signing_key_file).await?;
-    let signer = ProviderSigner::from_ed25519_pem(
-        &config.issuer,
-        &config.flow_audience,
-        &config.key_id,
-        &signing_key,
-    )?;
+    let providers = ProviderTargets {
+        flow: ProviderTarget {
+            endpoint: config.flow_endpoint.clone(),
+            signer: ProviderSigner::from_ed25519_pem(
+                &config.issuer,
+                &config.flow_audience,
+                &config.key_id,
+                &signing_key,
+            )?,
+        },
+        flash: ProviderTarget {
+            endpoint: config.flash_endpoint.clone(),
+            signer: ProviderSigner::from_ed25519_pem(
+                &config.issuer,
+                &config.flash_audience,
+                &config.key_id,
+                &signing_key,
+            )?,
+        },
+    };
     let store = Store::connect(
         database_url.expose_secret(),
         config.database_max_connections,
@@ -97,7 +121,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .timeout(Duration::from_secs(15))
         .build()?;
     let poll = Duration::from_millis(config.poll_milliseconds.clamp(100, 30_000));
-    info!(endpoint = %config.flow_endpoint, "provider worker is ready");
+    info!(
+        flow_endpoint = %config.flow_endpoint,
+        flash_endpoint = %config.flash_endpoint,
+        "provider worker is ready"
+    );
 
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
@@ -111,8 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Err(error) = process_one(
                     &store,
                     &client,
-                    &signer,
-                    &config.flow_endpoint,
+                    &providers,
                 ).await {
                     error!(error = %error, "provider event processing failed");
                 }
@@ -134,13 +161,12 @@ fn install_crypto_provider() -> Result<(), std::io::Error> {
 async fn process_one(
     store: &Store,
     client: &reqwest::Client,
-    signer: &ProviderSigner,
-    flow_endpoint: &Url,
+    providers: &ProviderTargets,
 ) -> Result<(), WorkerError> {
     let Some(event) = store.claim_outbox_event().await? else {
         return Ok(());
     };
-    match deliver(store, client, signer, flow_endpoint, &event).await {
+    match deliver(store, client, providers, &event).await {
         Ok(()) => store.mark_outbox_delivered(event.id).await?,
         Err(WorkerError::StalePayload) => {
             warn!(
@@ -165,15 +191,20 @@ async fn process_one(
 async fn deliver(
     store: &Store,
     client: &reqwest::Client,
-    signer: &ProviderSigner,
-    flow_endpoint: &Url,
+    providers: &ProviderTargets,
     event: &OutboxEvent,
 ) -> Result<(), WorkerError> {
     if event.topic == PRINCIPAL_CONTEXT_REVOKE_ACTION {
         let payload: PrincipalContextRevocationPayload =
             serde_json::from_value(event.payload.clone())?;
-        return deliver_principal_context_revocation(client, signer, flow_endpoint, event, payload)
-            .await;
+        return deliver_principal_context_revocation(
+            client,
+            &providers.flow.signer,
+            &providers.flow.endpoint,
+            event,
+            payload,
+        )
+        .await;
     }
     if !matches!(
         event.topic.as_str(),
@@ -182,9 +213,10 @@ async fn deliver(
         return Err(WorkerError::UnsupportedTopic(event.topic.clone()));
     }
     let payload: ReconcilePayload = serde_json::from_value(event.payload.clone())?;
-    if payload.provider != "flow" || payload.service_instance_id.0 != event.aggregate_id {
+    if payload.service_instance_id.0 != event.aggregate_id {
         return Err(WorkerError::InvalidPayload);
     }
+    let target = providers.target(&payload.provider)?;
     let instance = match store.service_instance(payload.service_instance_id).await? {
         Some(instance) => instance,
         None if event.topic == "service-instance.delete" => return Ok(()),
@@ -193,10 +225,11 @@ async fn deliver(
     if instance.generation != payload.generation
         || instance.organization_id != payload.organization_id
         || instance.project_id != payload.project_id
+        || instance.provider != payload.provider
     {
         return Err(WorkerError::StalePayload);
     }
-    let signed = signer.sign(ProviderContext {
+    let signed = target.signer.sign(ProviderContext {
         principal_id: payload.principal_id,
         organization_id: payload.organization_id,
         project_id: payload.project_id,
@@ -204,7 +237,7 @@ async fn deliver(
         action: event.topic.clone(),
         generation: payload.generation,
     })?;
-    let mut url = flow_endpoint.join(&format!(
+    let mut url = target.endpoint.join(&format!(
         "internal/v1/service-instances/{}",
         payload.service_instance_id
     ))?;
@@ -241,21 +274,27 @@ async fn deliver(
     let operation: AcceptedOperation = response.json().await?;
     if event.topic == "service-instance.delete" {
         if !store
-            .complete_delete_service_instance(payload.service_instance_id, payload.generation)
+            .complete_delete_service_instance(
+                payload.service_instance_id,
+                &payload.provider,
+                payload.generation,
+            )
             .await?
         {
             return Err(WorkerError::StalePayload);
         }
         info!(
             service_instance_id = %payload.service_instance_id,
+            provider = payload.provider,
             operation_id = %operation.operation_id,
-            "realtime service deleted"
+            "service instance deleted"
         );
         return Ok(());
     }
     if !store
         .mark_service_instance_ready(
             payload.service_instance_id,
+            &payload.provider,
             payload.generation,
             operation.operation_id,
             operation.status,
@@ -265,6 +304,26 @@ async fn deliver(
         return Err(WorkerError::StalePayload);
     }
     Ok(())
+}
+
+struct ProviderTarget {
+    endpoint: Url,
+    signer: ProviderSigner,
+}
+
+struct ProviderTargets {
+    flow: ProviderTarget,
+    flash: ProviderTarget,
+}
+
+impl ProviderTargets {
+    fn target(&self, provider: &str) -> Result<&ProviderTarget, WorkerError> {
+        match provider {
+            "flow" => Ok(&self.flow),
+            "flash" => Ok(&self.flash),
+            other => Err(WorkerError::UnsupportedProvider(other.to_owned())),
+        }
+    }
 }
 
 async fn deliver_principal_context_revocation(
@@ -435,6 +494,8 @@ enum WorkerError {
     UnsafeSecretPermissions,
     #[error("unsupported outbox topic: {0}")]
     UnsupportedTopic(String),
+    #[error("unsupported provider: {0}")]
+    UnsupportedProvider(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -449,20 +510,71 @@ enum WorkerError {
 mod tests {
     use heterocloud_domain::{OrganizationId, PrincipalId, ProjectId, ServiceInstanceId};
     use heterocloud_provider::{
-        PRINCIPAL_CONTEXT_REVOKE_ACTION, PrincipalContextId, ProviderSigner,
+        PRINCIPAL_CONTEXT_REVOKE_ACTION, PrincipalContextId, ProviderContext, ProviderSigner,
     };
     use heterocloud_store::OutboxEvent;
     use serde_json::json;
     use url::Url;
 
     use super::{
-        PrincipalContextRevocationPayload, deliver_principal_context_revocation,
-        principal_context_revocation_expired, principal_context_revocation_url,
+        PrincipalContextRevocationPayload, ProviderTarget, ProviderTargets, WorkerError,
+        deliver_principal_context_revocation, principal_context_revocation_expired,
+        principal_context_revocation_url,
     };
 
     const TEST_ED25519_PRIVATE_KEY: &[u8] = b"-----BEGIN PRIVATE KEY-----\n\
 MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
 -----END PRIVATE KEY-----\n";
+
+    #[test]
+    fn service_events_select_provider_specific_endpoint_and_audience()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let targets = ProviderTargets {
+            flow: ProviderTarget {
+                endpoint: Url::parse("http://flow.example.test/")?,
+                signer: ProviderSigner::from_ed25519_pem(
+                    "heterocloud",
+                    "heterocloud-flow",
+                    "test-key",
+                    TEST_ED25519_PRIVATE_KEY,
+                )?,
+            },
+            flash: ProviderTarget {
+                endpoint: Url::parse("http://flash.example.test/")?,
+                signer: ProviderSigner::from_ed25519_pem(
+                    "heterocloud",
+                    "heterocloud-flash",
+                    "test-key",
+                    TEST_ED25519_PRIVATE_KEY,
+                )?,
+            },
+        };
+        let flow = targets.target("flow")?;
+        let flash = targets.target("flash")?;
+        assert_eq!(flow.endpoint.as_str(), "http://flow.example.test/");
+        assert_eq!(flash.endpoint.as_str(), "http://flash.example.test/");
+        let context = || ProviderContext {
+            principal_id: PrincipalId(PrincipalContextId::from_u128(1)),
+            organization_id: OrganizationId(PrincipalContextId::from_u128(2)),
+            project_id: ProjectId(PrincipalContextId::from_u128(3)),
+            service_instance_id: ServiceInstanceId(PrincipalContextId::from_u128(4)),
+            action: "service-instance.reconcile".into(),
+            generation: 1,
+        };
+        assert_eq!(
+            flow.signer.sign(context())?.claims.audience,
+            "heterocloud-flow"
+        );
+        assert_eq!(
+            flash.signer.sign(context())?.claims.audience,
+            "heterocloud-flash"
+        );
+        assert!(matches!(
+            targets.target("unknown"),
+            Err(WorkerError::UnsupportedProvider(provider)) if provider == "unknown"
+        ));
+        Ok(())
+    }
 
     #[test]
     fn revocation_uses_exact_provider_action_and_rooted_path()

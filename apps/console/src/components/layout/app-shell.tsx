@@ -23,6 +23,7 @@ const layoutLabels = {
 
 function routeTitle(pathname: string) {
   if (pathname.startsWith("/flow/services/")) return "Flowサービス詳細";
+  if (pathname.startsWith("/flash/services/")) return "Flashサービス詳細";
   return routeTitles[pathname] ?? "HeteroCloud";
 }
 
@@ -32,6 +33,8 @@ function breadcrumbs(pathname: string) {
     items.push({ text: "IAM", href: "/iam/principals" });
   } else if (pathname.startsWith("/flow/")) {
     items.push({ text: "Flow", href: "/flow/services" });
+  } else if (pathname.startsWith("/flash/")) {
+    items.push({ text: "Flash", href: "/flash/services" });
   }
   items.push({ text: routeTitle(pathname), href: pathname });
   return items;

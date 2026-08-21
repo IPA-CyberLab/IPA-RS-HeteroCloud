@@ -422,6 +422,7 @@ async fn test_state() -> Result<
         store
             .mark_service_instance_ready(
                 instance.id,
+                "flow",
                 instance.generation,
                 Uuid::from_u128(10),
                 json!({"phase": "ready"}),

@@ -1,4 +1,7 @@
-use std::fmt;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -223,6 +226,230 @@ pub const DEFAULT_FLOW_RATE_LIMIT_BURST: u32 = 40;
 pub const MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND: u32 = 1_000;
 pub const MAX_FLOW_RATE_LIMIT_BURST: u32 = 5_000;
 
+pub const MIN_FLASH_REPLICAS: u32 = 1;
+pub const MAX_FLASH_REPLICAS: u32 = 100;
+pub const MIN_FLASH_CPU_MILLIS: u32 = 10;
+pub const MAX_FLASH_CPU_MILLIS: u32 = 64_000;
+pub const MIN_FLASH_MEMORY_MIB: u32 = 16;
+pub const MAX_FLASH_MEMORY_MIB: u32 = 262_144;
+pub const MAX_FLASH_PORTS: usize = 16;
+pub const MAX_FLASH_REGION_LENGTH: usize = 63;
+pub const MAX_FLASH_IMAGE_LENGTH: usize = 512;
+pub const MAX_FLASH_PORT_NAME_LENGTH: usize = 63;
+pub const MAX_FLASH_ENV_VARS: usize = 128;
+pub const MAX_FLASH_ENV_KEY_LENGTH: usize = 253;
+pub const MAX_FLASH_ENV_VALUE_LENGTH: usize = 16 * 1024;
+pub const MAX_FLASH_COMMAND_PARTS: usize = 128;
+pub const MAX_FLASH_ARGS: usize = 256;
+pub const MAX_FLASH_PROCESS_VALUE_LENGTH: usize = 4 * 1024;
+pub const MAX_FLASH_METADATA_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FlashProtocol {
+    Tcp,
+    Udp,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlashPort {
+    pub name: String,
+    pub protocol: FlashProtocol,
+    pub container_port: u16,
+    pub service_port: u16,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FlashExposureType {
+    Internal,
+    Public,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FlashTrafficMode {
+    Forwarded,
+    Direct,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlashExposure {
+    #[serde(rename = "type")]
+    pub exposure_type: FlashExposureType,
+    pub traffic_mode: FlashTrafficMode,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlashSpec {
+    pub region: String,
+    pub image: String,
+    pub replicas: u32,
+    pub cpu_millis: u32,
+    pub memory_mib: u32,
+    pub ports: Vec<FlashPort>,
+    pub exposure: FlashExposure,
+    pub env: BTreeMap<String, String>,
+    pub command: Vec<String>,
+    pub args: Vec<String>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl FlashSpec {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        if self.region.is_empty()
+            || self.region.len() > MAX_FLASH_REGION_LENGTH
+            || self
+                .region
+                .bytes()
+                .any(|byte| !byte.is_ascii_lowercase() && !byte.is_ascii_digit() && byte != b'-')
+            || self.region.starts_with('-')
+            || self.region.ends_with('-')
+        {
+            return Err(invalid_flash_spec(format!(
+                "region must be a 1..{MAX_FLASH_REGION_LENGTH} character lowercase DNS label"
+            )));
+        }
+        if self.image.is_empty()
+            || self.image.len() > MAX_FLASH_IMAGE_LENGTH
+            || self.image.chars().any(char::is_whitespace)
+            || self.image.chars().any(char::is_control)
+        {
+            return Err(invalid_flash_spec(
+                "image must be a 1..512 character container image reference without whitespace",
+            ));
+        }
+        if !(MIN_FLASH_REPLICAS..=MAX_FLASH_REPLICAS).contains(&self.replicas) {
+            return Err(invalid_flash_spec(format!(
+                "replicas must be between {MIN_FLASH_REPLICAS} and {MAX_FLASH_REPLICAS}"
+            )));
+        }
+        if !(MIN_FLASH_CPU_MILLIS..=MAX_FLASH_CPU_MILLIS).contains(&self.cpu_millis) {
+            return Err(invalid_flash_spec(format!(
+                "cpu_millis must be between {MIN_FLASH_CPU_MILLIS} and {MAX_FLASH_CPU_MILLIS}"
+            )));
+        }
+        if !(MIN_FLASH_MEMORY_MIB..=MAX_FLASH_MEMORY_MIB).contains(&self.memory_mib) {
+            return Err(invalid_flash_spec(format!(
+                "memory_mib must be between {MIN_FLASH_MEMORY_MIB} and {MAX_FLASH_MEMORY_MIB}"
+            )));
+        }
+        if self.ports.is_empty() || self.ports.len() > MAX_FLASH_PORTS {
+            return Err(invalid_flash_spec(format!(
+                "ports must contain between 1 and {MAX_FLASH_PORTS} entries"
+            )));
+        }
+        let mut port_names = BTreeSet::new();
+        let mut service_ports = BTreeSet::new();
+        for port in &self.ports {
+            if !valid_flash_port_name(&port.name) {
+                return Err(invalid_flash_spec(
+                    "port names must be unique lowercase DNS labels of at most 63 characters",
+                ));
+            }
+            if !port_names.insert(port.name.as_str()) {
+                return Err(invalid_flash_spec("port names must be unique"));
+            }
+            if port.container_port == 0 || port.service_port == 0 {
+                return Err(invalid_flash_spec(
+                    "container_port and service_port must be between 1 and 65535",
+                ));
+            }
+            if !service_ports.insert((port.protocol, port.service_port)) {
+                return Err(invalid_flash_spec(
+                    "service_port must be unique within each protocol",
+                ));
+            }
+        }
+        if self.exposure.exposure_type == FlashExposureType::Internal
+            && self.exposure.traffic_mode != FlashTrafficMode::Forwarded
+        {
+            return Err(invalid_flash_spec(
+                "internal exposure requires forwarded traffic_mode",
+            ));
+        }
+        if self.env.len() > MAX_FLASH_ENV_VARS {
+            return Err(invalid_flash_spec(format!(
+                "env must contain at most {MAX_FLASH_ENV_VARS} entries"
+            )));
+        }
+        for (name, value) in &self.env {
+            if !valid_flash_env_name(name) {
+                return Err(invalid_flash_spec(
+                    "environment variable names must be valid C identifiers",
+                ));
+            }
+            if value.len() > MAX_FLASH_ENV_VALUE_LENGTH || value.contains('\0') {
+                return Err(invalid_flash_spec(format!(
+                    "environment variable values must be at most {MAX_FLASH_ENV_VALUE_LENGTH} bytes and cannot contain NUL"
+                )));
+            }
+        }
+        validate_process_values("command", &self.command, MAX_FLASH_COMMAND_PARTS)?;
+        validate_process_values("args", &self.args, MAX_FLASH_ARGS)?;
+        let metadata_bytes = serde_json::to_vec(&self.metadata)
+            .map_err(|_| invalid_flash_spec("metadata must be valid JSON"))?;
+        if metadata_bytes.len() > MAX_FLASH_METADATA_BYTES {
+            return Err(invalid_flash_spec(format!(
+                "metadata must not exceed {MAX_FLASH_METADATA_BYTES} serialized bytes"
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn valid_flash_port_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_FLASH_PORT_NAME_LENGTH
+        && name.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+        && name
+            .as_bytes()
+            .last()
+            .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+fn valid_flash_env_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_FLASH_ENV_KEY_LENGTH
+        && name
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+fn validate_process_values(
+    field: &str,
+    values: &[String],
+    maximum_parts: usize,
+) -> Result<(), DomainError> {
+    if values.len() > maximum_parts {
+        return Err(invalid_flash_spec(format!(
+            "{field} must contain at most {maximum_parts} entries"
+        )));
+    }
+    if values.iter().any(|value| {
+        value.is_empty() || value.len() > MAX_FLASH_PROCESS_VALUE_LENGTH || value.contains('\0')
+    }) {
+        return Err(invalid_flash_spec(format!(
+            "{field} entries must be non-empty, at most {MAX_FLASH_PROCESS_VALUE_LENGTH} bytes, and cannot contain NUL"
+        )));
+    }
+    Ok(())
+}
+
+fn invalid_flash_spec(message: impl Into<String>) -> DomainError {
+    DomainError::InvalidFlashSpec(message.into())
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceState {
@@ -250,6 +477,8 @@ pub struct ServiceInstance {
 
 #[derive(Debug, Error)]
 pub enum DomainError {
+    #[error("invalid Flash spec: {0}")]
+    InvalidFlashSpec(String),
     #[error("invalid policy: {0}")]
     InvalidPolicy(String),
     #[error("unsupported policy version: {0}")]
@@ -262,7 +491,8 @@ mod tests {
 
     use super::{
         DEFAULT_FLOW_MAX_ROOMS, DEFAULT_FLOW_RATE_LIMIT_BURST,
-        DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, FlowRateLimit, FlowSpec, POLICY_VERSION,
+        DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, FlashExposure, FlashExposureType, FlashPort,
+        FlashProtocol, FlashSpec, FlashTrafficMode, FlowRateLimit, FlowSpec, POLICY_VERSION,
         PolicyDocument, PolicyEffect, PolicyStatement,
     };
 
@@ -343,6 +573,71 @@ mod tests {
             "metadata": {}
         }));
         assert!(spec.is_err());
+    }
+
+    fn flash_spec() -> FlashSpec {
+        FlashSpec {
+            region: "heteronet-global".into(),
+            image: "ghcr.io/example/game-server:v1".into(),
+            replicas: 3,
+            cpu_millis: 500,
+            memory_mib: 512,
+            ports: vec![FlashPort {
+                name: "game-udp".into(),
+                protocol: FlashProtocol::Udp,
+                container_port: 7777,
+                service_port: 7777,
+            }],
+            exposure: FlashExposure {
+                exposure_type: FlashExposureType::Public,
+                traffic_mode: FlashTrafficMode::Direct,
+            },
+            env: [("LOG_LEVEL".into(), "info".into())].into_iter().collect(),
+            command: vec!["/app/server".into()],
+            args: vec!["--port=7777".into()],
+            metadata: [("team".into(), json!("simulation"))].into_iter().collect(),
+        }
+    }
+
+    #[test]
+    fn flash_spec_json_contract_is_exact_and_strict() -> Result<(), Box<dyn std::error::Error>> {
+        let spec = flash_spec();
+        spec.validate()?;
+        let value = serde_json::to_value(&spec)?;
+        assert_eq!(value["ports"][0]["protocol"], json!("udp"));
+        assert_eq!(value["exposure"]["type"], json!("public"));
+        assert_eq!(value["exposure"]["traffic_mode"], json!("direct"));
+
+        let mut unknown = value;
+        unknown["runtime_class"] = json!("runc");
+        assert!(serde_json::from_value::<FlashSpec>(unknown).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn flash_spec_rejects_unsafe_or_ambiguous_workloads() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut spec = flash_spec();
+        spec.ports.push(spec.ports[0].clone());
+        assert!(spec.validate().is_err());
+
+        let mut spec = flash_spec();
+        spec.image = "invalid image".into();
+        assert!(spec.validate().is_err());
+
+        let mut spec = flash_spec();
+        spec.env.insert("INVALID-NAME".into(), "value".into());
+        assert!(spec.validate().is_err());
+
+        let mut spec = flash_spec();
+        spec.exposure.exposure_type = FlashExposureType::Internal;
+        spec.exposure.traffic_mode = FlashTrafficMode::Direct;
+        assert!(spec.validate().is_err());
+
+        let mut value = serde_json::to_value(flash_spec())?;
+        value["metadata"] = json!([]);
+        assert!(serde_json::from_value::<FlashSpec>(value).is_err());
+        Ok(())
     }
 
     #[test]

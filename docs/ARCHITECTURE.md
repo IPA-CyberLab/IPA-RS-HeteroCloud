@@ -4,14 +4,19 @@
 
 HeteroCloud is a multi-tenant management plane. Its durable identifiers and
 authorization decisions are independent of any individual service provider.
-Flow receives opaque organization, project, principal, and instance IDs; it
-does not read HeteroCloud's customer tables.
+Flow and Flash receive opaque organization, project, principal, and instance
+IDs; neither provider reads HeteroCloud's customer tables.
 
 HeteroNetwork remains an infrastructure dependency. It exposes the Kubernetes
 `heteronetwork.io/public` load-balancer class. Flow fixes TURN to the direct
 data path and all other public services to the forwarded data path; this is an
 operator-owned deployment policy rather than a customer setting. No
 HeteroCloud customer model is compiled into HeteroNetwork.
+
+Flash is the gVisor-backed container provider. HeteroCloud stores its desired
+image, resources, TCP/UDP ports, and exposure policy as a strict provider spec.
+The Flash provider, rather than the management API, converts that spec into
+runtime-class-constrained Kubernetes workloads and HeteroNetwork services.
 
 ## DNS reconciliation
 
@@ -40,7 +45,14 @@ are never published by default.
 4. Applicable explicit denies override allows. Missing allows deny by default.
 5. The decision and Lean semantics digest are written to the audit log.
 6. A service mutation commits desired state and an outbox event atomically.
-7. A provider worker signs a short-lived `provider/v1` command for Flow.
+7. A provider worker selects the immutable instance provider and signs a
+   short-lived `provider/v1` command for Flow or Flash.
+
+Flow and Flash use separate JWT audiences (`heterocloud-flow` and
+`heterocloud-flash`) even though the management plane uses the same Ed25519
+signing key. The worker also verifies that the outbox provider matches the
+stored service instance before delivery. Flow principal-context revocations
+remain Flow-only and are never dispatched to Flash.
 
 Flow data-plane access is a separate path. An authenticated user or API key
 requests an instance-scoped context. IAM evaluates
@@ -75,6 +87,11 @@ Policy documents use a deliberately small initial language:
 }
 ```
 
+Flash uses the same policy semantics with provider-scoped names, for example
+`flash:ListInstances` and `flash:CreateInstance` against
+`hc:org:<organization UUID>:flash/*`. Instance reads and mutations use
+`hc:org:<organization UUID>:flash/instance/<instance UUID>`.
+
 Only exact matches and terminal-prefix wildcards are accepted. Unknown fields,
 middle wildcards, unknown policy versions, empty statements, and oversized
 documents are rejected. Organization owners are a database membership role;
@@ -104,9 +121,9 @@ later, `hostNetwork` can be disabled without changing the API.
 
 Provider commands use a transactional outbox. A replica or provider outage
 therefore delays reconciliation without losing accepted desired state.
-After Flow accepts a reconcile operation, the worker records its operation ID
-and provider status and changes the instance to `ready` only when the stored
-generation still matches the delivered generation.
+After Flow or Flash accepts a reconcile operation, the worker records its
+operation ID and provider status and changes the instance to `ready` only when
+the stored generation and provider still match the delivered event.
 
 The HeteroNet production profile schedules all three API replicas and all
 three provider workers on the three control-plane nodes. Required anti-affinity

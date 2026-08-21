@@ -2,7 +2,7 @@ use std::{env, error::Error};
 
 use chrono::{Duration, TimeZone, Utc};
 use heterocloud_domain::{OrganizationId, ProjectId, ServiceInstanceId, ServiceState};
-use heterocloud_store::{BootstrapAdmin, NewRealtimeMetricSample, Store};
+use heterocloud_store::{BootstrapAdmin, NewRealtimeMetricSample, Store, StoreError};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -64,6 +64,7 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
         !store
             .mark_service_instance_ready(
                 instance.id,
+                "flow",
                 instance.generation + 1,
                 operation_id,
                 json!("accepted"),
@@ -82,6 +83,7 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
         store
             .mark_service_instance_ready(
                 instance.id,
+                "flow",
                 instance.generation,
                 operation_id,
                 json!({"phase": "accepted"}),
@@ -161,24 +163,88 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0].service_instance_id, instance.id);
 
-    let non_flow = store
+    let flash = store
         .create_service_instance(
             organization_id,
             ProjectId(project.id.0),
             membership.principal_id,
-            "other",
-            "other-service",
+            "flash",
+            "flash-service",
             json!({}),
         )
         .await?;
     assert!(
         !store
             .mark_service_instance_ready(
-                non_flow.id,
-                non_flow.generation,
+                flash.id,
+                "flow",
+                flash.generation,
                 Uuid::from_u128(43),
                 json!("accepted"),
             )
+            .await?
+    );
+    assert!(
+        store
+            .mark_service_instance_ready(
+                flash.id,
+                "flash",
+                flash.generation,
+                Uuid::from_u128(44),
+                json!({"phase": "ready"}),
+            )
+            .await?
+    );
+    let targets = store.list_ready_flow_metric_targets().await?;
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].service_instance_id, instance.id);
+    assert!(matches!(
+        store
+            .update_service_instance(
+                organization_id,
+                flash.id,
+                "flow",
+                membership.principal_id,
+                "wrong-provider",
+                json!({}),
+            )
+            .await,
+        Err(StoreError::NotFound)
+    ));
+    let flash = store
+        .update_service_instance(
+            organization_id,
+            flash.id,
+            "flash",
+            membership.principal_id,
+            "flash-service-updated",
+            json!({"replicas": 2}),
+        )
+        .await?;
+    assert_eq!(flash.provider, "flash");
+    assert_eq!(flash.spec, json!({"replicas": 2}));
+    assert!(matches!(
+        store
+            .begin_delete_service_instance(
+                organization_id,
+                flash.id,
+                "flow",
+                membership.principal_id,
+            )
+            .await,
+        Err(StoreError::NotFound)
+    ));
+    let deleting = store
+        .begin_delete_service_instance(organization_id, flash.id, "flash", membership.principal_id)
+        .await?;
+    assert!(
+        !store
+            .complete_delete_service_instance(deleting.id, "flow", deleting.generation)
+            .await?
+    );
+    assert!(
+        store
+            .complete_delete_service_instance(deleting.id, "flash", deleting.generation)
             .await?
     );
     Ok(())

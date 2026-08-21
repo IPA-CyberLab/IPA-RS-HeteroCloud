@@ -70,8 +70,10 @@ spec:
             - --database-url-file=/var/run/secrets/runtime/database-url
             - --signing-key-file=/var/run/secrets/provider/ed25519-private.pem
             - --flow-endpoint={{ .Values.worker.flowEndpoint }}
+            - --flash-endpoint={{ .Values.worker.flashEndpoint }}
             - --issuer={{ .Values.worker.providerIssuer }}
             - --flow-audience={{ .Values.worker.flowAudience }}
+            - --flash-audience={{ .Values.worker.flashAudience }}
             - --key-id={{ .Values.worker.providerKeyId }}
             - --poll-milliseconds={{ .Values.worker.pollMilliseconds }}
             - --database-max-connections={{ .Values.worker.databaseMaxConnections }}

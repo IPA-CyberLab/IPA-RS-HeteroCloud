@@ -151,6 +151,32 @@ export function realtimeAccessContextsQueryOptions(
   });
 }
 
+export function flashServicesQueryOptions(organizationId: string) {
+  return queryOptions({
+    queryKey: ["organizations", organizationId, "flash", "services"],
+    queryFn: ({ signal }) => api.flash.services.list(organizationId, signal),
+  });
+}
+
+export function flashServiceQueryOptions(
+  organizationId: string,
+  serviceId: string,
+) {
+  return queryOptions({
+    queryKey: [
+      "organizations",
+      organizationId,
+      "flash",
+      "services",
+      serviceId,
+    ],
+    queryFn: ({ signal }) =>
+      api.flash.services.get(organizationId, serviceId, signal),
+    refetchInterval: 15_000,
+    staleTime: 5_000,
+  });
+}
+
 export function auditEventsQueryOptions(organizationId: string) {
   return queryOptions({
     queryKey: ["organizations", organizationId, "audit-events"],

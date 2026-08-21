@@ -32,8 +32,10 @@ image:
 worker:
   replicaCount: 4
   flowEndpoint: http://heterocloud-flow-api.heterocloud-flow.svc.cluster.local:8080/
+  flashEndpoint: http://heterocloud-flash-api.heterocloud-flash.svc.cluster.local:8080/
   providerIssuer: heterocloud
   flowAudience: heterocloud-flow
+  flashAudience: heterocloud-flash
   providerKeyId: heterocloud-provider-1
 
 service:

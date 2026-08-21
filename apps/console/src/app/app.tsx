@@ -51,6 +51,16 @@ const RealtimeServiceDetailPage = lazy(() =>
     default: module.RealtimeServiceDetailPage,
   })),
 );
+const FlashServicesPage = lazy(() =>
+  import("@/features/flash/flash-services-page").then((module) => ({
+    default: module.FlashServicesPage,
+  })),
+);
+const FlashServiceDetailPage = lazy(() =>
+  import("@/features/flash/flash-service-detail-page").then((module) => ({
+    default: module.FlashServiceDetailPage,
+  })),
+);
 const AuditLogsPage = lazy(() =>
   import("@/features/audit/audit-logs-page").then((module) => ({
     default: module.AuditLogsPage,
@@ -154,6 +164,22 @@ export function App() {
                 element={
                   <LazyPage>
                     <RealtimeServiceDetailPage />
+                  </LazyPage>
+                }
+              />
+              <Route
+                path="/flash/services"
+                element={
+                  <LazyPage>
+                    <FlashServicesPage />
+                  </LazyPage>
+                }
+              />
+              <Route
+                path="/flash/services/:serviceId"
+                element={
+                  <LazyPage>
+                    <FlashServiceDetailPage />
                   </LazyPage>
                 }
               />

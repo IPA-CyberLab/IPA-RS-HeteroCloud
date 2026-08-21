@@ -33,8 +33,10 @@ flowInternalEndpoint: http://heterocloud-flow-api.heterocloud-flow.svc.cluster.l
 worker:
   replicaCount: 3
   flowEndpoint: http://heterocloud-flow-api.heterocloud-flow.svc.cluster.local:8080/
+  flashEndpoint: http://heterocloud-flash-api.heterocloud-flash.svc.cluster.local:8080/
   providerIssuer: heterocloud
   flowAudience: heterocloud-flow
+  flashAudience: heterocloud-flash
   providerKeyId: heterocloud-provider-1
   pollMilliseconds: 500
   databaseMaxConnections: 5
