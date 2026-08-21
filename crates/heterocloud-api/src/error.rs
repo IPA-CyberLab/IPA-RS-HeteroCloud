@@ -40,6 +40,7 @@ impl ApiError {
                 Self::BadRequest("The invitation is invalid or no longer available.".into())
             }
             heterocloud_store::StoreError::NotFound => Self::NotFound,
+            heterocloud_store::StoreError::RequestRejected(message) => Self::BadRequest(message),
             heterocloud_store::StoreError::Sql(ref sql_error) if is_unique_violation(sql_error) => {
                 Self::Conflict
             }

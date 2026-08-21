@@ -1,4 +1,3 @@
-import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
 import FormField from "@cloudscape-design/components/form-field";
@@ -7,15 +6,15 @@ import Input from "@cloudscape-design/components/input";
 import SegmentedControl from "@cloudscape-design/components/segmented-control";
 import Select from "@cloudscape-design/components/select";
 import SpaceBetween from "@cloudscape-design/components/space-between";
-import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Textarea from "@cloudscape-design/components/textarea";
 import type { FormEvent, ReactNode } from "react";
 import { ProjectSelector } from "@/components/shared/resource-selectors";
 import type {
   FlashExposure,
-  FlashPort,
+  FlashPortInput,
   FlashPortProtocol,
   FlashServiceSpec,
+  FlashServiceSpecInput,
 } from "@/lib/api-types";
 
 export interface FlashServiceFormValue {
@@ -26,7 +25,7 @@ export interface FlashServiceFormValue {
   replicas: number;
   cpuMillis: number;
   memoryMib: number;
-  ports: FlashPort[];
+  ports: FlashPortInput[];
   exposureType: FlashExposure["type"];
   trafficMode: FlashExposure["traffic_mode"];
   environment: string;
@@ -47,7 +46,6 @@ export const defaultFlashServiceFormValue: FlashServiceFormValue = {
       name: "udp",
       protocol: "udp",
       container_port: 7777,
-      service_port: 7777,
     },
   ],
   exposureType: "public",
@@ -116,18 +114,12 @@ export function flashFormValidationError(
   }
   if (value.ports.length === 0) return "ポートを1つ以上追加してください。";
   const names = new Set<string>();
-  const servicePorts = new Set<string>();
   for (const port of value.ports) {
     if (!/^[a-z][a-z0-9-]{0,14}$/.test(port.name)) {
       return "ポート名は英小文字から始まる15文字以内の英数字とハイフンで入力してください。";
     }
     if (names.has(port.name)) return `ポート名 ${port.name} が重複しています。`;
     names.add(port.name);
-    const serviceKey = `${port.protocol}:${port.service_port}`;
-    if (servicePorts.has(serviceKey)) {
-      return `${port.protocol.toUpperCase()} ${port.service_port} が重複しています。`;
-    }
-    servicePorts.add(serviceKey);
   }
   return parseFlashEnvironment(value.environment).error;
 }
@@ -135,7 +127,7 @@ export function flashFormValidationError(
 export function flashSpecFromForm(
   value: FlashServiceFormValue,
   metadata: Record<string, unknown> = {},
-): FlashServiceSpec {
+): FlashServiceSpecInput {
   return {
     region: value.region,
     image: value.image.trim(),
@@ -170,7 +162,11 @@ export function flashFormFromService(
     replicas: service.spec.replicas,
     cpuMillis: service.spec.cpu_millis,
     memoryMib: service.spec.memory_mib,
-    ports: service.spec.ports.map((port) => ({ ...port })),
+    ports: service.spec.ports.map(({ name, protocol, container_port }) => ({
+      name,
+      protocol,
+      container_port,
+    })),
     exposureType: service.spec.exposure.type,
     trafficMode: service.spec.exposure.traffic_mode,
     environment: Object.entries(service.spec.env)
@@ -200,10 +196,10 @@ export function FlashServiceForm({
     key: Key,
     nextValue: FlashServiceFormValue[Key],
   ) => onChange({ ...value, [key]: nextValue });
-  const updatePort = <Key extends keyof FlashPort>(
+  const updatePort = <Key extends keyof FlashPortInput>(
     index: number,
     key: Key,
-    nextValue: FlashPort[Key],
+    nextValue: FlashPortInput[Key],
   ) => {
     const ports = value.ports.map((port, portIndex) =>
       portIndex === index ? { ...port, [key]: nextValue } : port,
@@ -232,21 +228,14 @@ export function FlashServiceForm({
             />
           </FormField>
         </ColumnLayout>
-        <ColumnLayout columns={2}>
-          <FormField label="コンテナイメージ">
-            <Input
-              value={value.image}
-              disabled={disabled}
-              placeholder="ghcr.io/example/game-server:v1"
-              onChange={({ detail }) => update("image", detail.value.slice(0, 500))}
-            />
-          </FormField>
-          <FormField label="実行ランタイム">
-            <Box padding={{ vertical: "s" }}>
-              <StatusIndicator type="success">gVisor（強制）</StatusIndicator>
-            </Box>
-          </FormField>
-        </ColumnLayout>
+        <FormField label="コンテナイメージ">
+          <Input
+            value={value.image}
+            disabled={disabled}
+            placeholder="ghcr.io/example/game-server:v1"
+            onChange={({ detail }) => update("image", detail.value.slice(0, 500))}
+          />
+        </FormField>
         <ColumnLayout columns={4}>
           <FormField label="リージョン">
             <Select
@@ -268,26 +257,26 @@ export function FlashServiceForm({
               onChange={({ detail }) => update("replicas", boundedInteger(detail.value, 1, 100, value.replicas))}
             />
           </FormField>
-          <FormField label="CPU" constraintText="millicores">
+          <FormField label="CPU" constraintText="10〜4,000 millicores">
             <Input
               type="number"
               inputMode="numeric"
               step={100}
-              nativeInputAttributes={{ min: 50, max: 64_000 }}
+              nativeInputAttributes={{ min: 10, max: 4_000 }}
               value={String(value.cpuMillis)}
               disabled={disabled}
-              onChange={({ detail }) => update("cpuMillis", boundedInteger(detail.value, 50, 64_000, value.cpuMillis))}
+              onChange={({ detail }) => update("cpuMillis", boundedInteger(detail.value, 10, 4_000, value.cpuMillis))}
             />
           </FormField>
-          <FormField label="メモリ" constraintText="MiB">
+          <FormField label="メモリ" constraintText="16〜8,128 MiB">
             <Input
               type="number"
               inputMode="numeric"
               step={64}
-              nativeInputAttributes={{ min: 64, max: 262_144 }}
+              nativeInputAttributes={{ min: 16, max: 8_128 }}
               value={String(value.memoryMib)}
               disabled={disabled}
-              onChange={({ detail }) => update("memoryMib", boundedInteger(detail.value, 64, 262_144, value.memoryMib))}
+              onChange={({ detail }) => update("memoryMib", boundedInteger(detail.value, 16, 8_128, value.memoryMib))}
             />
           </FormField>
         </ColumnLayout>
@@ -350,7 +339,6 @@ export function FlashServiceForm({
                       name: `port-${value.ports.length + 1}`,
                       protocol: "udp",
                       container_port: 7777,
-                      service_port: 7777 + value.ports.length,
                     },
                   ])
                 }
@@ -362,7 +350,7 @@ export function FlashServiceForm({
             ポート
           </Header>
           {value.ports.map((port, index) => (
-            <ColumnLayout columns={5} key={index}>
+            <ColumnLayout columns={4} key={index}>
               <FormField label="名前">
                 <Input
                   value={port.name}
@@ -387,16 +375,6 @@ export function FlashServiceForm({
                   value={String(port.container_port)}
                   disabled={disabled}
                   onChange={({ detail }) => updatePort(index, "container_port", boundedInteger(detail.value, 1, 65_535, port.container_port))}
-                />
-              </FormField>
-              <FormField label="サービスポート">
-                <Input
-                  type="number"
-                  inputMode="numeric"
-                  nativeInputAttributes={{ min: 1, max: 65_535 }}
-                  value={String(port.service_port)}
-                  disabled={disabled}
-                  onChange={({ detail }) => updatePort(index, "service_port", boundedInteger(detail.value, 1, 65_535, port.service_port))}
                 />
               </FormField>
               <FormField label="操作">

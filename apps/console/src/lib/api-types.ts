@@ -175,10 +175,13 @@ export interface UpdateRealtimeServiceRequest {
 
 export type FlashPortProtocol = "tcp" | "udp";
 
-export interface FlashPort {
+export interface FlashPortInput {
   name: string;
   protocol: FlashPortProtocol;
   container_port: number;
+}
+
+export interface FlashPort extends FlashPortInput {
   service_port: number;
 }
 
@@ -199,6 +202,10 @@ export interface FlashServiceSpec {
   command: string[];
   args: string[];
   metadata: Record<string, unknown>;
+}
+
+export interface FlashServiceSpecInput extends Omit<FlashServiceSpec, "ports"> {
+  ports: FlashPortInput[];
 }
 
 export interface FlashServiceEndpoint {
@@ -239,12 +246,12 @@ export interface FlashService {
 export interface CreateFlashServiceRequest {
   project_id: string;
   name: string;
-  spec: FlashServiceSpec;
+  spec: FlashServiceSpecInput;
 }
 
 export interface UpdateFlashServiceRequest {
   name: string;
-  spec: FlashServiceSpec;
+  spec: FlashServiceSpecInput;
 }
 
 export interface RealtimeServiceMetrics {

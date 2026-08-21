@@ -33,16 +33,18 @@ function FormHarness() {
 }
 
 describe("FlashServiceForm", () => {
-  it("gVisorを強制表示し、既定のUDPポートとリソースを編集できる", () => {
+  it("自動公開ポートとリソース上限を適用する", () => {
     render(<FormHarness />);
 
-    expect(screen.getByText("gVisor（強制）")).toBeInTheDocument();
-    expect(screen.queryByRole("combobox", { name: /ランタイム/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/gVisor/)).not.toBeInTheDocument();
+    expect(screen.queryByText("実行ランタイム")).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "レプリカ" })).toHaveValue(1);
     expect(screen.getByRole("spinbutton", { name: "CPU" })).toHaveValue(500);
     expect(screen.getByRole("spinbutton", { name: "メモリ" })).toHaveValue(512);
     expect(screen.getByRole("button", { name: /udpのプロトコル/ })).toHaveTextContent("UDP");
-    expect(screen.getAllByRole("spinbutton", { name: "サービスポート" })[0]).toHaveValue(7777);
+    expect(screen.queryByRole("spinbutton", { name: "サービスポート" })).not.toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "CPU" })).toHaveAttribute("max", "4000");
+    expect(screen.getByRole("spinbutton", { name: "メモリ" })).toHaveAttribute("max", "8128");
 
     fireEvent.change(screen.getByRole("spinbutton", { name: "レプリカ" }), {
       target: { value: "4" },
@@ -72,13 +74,12 @@ describe("FlashServiceForm", () => {
           name: "udp",
           protocol: "udp",
           container_port: 7777,
-          service_port: 7777,
         },
       ],
     });
   });
 
-  it("不正または重複した環境変数とポートを拒否する", () => {
+  it("不正または重複した環境変数とポート名を拒否する", () => {
     expect(parseFlashEnvironment("INVALID LINE").error).toContain("KEY=value");
     expect(parseFlashEnvironment("PORT=1\nPORT=2").error).toContain("重複");
 
@@ -89,10 +90,10 @@ describe("FlashServiceForm", () => {
       image: "ghcr.io/example/game-server:v1",
       ports: [
         ...defaultFlashServiceFormValue.ports,
-        { ...defaultFlashServiceFormValue.ports[0], name: "udp-2" },
+        { ...defaultFlashServiceFormValue.ports[0] },
       ],
     };
-    expect(flashFormValidationError(value)).toContain("UDP 7777");
+    expect(flashFormValidationError(value)).toContain("ポート名 udp");
   });
 
   it("内部公開を転送モードへ固定する", () => {

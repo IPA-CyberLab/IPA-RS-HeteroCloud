@@ -229,9 +229,13 @@ pub const MAX_FLOW_RATE_LIMIT_BURST: u32 = 5_000;
 pub const MIN_FLASH_REPLICAS: u32 = 1;
 pub const MAX_FLASH_REPLICAS: u32 = 100;
 pub const MIN_FLASH_CPU_MILLIS: u32 = 10;
-pub const MAX_FLASH_CPU_MILLIS: u32 = 64_000;
+pub const MAX_FLASH_CPU_MILLIS: u32 = 4_000;
 pub const MIN_FLASH_MEMORY_MIB: u32 = 16;
-pub const MAX_FLASH_MEMORY_MIB: u32 = 262_144;
+pub const MAX_FLASH_MEMORY_MIB: u32 = 8_128;
+pub const MAX_FLASH_ORGANIZATION_CPU_MILLIS: u64 = 20_000;
+pub const MAX_FLASH_ORGANIZATION_MEMORY_MIB: u64 = 32_768;
+pub const MIN_FLASH_SERVICE_PORT: u16 = 30_000;
+pub const MAX_FLASH_SERVICE_PORT: u16 = 32_767;
 pub const MAX_FLASH_PORTS: usize = 16;
 pub const MAX_FLASH_REGION_LENGTH: usize = 63;
 pub const MAX_FLASH_IMAGE_LENGTH: usize = 512;
@@ -257,6 +261,7 @@ pub struct FlashPort {
     pub name: String,
     pub protocol: FlashProtocol,
     pub container_port: u16,
+    #[serde(default)]
     pub service_port: u16,
 }
 
@@ -300,6 +305,14 @@ pub struct FlashSpec {
 
 impl FlashSpec {
     pub fn validate(&self) -> Result<(), DomainError> {
+        self.validate_inner(true)
+    }
+
+    pub fn validate_request(&self) -> Result<(), DomainError> {
+        self.validate_inner(false)
+    }
+
+    fn validate_inner(&self, require_assigned_service_ports: bool) -> Result<(), DomainError> {
         if self.region.is_empty()
             || self.region.len() > MAX_FLASH_REGION_LENGTH
             || self
@@ -353,12 +366,21 @@ impl FlashSpec {
             if !port_names.insert(port.name.as_str()) {
                 return Err(invalid_flash_spec("port names must be unique"));
             }
-            if port.container_port == 0 || port.service_port == 0 {
+            if port.container_port == 0 {
                 return Err(invalid_flash_spec(
-                    "container_port and service_port must be between 1 and 65535",
+                    "container_port must be between 1 and 65535",
                 ));
             }
-            if !service_ports.insert((port.protocol, port.service_port)) {
+            if require_assigned_service_ports
+                && !(MIN_FLASH_SERVICE_PORT..=MAX_FLASH_SERVICE_PORT).contains(&port.service_port)
+            {
+                return Err(invalid_flash_spec(format!(
+                    "service_port must be assigned between {MIN_FLASH_SERVICE_PORT} and {MAX_FLASH_SERVICE_PORT}"
+                )));
+            }
+            if require_assigned_service_ports
+                && !service_ports.insert((port.protocol, port.service_port))
+            {
                 return Err(invalid_flash_spec(
                     "service_port must be unique within each protocol",
                 ));
@@ -492,8 +514,8 @@ mod tests {
     use super::{
         DEFAULT_FLOW_MAX_ROOMS, DEFAULT_FLOW_RATE_LIMIT_BURST,
         DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, FlashExposure, FlashExposureType, FlashPort,
-        FlashProtocol, FlashSpec, FlashTrafficMode, FlowRateLimit, FlowSpec, POLICY_VERSION,
-        PolicyDocument, PolicyEffect, PolicyStatement,
+        FlashProtocol, FlashSpec, FlashTrafficMode, FlowRateLimit, FlowSpec,
+        MIN_FLASH_SERVICE_PORT, POLICY_VERSION, PolicyDocument, PolicyEffect, PolicyStatement,
     };
 
     #[test]
@@ -586,7 +608,7 @@ mod tests {
                 name: "game-udp".into(),
                 protocol: FlashProtocol::Udp,
                 container_port: 7777,
-                service_port: 7777,
+                service_port: MIN_FLASH_SERVICE_PORT,
             }],
             exposure: FlashExposure {
                 exposure_type: FlashExposureType::Public,
@@ -611,6 +633,20 @@ mod tests {
         let mut unknown = value;
         unknown["runtime_class"] = json!("runc");
         assert!(serde_json::from_value::<FlashSpec>(unknown).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn flash_request_allows_server_assigned_service_port() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut value = serde_json::to_value(flash_spec())?;
+        value["ports"][0]
+            .as_object_mut()
+            .ok_or("port must be an object")?
+            .remove("service_port");
+        let spec = serde_json::from_value::<FlashSpec>(value)?;
+        spec.validate_request()?;
+        assert!(spec.validate().is_err());
         Ok(())
     }
 

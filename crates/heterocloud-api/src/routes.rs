@@ -2486,7 +2486,7 @@ fn validate_flow_spec(spec: &FlowSpec) -> Result<(), ApiError> {
 }
 
 fn validate_flash_spec(spec: &FlashSpec) -> Result<(), ApiError> {
-    spec.validate()
+    spec.validate_request()
         .map_err(|error| ApiError::BadRequest(error.to_string()))
 }
 
@@ -2640,7 +2640,7 @@ mod tests {
                 name: "game-udp".into(),
                 protocol: FlashProtocol::Udp,
                 container_port: 7777,
-                service_port: 7777,
+                service_port: 0,
             }],
             exposure: FlashExposure {
                 exposure_type: FlashExposureType::Public,

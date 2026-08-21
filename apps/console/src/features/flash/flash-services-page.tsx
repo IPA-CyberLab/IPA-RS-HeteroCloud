@@ -101,11 +101,6 @@ export function FlashServicesPage() {
         ),
       },
       {
-        id: "runtime",
-        header: "ランタイム",
-        accessorFn: () => "gVisor",
-      },
-      {
         id: "image",
         header: "イメージ",
         accessorFn: (service) => service.spec.image,
@@ -175,7 +170,7 @@ export function FlashServicesPage() {
     <SpaceBetween size="l">
       <PageHeader
         title="Flash"
-        description={`${activeOrganization.organization_name} のgVisorコンテナサービスを管理します。`}
+        description={`${activeOrganization.organization_name} のコンテナサービスを管理します。`}
         actions={
           <SpaceBetween direction="horizontal" size="xs">
             <Button
@@ -224,7 +219,7 @@ export function FlashServicesPage() {
         mobileVisibleColumns={["name", "state", "replicas"]}
         searchPlaceholder="名前、プロジェクト、イメージ、状態で検索"
         emptyTitle="Flashサービスがありません"
-        emptyDescription="gVisorで実行するコンテナサービスを作成してください。"
+        emptyDescription="コンテナサービスを作成してください。"
       />
       <Modal
         visible={createOpen}
@@ -265,4 +260,3 @@ export function FlashServicesPage() {
     </SpaceBetween>
   );
 }
-

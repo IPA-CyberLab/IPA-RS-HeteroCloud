@@ -199,7 +199,6 @@ export function FlashServiceDetailPage() {
               { label: "状態", value: <StatusBadge status={item.state} /> },
               { label: "プロジェクト", value: projectName },
               { label: "リージョン", value: item.spec.region },
-              { label: "ランタイム", value: "gVisor（強制）" },
               { label: "CPU", value: `${formatNumber(item.spec.cpu_millis)} millicores` },
               { label: "メモリ", value: `${formatNumber(item.spec.memory_mib)} MiB` },
               { label: "接続", value: flashExposureLabel(item.spec.exposure) },

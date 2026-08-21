@@ -1,8 +1,11 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use chrono::{DateTime, Utc};
 use heterocloud_domain::{
-    IamPolicy, Organization, OrganizationId, PolicyDocument, PolicyId, Principal, PrincipalId,
-    PrincipalKind, Project, ProjectId, ServiceInstance, ServiceInstanceId, ServiceState, User,
-    UserId, UserStatus,
+    FlashProtocol, FlashSpec, IamPolicy, MAX_FLASH_ORGANIZATION_CPU_MILLIS,
+    MAX_FLASH_ORGANIZATION_MEMORY_MIB, MAX_FLASH_SERVICE_PORT, MIN_FLASH_SERVICE_PORT,
+    Organization, OrganizationId, PolicyDocument, PolicyId, Principal, PrincipalId, PrincipalKind,
+    Project, ProjectId, ServiceInstance, ServiceInstanceId, ServiceState, User, UserId, UserStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1486,6 +1489,12 @@ impl Store {
     ) -> Result<ServiceInstance, StoreError> {
         let id = ServiceInstanceId::new();
         let mut transaction = self.pool.begin().await?;
+        let spec = if provider == "flash" {
+            lock_flash_allocations(&mut transaction).await?;
+            prepare_flash_spec(&mut transaction, organization_id, None, None, spec).await?
+        } else {
+            spec
+        };
         let row = sqlx::query_as::<_, ServiceRow>(
             "INSERT INTO service_instances
                 (id, organization_id, project_id, provider, name, state, spec)
@@ -1534,6 +1543,9 @@ impl Store {
         spec: Value,
     ) -> Result<ServiceInstance, StoreError> {
         let mut transaction = self.pool.begin().await?;
+        if provider == "flash" {
+            lock_flash_allocations(&mut transaction).await?;
+        }
         let existing = sqlx::query_as::<_, ServiceRow>(
             "SELECT id, organization_id, project_id, provider, name, generation,
                     state, spec, status, created_at, updated_at
@@ -1554,6 +1566,18 @@ impl Store {
             transaction.rollback().await?;
             return Err(StoreError::Conflict);
         }
+        let spec = if provider == "flash" {
+            prepare_flash_spec(
+                &mut transaction,
+                organization_id,
+                Some(id),
+                Some(&existing.spec),
+                spec,
+            )
+            .await?
+        } else {
+            spec
+        };
         let generation = existing
             .generation
             .checked_add(1)
@@ -1812,6 +1836,112 @@ impl Store {
         .fetch_all(&self.pool)
         .await
         .map_err(StoreError::from)
+    }
+}
+
+async fn lock_flash_allocations(
+    transaction: &mut Transaction<'_, Postgres>,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('heterocloud-flash-allocation', 0))",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
+}
+
+async fn prepare_flash_spec(
+    transaction: &mut Transaction<'_, Postgres>,
+    organization_id: OrganizationId,
+    excluded_service_id: Option<ServiceInstanceId>,
+    existing_spec: Option<&Value>,
+    spec: Value,
+) -> Result<Value, StoreError> {
+    let mut requested: FlashSpec = serde_json::from_value(spec)?;
+    requested
+        .validate_request()
+        .map_err(|error| StoreError::RequestRejected(error.to_string()))?;
+
+    let rows = sqlx::query_as::<_, FlashAllocationRow>(
+        "SELECT id, organization_id, spec
+         FROM service_instances
+         WHERE provider = 'flash'",
+    )
+    .fetch_all(&mut **transaction)
+    .await?;
+    let mut occupied_ports = BTreeSet::new();
+    let mut organization_cpu_millis = 0_u64;
+    let mut organization_memory_mib = 0_u64;
+    for row in &rows {
+        if excluded_service_id.is_some_and(|id| id.0 == row.id) {
+            continue;
+        }
+        let stored: FlashSpec = serde_json::from_value(row.spec.clone())?;
+        occupied_ports.extend(
+            stored
+                .ports
+                .iter()
+                .map(|port| (port.protocol, port.service_port)),
+        );
+        if row.organization_id == organization_id.0 {
+            organization_cpu_millis += u64::from(stored.replicas) * u64::from(stored.cpu_millis);
+            organization_memory_mib += u64::from(stored.replicas) * u64::from(stored.memory_mib);
+        }
+    }
+
+    let existing_ports = existing_spec
+        .map(|value| serde_json::from_value::<FlashSpec>(value.clone()))
+        .transpose()?
+        .map(|stored| {
+            stored
+                .ports
+                .into_iter()
+                .map(|port| ((port.protocol, port.name), port.service_port))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    for port in &mut requested.ports {
+        let preserved = existing_ports
+            .get(&(port.protocol, port.name.clone()))
+            .copied()
+            .filter(|value| (MIN_FLASH_SERVICE_PORT..=MAX_FLASH_SERVICE_PORT).contains(value))
+            .filter(|value| !occupied_ports.contains(&(port.protocol, *value)));
+        let assigned = preserved.or_else(|| {
+            (MIN_FLASH_SERVICE_PORT..=MAX_FLASH_SERVICE_PORT)
+                .find(|value| !occupied_ports.contains(&(port.protocol, *value)))
+        });
+        let Some(assigned) = assigned else {
+            return Err(StoreError::RequestRejected(format!(
+                "no free {} service ports remain in {MIN_FLASH_SERVICE_PORT}..={MAX_FLASH_SERVICE_PORT}",
+                flash_protocol_name(port.protocol)
+            )));
+        };
+        port.service_port = assigned;
+        occupied_ports.insert((port.protocol, assigned));
+    }
+
+    organization_cpu_millis += u64::from(requested.replicas) * u64::from(requested.cpu_millis);
+    organization_memory_mib += u64::from(requested.replicas) * u64::from(requested.memory_mib);
+    if organization_cpu_millis > MAX_FLASH_ORGANIZATION_CPU_MILLIS {
+        return Err(StoreError::RequestRejected(format!(
+            "Flash account CPU limit exceeded: {organization_cpu_millis} millicores requested, limit is {MAX_FLASH_ORGANIZATION_CPU_MILLIS}"
+        )));
+    }
+    if organization_memory_mib > MAX_FLASH_ORGANIZATION_MEMORY_MIB {
+        return Err(StoreError::RequestRejected(format!(
+            "Flash account memory limit exceeded: {organization_memory_mib} MiB requested, limit is {MAX_FLASH_ORGANIZATION_MEMORY_MIB} MiB"
+        )));
+    }
+    requested
+        .validate()
+        .map_err(|error| StoreError::RequestRejected(error.to_string()))?;
+    Ok(serde_json::to_value(requested)?)
+}
+
+const fn flash_protocol_name(protocol: FlashProtocol) -> &'static str {
+    match protocol {
+        FlashProtocol::Tcp => "TCP",
+        FlashProtocol::Udp => "UDP",
     }
 }
 
@@ -2349,6 +2479,13 @@ struct ServiceRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct FlashAllocationRow {
+    id: Uuid,
+    organization_id: Uuid,
+    spec: Value,
+}
+
+#[derive(sqlx::FromRow)]
 struct RealtimeMetricCollectionTargetRow {
     id: Uuid,
     organization_id: Uuid,
@@ -2456,6 +2593,8 @@ pub enum StoreError {
     Migration(#[from] sqlx::migrate::MigrateError),
     #[error("resource was not found")]
     NotFound,
+    #[error("request was rejected: {0}")]
+    RequestRejected(String),
     #[error("database invariant violated: {0}")]
     Invariant(&'static str),
     #[error("invitation is invalid, expired, revoked, or exhausted")]

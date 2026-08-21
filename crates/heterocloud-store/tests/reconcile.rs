@@ -163,6 +163,23 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0].service_instance_id, instance.id);
 
+    let flash_request = json!({
+        "region": "heteronet-global",
+        "image": "ghcr.io/example/udp-server:v1",
+        "replicas": 1,
+        "cpu_millis": 500,
+        "memory_mib": 512,
+        "ports": [{
+            "name": "game-udp",
+            "protocol": "udp",
+            "container_port": 7777
+        }],
+        "exposure": {"type": "public", "traffic_mode": "forwarded"},
+        "env": {},
+        "command": [],
+        "args": [],
+        "metadata": {}
+    });
     let flash = store
         .create_service_instance(
             organization_id,
@@ -170,9 +187,13 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
             membership.principal_id,
             "flash",
             "flash-service",
-            json!({}),
+            flash_request.clone(),
         )
         .await?;
+    let assigned_port = flash.spec["ports"][0]["service_port"]
+        .as_u64()
+        .ok_or("Flash service port was not assigned")?;
+    assert!((30_000..=32_767).contains(&assigned_port));
     assert!(
         !store
             .mark_service_instance_ready(
@@ -211,6 +232,8 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
             .await,
         Err(StoreError::NotFound)
     ));
+    let mut updated_flash_request = flash_request.clone();
+    updated_flash_request["replicas"] = json!(2);
     let flash = store
         .update_service_instance(
             organization_id,
@@ -218,11 +241,76 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
             "flash",
             membership.principal_id,
             "flash-service-updated",
-            json!({"replicas": 2}),
+            updated_flash_request,
         )
         .await?;
     assert_eq!(flash.provider, "flash");
-    assert_eq!(flash.spec, json!({"replicas": 2}));
+    assert_eq!(flash.spec["replicas"], json!(2));
+    assert_eq!(flash.spec["ports"][0]["service_port"], json!(assigned_port));
+
+    let second_flash = store
+        .create_service_instance(
+            organization_id,
+            ProjectId(project.id.0),
+            membership.principal_id,
+            "flash",
+            "second-flash-service",
+            flash_request.clone(),
+        )
+        .await?;
+    assert_ne!(
+        second_flash.spec["ports"][0]["service_port"],
+        flash.spec["ports"][0]["service_port"]
+    );
+
+    let mut over_quota = flash_request;
+    over_quota["replicas"] = json!(6);
+    over_quota["cpu_millis"] = json!(4_000);
+    assert!(matches!(
+        store
+            .create_service_instance(
+                organization_id,
+                ProjectId(project.id.0),
+                membership.principal_id,
+                "flash",
+                "over-quota",
+                over_quota,
+            )
+            .await,
+        Err(StoreError::RequestRejected(message)) if message.contains("CPU limit")
+    ));
+
+    let mut over_memory_quota = json!({
+        "region": "heteronet-global",
+        "image": "ghcr.io/example/memory-server:v1",
+        "replicas": 5,
+        "cpu_millis": 500,
+        "memory_mib": 8_128,
+        "ports": [{
+            "name": "memory-udp",
+            "protocol": "udp",
+            "container_port": 7778
+        }],
+        "exposure": {"type": "public", "traffic_mode": "forwarded"},
+        "env": {},
+        "command": [],
+        "args": [],
+        "metadata": {}
+    });
+    over_memory_quota["ports"][0]["service_port"] = json!(1);
+    assert!(matches!(
+        store
+            .create_service_instance(
+                organization_id,
+                ProjectId(project.id.0),
+                membership.principal_id,
+                "flash",
+                "over-memory-quota",
+                over_memory_quota,
+            )
+            .await,
+        Err(StoreError::RequestRejected(message)) if message.contains("memory limit")
+    ));
     assert!(matches!(
         store
             .begin_delete_service_instance(

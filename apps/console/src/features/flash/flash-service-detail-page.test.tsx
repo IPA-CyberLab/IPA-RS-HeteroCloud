@@ -71,7 +71,7 @@ describe("FlashServiceDetailPage", () => {
     });
   });
 
-  it("状態、gVisor強制、レプリカ、UDPエンドポイントを表示して編集を開く", async () => {
+  it("状態、レプリカ、UDPエンドポイントを表示して編集を開く", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -87,7 +87,7 @@ describe("FlashServiceDetailPage", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "game-server" })).toBeInTheDocument();
-    expect(screen.getByText("gVisor（強制）")).toBeInTheDocument();
+    expect(screen.queryByText(/gVisor/)).not.toBeInTheDocument();
     expect(screen.getByText("203.0.113.10:7777")).toBeInTheDocument();
     expect(screen.getByText("公開・転送")).toBeInTheDocument();
     expect(screen.getByText("GAME_MODE")).toBeInTheDocument();
@@ -96,8 +96,7 @@ describe("FlashServiceDetailPage", () => {
 
     await user.click(screen.getByRole("button", { name: "編集" }));
     expect(screen.getByRole("dialog", { name: "Flashサービスを編集" })).toBeInTheDocument();
-    expect(screen.getAllByText("gVisor（強制）").length).toBeGreaterThan(1);
+    expect(screen.queryByText(/gVisor/)).not.toBeInTheDocument();
     expect(screen.getByDisplayValue("ghcr.io/example/game-server:v1")).toBeInTheDocument();
   });
 });
-
