@@ -13,6 +13,7 @@ use heterocloud_provider::{
 use heterocloud_store::{OutboxEvent, Store};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
+use serde_json::Value;
 use thiserror::Error;
 use tokio::{fs, signal, time};
 use tracing::{error, info, warn};
@@ -291,6 +292,21 @@ async fn deliver(
         );
         return Ok(());
     }
+    if provider_reconcile_failed(&operation.status) {
+        if !store
+            .mark_service_instance_error(
+                payload.service_instance_id,
+                &payload.provider,
+                payload.generation,
+                operation.operation_id,
+                operation.status,
+            )
+            .await?
+        {
+            return Err(WorkerError::StalePayload);
+        }
+        return Err(WorkerError::ProviderReconcileFailed);
+    }
     if !store
         .mark_service_instance_ready(
             payload.service_instance_id,
@@ -304,6 +320,10 @@ async fn deliver(
         return Err(WorkerError::StalePayload);
     }
     Ok(())
+}
+
+fn provider_reconcile_failed(status: &Value) -> bool {
+    status.get("phase").and_then(Value::as_str) == Some("error")
 }
 
 struct ProviderTarget {
@@ -486,6 +506,8 @@ enum WorkerError {
     Provider(#[from] heterocloud_provider::ProviderError),
     #[error("provider returned HTTP {0}")]
     ProviderStatus(u16),
+    #[error("provider reported a service reconciliation failure")]
+    ProviderReconcileFailed,
     #[error("provider payload is stale")]
     StalePayload,
     #[error(transparent)]
@@ -519,7 +541,7 @@ mod tests {
     use super::{
         PrincipalContextRevocationPayload, ProviderTarget, ProviderTargets, WorkerError,
         deliver_principal_context_revocation, principal_context_revocation_expired,
-        principal_context_revocation_url,
+        principal_context_revocation_url, provider_reconcile_failed,
     };
 
     const TEST_ED25519_PRIVATE_KEY: &[u8] = b"-----BEGIN PRIVATE KEY-----\n\
@@ -619,6 +641,19 @@ MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
         assert!(!principal_context_revocation_expired(100, 100));
         assert!(!principal_context_revocation_expired(100, 114));
         assert!(principal_context_revocation_expired(100, 115));
+    }
+
+    #[test]
+    fn only_an_explicit_provider_error_phase_is_a_reconcile_failure() {
+        assert!(provider_reconcile_failed(&json!({
+            "phase": "error",
+            "message": "container image cannot start"
+        })));
+        assert!(!provider_reconcile_failed(
+            &json!({"phase": "provisioning"})
+        ));
+        assert!(!provider_reconcile_failed(&json!({"phase": "ready"})));
+        assert!(!provider_reconcile_failed(&json!({})));
     }
 
     #[tokio::test]

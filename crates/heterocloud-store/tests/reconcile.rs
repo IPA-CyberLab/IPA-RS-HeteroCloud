@@ -194,17 +194,40 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
         .as_u64()
         .ok_or("Flash service port was not assigned")?;
     assert!((30_000..=32_767).contains(&assigned_port));
+    let error_operation_id = Uuid::from_u128(43);
+    let error_status = json!({
+        "phase": "error",
+        "message": "container image cannot start"
+    });
     assert!(
         !store
-            .mark_service_instance_ready(
+            .mark_service_instance_error(
                 flash.id,
                 "flow",
                 flash.generation,
-                Uuid::from_u128(43),
-                json!("accepted"),
+                error_operation_id,
+                error_status.clone(),
             )
             .await?
     );
+    assert!(
+        store
+            .mark_service_instance_error(
+                flash.id,
+                "flash",
+                flash.generation,
+                error_operation_id,
+                error_status.clone(),
+            )
+            .await?
+    );
+    let failed = store
+        .service_instance(flash.id)
+        .await?
+        .ok_or("failed Flash instance disappeared")?;
+    assert_eq!(failed.state, ServiceState::Error);
+    assert_eq!(failed.status["operation_id"], json!(error_operation_id));
+    assert_eq!(failed.status["status"], error_status);
     assert!(
         store
             .mark_service_instance_ready(
