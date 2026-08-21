@@ -677,6 +677,7 @@ impl Store {
         .fetch_one(&mut *transaction)
         .await?;
         if active >= i64::from(quota.registry.max_credentials) {
+            transaction.rollback().await?;
             return Err(StoreError::RequestRejected(format!(
                 "registry credential limit exceeded: limit is {}",
                 quota.registry.max_credentials
@@ -1246,6 +1247,7 @@ impl Store {
         .fetch_one(&mut *transaction)
         .await?;
         if active_count >= i64::from(quota.flow.max_developer_credentials_per_service) {
+            transaction.rollback().await?;
             return Err(StoreError::RequestRejected(format!(
                 "Flow developer credential limit exceeded: limit is {} per service",
                 quota.flow.max_developer_credentials_per_service
@@ -1791,12 +1793,12 @@ impl Store {
     ) -> Result<ServiceInstance, StoreError> {
         let id = ServiceInstanceId::new();
         let mut transaction = self.pool.begin().await?;
-        let spec = match provider {
+        let prepared = match provider {
             "flow" => {
                 lock_tenant_allocations(&mut transaction, organization_id).await?;
                 let quota =
                     resource_quota_in_transaction(&mut transaction, organization_id).await?;
-                prepare_flow_spec(&mut transaction, organization_id, None, spec, &quota).await?
+                prepare_flow_spec(&mut transaction, organization_id, None, spec, &quota).await
             }
             "flash" => {
                 lock_tenant_allocations(&mut transaction, organization_id).await?;
@@ -1804,9 +1806,16 @@ impl Store {
                 let quota =
                     resource_quota_in_transaction(&mut transaction, organization_id).await?;
                 prepare_flash_spec(&mut transaction, organization_id, None, None, spec, &quota)
-                    .await?
+                    .await
             }
-            _ => spec,
+            _ => Ok(spec),
+        };
+        let spec = match prepared {
+            Ok(spec) => spec,
+            Err(error) => {
+                transaction.rollback().await?;
+                return Err(error);
+            }
         };
         let row = sqlx::query_as::<_, ServiceRow>(
             "INSERT INTO service_instances
@@ -1882,11 +1891,11 @@ impl Store {
             transaction.rollback().await?;
             return Err(StoreError::Conflict);
         }
-        let spec = match provider {
+        let prepared = match provider {
             "flow" => {
                 let quota =
                     resource_quota_in_transaction(&mut transaction, organization_id).await?;
-                prepare_flow_spec(&mut transaction, organization_id, Some(id), spec, &quota).await?
+                prepare_flow_spec(&mut transaction, organization_id, Some(id), spec, &quota).await
             }
             "flash" => {
                 let quota =
@@ -1899,9 +1908,16 @@ impl Store {
                     spec,
                     &quota,
                 )
-                .await?
+                .await
             }
-            _ => spec,
+            _ => Ok(spec),
+        };
+        let spec = match prepared {
+            Ok(spec) => spec,
+            Err(error) => {
+                transaction.rollback().await?;
+                return Err(error);
+            }
         };
         let generation = existing
             .generation

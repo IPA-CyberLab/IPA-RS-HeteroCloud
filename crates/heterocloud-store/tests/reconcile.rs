@@ -55,7 +55,16 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
             membership.principal_id,
             "flow",
             "production-flow",
-            json!({"region": "global"}),
+            json!({
+                "region": "heteronet-global",
+                "max_participants": 100,
+                "max_rooms": 100,
+                "rate_limit": {
+                    "requests_per_second": 20,
+                    "burst": 40
+                },
+                "metadata": {}
+            }),
         )
         .await?;
     let operation_id = Uuid::from_u128(42);
@@ -169,7 +178,7 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
         "replicas": 1,
         "cpu_millis": 500,
         "memory_mib": 512,
-        "ephemeral_storage_gib": 20,
+        "ephemeral_storage_gib": 10,
         "ports": [{
             "name": "game-udp",
             "protocol": "udp",
@@ -310,7 +319,7 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
         "replicas": 5,
         "cpu_millis": 500,
         "memory_mib": 8_128,
-        "ephemeral_storage_gib": 20,
+        "ephemeral_storage_gib": 10,
         "ports": [{
             "name": "memory-udp",
             "protocol": "udp",
@@ -350,7 +359,7 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
                 over_storage_quota,
             )
             .await,
-        Err(StoreError::RequestRejected(message)) if message.contains("ephemeral storage limit")
+        Err(StoreError::RequestRejected(message)) if message.contains("disk limit")
     ));
     assert!(matches!(
         store
