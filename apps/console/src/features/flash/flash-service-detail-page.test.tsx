@@ -106,6 +106,7 @@ describe("FlashServiceDetailPage", () => {
     expect(screen.getByText("GAME_MODE")).toBeInTheDocument();
     expect(screen.getAllByText("2").length).toBeGreaterThan(0);
     expect(screen.getAllByText("3").length).toBeGreaterThan(0);
+    expect(screen.queryByText("世代")).not.toBeInTheDocument();
 
     expect(screen.queryByRole("button", { name: "エンドポイントを編集" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "編集" }));

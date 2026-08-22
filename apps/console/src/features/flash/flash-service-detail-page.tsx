@@ -239,12 +239,11 @@ export function FlashServiceDetailPage() {
         }
       />
       <Container>
-        <ColumnLayout columns={4} variant="text-grid">
+        <ColumnLayout columns={3} variant="text-grid">
           {[
             ["稼働レプリカ", readyReplicas(item)],
             ["要求レプリカ", item.spec.replicas],
             ["エンドポイント", endpoints.length],
-            ["世代", item.generation],
           ].map(([label, value]) => (
             <div key={label}>
               <Box variant="awsui-key-label">{label}</Box>
