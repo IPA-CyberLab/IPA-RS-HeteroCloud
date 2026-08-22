@@ -192,7 +192,6 @@ export function flashFormValidationError(
   if (value.exposureType === "internal" && value.trafficMode !== "forwarded") {
     return "内部公開では転送モードを使用してください。";
   }
-  if (value.ports.length === 0) return "ポートを1つ以上追加してください。";
   const names = new Set<string>();
   for (const port of value.ports) {
     if (!/^[a-z][a-z0-9-]{0,14}$/.test(port.name)) {
@@ -563,7 +562,7 @@ export function FlashServiceForm({
                   iconName="remove"
                   formAction="none"
                   ariaLabel={`${port.name || index + 1}を削除`}
-                  disabled={disabled || value.ports.length === 1}
+                  disabled={disabled}
                   onClick={() => update("ports", value.ports.filter((_, portIndex) => portIndex !== index))}
                 />
               </FormField>

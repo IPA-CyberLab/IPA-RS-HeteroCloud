@@ -254,20 +254,7 @@ export function FlashServiceDetailPage() {
         </ColumnLayout>
       </Container>
       {statusMessage ? <Alert type={item.state === "error" ? "error" : "info"}>{statusMessage}</Alert> : null}
-      <Container
-        header={
-          <Header
-            variant="h2"
-            actions={
-              <Button iconName="edit" disabled={disabled} onClick={openEditor}>
-                エンドポイントを編集
-              </Button>
-            }
-          >
-            エンドポイント
-          </Header>
-        }
-      >
+      <Container header={<Header variant="h2">エンドポイント</Header>}>
         <FlashEndpoints endpoints={endpoints} />
       </Container>
       <ColumnLayout columns={2}>

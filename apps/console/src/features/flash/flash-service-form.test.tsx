@@ -146,7 +146,7 @@ describe("FlashServiceForm", () => {
     });
   });
 
-  it("編集フォームでエンドポイントを追加・削除できる", () => {
+  it("編集フォームで最後のエンドポイントまで追加・削除できる", () => {
     render(<FormHarness />);
 
     const add = screen.getByRole("button", { name: "エンドポイントを追加" });
@@ -155,6 +155,19 @@ describe("FlashServiceForm", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "port-2を削除" }));
     expect(screen.getAllByRole("button", { name: /を削除/ })).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "udpを削除" }));
+    expect(screen.queryByRole("button", { name: /を削除/ })).not.toBeInTheDocument();
+
+    const withoutEndpoints: FlashServiceFormValue = {
+      ...defaultFlashServiceFormValue,
+      projectId: "project-1",
+      name: "private-worker",
+      image: "ghcr.io/example/worker:v1",
+      ports: [],
+    };
+    expect(flashFormValidationError(withoutEndpoints)).toBeNull();
+    expect(flashSpecFromForm(withoutEndpoints).ports).toEqual([]);
   });
 
   it("Web Shell待機モードを常駐プロセスへ変換する", () => {

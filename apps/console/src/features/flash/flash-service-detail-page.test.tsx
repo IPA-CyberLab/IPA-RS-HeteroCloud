@@ -107,9 +107,8 @@ describe("FlashServiceDetailPage", () => {
     expect(screen.getAllByText("2").length).toBeGreaterThan(0);
     expect(screen.getAllByText("3").length).toBeGreaterThan(0);
 
-    await user.click(
-      screen.getByRole("button", { name: "エンドポイントを編集" }),
-    );
+    expect(screen.queryByRole("button", { name: "エンドポイントを編集" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "編集" }));
     expect(screen.getByRole("dialog", { name: "Flashサービスを編集" })).toBeInTheDocument();
     expect(screen.queryByText(/gVisor/)).not.toBeInTheDocument();
     expect(screen.getByDisplayValue("ghcr.io/example/game-server:v1")).toBeInTheDocument();

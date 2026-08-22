@@ -328,6 +328,20 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
         "unchanged endpoints must keep their assigned public port"
     );
 
+    let mut no_endpoints_request = flash.spec.clone();
+    no_endpoints_request["ports"] = json!([]);
+    let flash = store
+        .update_service_instance(
+            organization_id,
+            flash.id,
+            "flash",
+            membership.principal_id,
+            "flash-service-updated",
+            no_endpoints_request,
+        )
+        .await?;
+    assert_eq!(flash.spec["ports"], json!([]));
+
     let second_flash = store
         .create_service_instance(
             organization_id,

@@ -525,9 +525,9 @@ impl FlashSpec {
                 "ephemeral_storage_gib must be between {MIN_FLASH_EPHEMERAL_STORAGE_GIB} and {MAX_FLASH_EPHEMERAL_STORAGE_GIB}"
             )));
         }
-        if self.ports.is_empty() || self.ports.len() > MAX_FLASH_PORTS {
+        if self.ports.len() > MAX_FLASH_PORTS {
             return Err(invalid_flash_spec(format!(
-                "ports must contain between 1 and {MAX_FLASH_PORTS} entries"
+                "ports must contain at most {MAX_FLASH_PORTS} entries"
             )));
         }
         let mut port_names = BTreeSet::new();
@@ -901,6 +901,15 @@ mod tests {
         let spec = serde_json::from_value::<FlashSpec>(value)?;
         spec.validate_request()?;
         assert!(spec.validate().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn flash_spec_allows_no_endpoints() -> Result<(), Box<dyn std::error::Error>> {
+        let mut spec = flash_spec();
+        spec.ports.clear();
+        spec.validate()?;
+        spec.validate_request()?;
         Ok(())
     }
 
