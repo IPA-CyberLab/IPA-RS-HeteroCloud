@@ -19,6 +19,7 @@ import type {
 } from "@/lib/api-types";
 
 export type FlashImageSource = "registry" | "manual";
+export type FlashProcessMode = "image" | "workspace" | "custom";
 
 export interface FlashServiceFormValue {
   projectId: string;
@@ -34,6 +35,7 @@ export interface FlashServiceFormValue {
   exposureType: FlashExposure["type"];
   trafficMode: FlashExposure["traffic_mode"];
   environment: string;
+  processMode: FlashProcessMode;
   command: string;
   args: string;
 }
@@ -58,9 +60,15 @@ export const defaultFlashServiceFormValue: FlashServiceFormValue = {
   exposureType: "public",
   trafficMode: "forwarded",
   environment: "",
+  processMode: "image",
   command: "",
   args: "",
 };
+
+const workspaceCommand = ["/bin/sh", "-c"];
+const workspaceArgs = [
+  "trap 'exit 0' TERM INT; while :; do sleep 3600 & wait $!; done",
+];
 
 const regions = [
   { value: "heteronet-global", label: "HeteroNet Global" },
@@ -82,6 +90,10 @@ function lines(value: string): string[] {
     .split("\n")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function equalParts(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((part, index) => part === right[index]);
 }
 
 function formatImageSize(value: number): string {
@@ -156,6 +168,12 @@ export function flashSpecFromForm(
   value: FlashServiceFormValue,
   metadata: Record<string, unknown> = {},
 ): FlashServiceSpecInput {
+  const [command, args] =
+    value.processMode === "workspace"
+      ? [workspaceCommand, workspaceArgs]
+      : value.processMode === "custom"
+        ? [lines(value.command), lines(value.args)]
+        : [[], []];
   return {
     region: value.region,
     image: value.image.trim(),
@@ -170,8 +188,8 @@ export function flashSpecFromForm(
         value.exposureType === "internal" ? "forwarded" : value.trafficMode,
     },
     env: parseFlashEnvironment(value.environment).env,
-    command: lines(value.command),
-    args: lines(value.args),
+    command,
+    args,
     metadata,
   };
 }
@@ -184,6 +202,13 @@ export function flashFormFromService(
   },
   registryImages: RegistryImage[] = [],
 ): FlashServiceFormValue {
+  const processMode: FlashProcessMode =
+    service.spec.command.length === 0 && service.spec.args.length === 0
+      ? "image"
+      : equalParts(service.spec.command, workspaceCommand) &&
+          equalParts(service.spec.args, workspaceArgs)
+        ? "workspace"
+        : "custom";
   return {
     projectId: service.project_id,
     name: service.name,
@@ -208,6 +233,7 @@ export function flashFormFromService(
     environment: Object.entries(service.spec.env)
       .map(([key, envValue]) => `${key}=${envValue}`)
       .join("\n"),
+    processMode,
     command: service.spec.command.join("\n"),
     args: service.spec.args.join("\n"),
   };
@@ -507,26 +533,42 @@ export function FlashServiceForm({
             onChange={({ detail }) => update("environment", detail.value)}
           />
         </FormField>
-        <ColumnLayout columns={2}>
-          <FormField label="Command" description="1行につき1要素">
-            <Textarea
-              value={value.command}
-              disabled={disabled}
-              placeholder="/app/server"
-              rows={3}
-              onChange={({ detail }) => update("command", detail.value)}
-            />
-          </FormField>
-          <FormField label="Args" description="1行につき1要素">
-            <Textarea
-              value={value.args}
-              disabled={disabled}
-              placeholder={"--listen\n0.0.0.0:7777"}
-              rows={3}
-              onChange={({ detail }) => update("args", detail.value)}
-            />
-          </FormField>
-        </ColumnLayout>
+        <FormField label="起動方法">
+          <SegmentedControl
+            selectedId={value.processMode}
+            options={[
+              { id: "image", text: "イメージ既定", disabled },
+              { id: "workspace", text: "Web Shell待機", disabled },
+              { id: "custom", text: "カスタム", disabled },
+            ]}
+            label="起動方法"
+            onChange={({ detail }) => {
+              if (!disabled) update("processMode", detail.selectedId as FlashProcessMode);
+            }}
+          />
+        </FormField>
+        {value.processMode === "custom" ? (
+          <ColumnLayout columns={2}>
+            <FormField label="Command" description="1行につき1要素">
+              <Textarea
+                value={value.command}
+                disabled={disabled}
+                placeholder="/app/server"
+                rows={3}
+                onChange={({ detail }) => update("command", detail.value)}
+              />
+            </FormField>
+            <FormField label="Args" description="1行につき1要素">
+              <Textarea
+                value={value.args}
+                disabled={disabled}
+                placeholder={"--listen\n0.0.0.0:7777"}
+                rows={3}
+                onChange={({ detail }) => update("args", detail.value)}
+              />
+            </FormField>
+          </ColumnLayout>
+        ) : null}
         {children}
       </SpaceBetween>
     </form>

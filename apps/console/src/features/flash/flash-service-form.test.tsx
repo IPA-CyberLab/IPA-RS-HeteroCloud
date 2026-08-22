@@ -114,6 +114,7 @@ describe("FlashServiceForm", () => {
       name: "game-server",
       image: "ghcr.io/example/game-server:v1",
       environment: "GAME_MODE=production\nEMPTY=\nTOKEN=a=b",
+      processMode: "custom",
       command: "/app/server\n--foreground",
       args: "--listen\n0.0.0.0:7777",
     };
@@ -132,6 +133,21 @@ describe("FlashServiceForm", () => {
         },
       ],
     });
+  });
+
+  it("Web Shell待機モードを常駐プロセスへ変換する", () => {
+    const spec = flashSpecFromForm({
+      ...defaultFlashServiceFormValue,
+      projectId: "project-1",
+      name: "workspace",
+      image: "ubuntu:24.04",
+      processMode: "workspace",
+    });
+
+    expect(spec.command).toEqual(["/bin/sh", "-c"]);
+    expect(spec.args).toEqual([
+      "trap 'exit 0' TERM INT; while :; do sleep 3600 & wait $!; done",
+    ]);
   });
 
   it("不正または重複した環境変数とポート名を拒否する", () => {
