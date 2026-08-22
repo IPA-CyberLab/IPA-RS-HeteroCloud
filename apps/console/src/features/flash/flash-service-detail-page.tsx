@@ -28,6 +28,7 @@ import type { FlashPort } from "@/lib/api-types";
 import {
   flashServiceQueryOptions,
   projectsQueryOptions,
+  registryImagesQueryOptions,
 } from "@/lib/queries";
 import { formatDateTime, formatNumber } from "@/lib/utils";
 import { FlashEndpoints } from "./flash-endpoints";
@@ -90,6 +91,10 @@ export function FlashServiceDetailPage() {
   const [shellState, setShellState] =
     useState<FlashShellConnectionState>("closed");
   const [editForm, setEditForm] = useState<FlashServiceFormValue | null>(null);
+  const registryImages = useQuery({
+    ...registryImagesQueryOptions(organizationId),
+    enabled: editOpen,
+  });
   const containers = useQuery({
     queryKey: [
       "organizations",
@@ -210,7 +215,9 @@ export function FlashServiceDetailPage() {
               iconName="edit"
               disabled={disabled}
               onClick={() => {
-                setEditForm(flashFormFromService(item));
+                setEditForm(
+                  flashFormFromService(item, registryImages.data?.items),
+                );
                 updateService.reset();
                 setEditOpen(true);
               }}
@@ -403,6 +410,14 @@ export function FlashServiceDetailPage() {
             onSubmit={submitEdit}
             disabled={updateService.isPending}
             projectLocked
+            registryImages={registryImages.data?.items}
+            registryImagesStatus={
+              registryImages.isError
+                ? "error"
+                : registryImages.isPending
+                  ? "loading"
+                  : "finished"
+            }
           >
             <FormError
               message={

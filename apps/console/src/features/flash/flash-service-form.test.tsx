@@ -1,10 +1,12 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
+import type { RegistryImage } from "@/lib/api-types";
 import {
   defaultFlashServiceFormValue,
   FlashServiceForm,
   flashFormValidationError,
+  flashRegistryImageOptions,
   flashSpecFromForm,
   parseFlashEnvironment,
   type FlashServiceFormValue,
@@ -32,6 +34,36 @@ function FormHarness() {
   );
 }
 
+const registryImage: RegistryImage = {
+  reference: "registry.example.com/hc-tenant/game/server:v2",
+  repository: "game/server",
+  tag: "v2",
+  digest: "sha256:0123456789abcdef",
+  size_bytes: 128 * 1024 * 1024,
+  pushed_at: "2026-08-22T12:00:00Z",
+};
+
+function RegistryImageFormHarness() {
+  const [value, setValue] = useState<FlashServiceFormValue>({
+    ...defaultFlashServiceFormValue,
+    projectId: "project-1",
+    name: "game-server",
+  });
+  return (
+    <>
+      <FlashServiceForm
+        value={value}
+        onChange={setValue}
+        onSubmit={(event) => event.preventDefault()}
+        registryImages={[registryImage]}
+      >
+        <button type="submit">保存</button>
+      </FlashServiceForm>
+      <output data-testid="selected-image">{value.image}</output>
+    </>
+  );
+}
+
 describe("FlashServiceForm", () => {
   it("自動公開ポートとリソース上限を適用する", () => {
     render(<FormHarness />);
@@ -50,6 +82,29 @@ describe("FlashServiceForm", () => {
       target: { value: "4" },
     });
     expect(screen.getByRole("spinbutton", { name: "レプリカ" })).toHaveValue(4);
+  });
+
+  it("Flash Registryと直接入力からコンテナイメージを指定できる", () => {
+    render(<RegistryImageFormHarness />);
+
+    expect(flashRegistryImageOptions([registryImage])[0]).toMatchObject({
+      value: registryImage.reference,
+      label: "game/server:v2",
+    });
+    expect(
+      screen.getByRole("button", { name: /Flash Registryイメージ/ }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("直接入力"));
+    const manualInput = screen.getByPlaceholderText(
+      "ghcr.io/example/game-server:v1",
+    );
+    fireEvent.change(manualInput, {
+      target: { value: "ghcr.io/example/manual:v1" },
+    });
+    expect(screen.getByTestId("selected-image")).toHaveTextContent(
+      "ghcr.io/example/manual:v1",
+    );
   });
 
   it("環境変数、command、argsをAPI specへ変換する", () => {

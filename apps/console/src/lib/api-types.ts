@@ -97,6 +97,15 @@ export interface RegistryStatus {
   credentials: RegistryCredential[];
 }
 
+export interface RegistryImage {
+  reference: string;
+  repository: string;
+  tag: string;
+  digest: string;
+  size_bytes: number;
+  pushed_at: string | null;
+}
+
 export interface RegistryCredentialSecret {
   credential: RegistryCredential;
   username: string;

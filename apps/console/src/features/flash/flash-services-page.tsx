@@ -20,6 +20,7 @@ import type { FlashService } from "@/lib/api-types";
 import {
   flashServicesQueryOptions,
   projectsQueryOptions,
+  registryImagesQueryOptions,
 } from "@/lib/queries";
 import { formatDateTime, formatNumber } from "@/lib/utils";
 import {
@@ -46,6 +47,10 @@ export function FlashServicesPage() {
   const [form, setForm] = useState<FlashServiceFormValue>(
     defaultFlashServiceFormValue,
   );
+  const registryImages = useQuery({
+    ...registryImagesQueryOptions(organizationId),
+    enabled: createOpen,
+  });
   const createService = useMutation({
     mutationFn: (value: FlashServiceFormValue) =>
       api.flash.services.create(organizationId, {
@@ -247,6 +252,14 @@ export function FlashServicesPage() {
           onChange={setForm}
           onSubmit={submit}
           disabled={createService.isPending}
+          registryImages={registryImages.data?.items}
+          registryImagesStatus={
+            registryImages.isError
+              ? "error"
+              : registryImages.isPending
+                ? "loading"
+                : "finished"
+          }
         >
           <FormError
             message={

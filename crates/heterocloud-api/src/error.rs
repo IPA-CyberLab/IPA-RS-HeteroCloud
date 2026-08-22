@@ -27,7 +27,7 @@ pub enum ApiError {
     ServiceInstanceNotReady,
     #[error("realtime provider is unavailable")]
     RealtimeProviderUnavailable,
-    #[error("container registry is unavailable")]
+    #[error("Flash Registry is unavailable")]
     RegistryProviderUnavailable,
     #[error("too many requests")]
     TooManyRequests,
@@ -110,7 +110,7 @@ impl IntoResponse for ApiError {
             Self::RegistryProviderUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "registry_provider_unavailable",
-                "The container registry is temporarily unavailable.",
+                "Flash Registry is temporarily unavailable.",
             ),
             Self::TooManyRequests => (
                 StatusCode::TOO_MANY_REQUESTS,

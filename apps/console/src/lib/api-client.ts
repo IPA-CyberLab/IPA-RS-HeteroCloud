@@ -32,6 +32,7 @@ import type {
   RegisterRequest,
   ResourceQuotaLimits,
   RegistryCredentialSecret,
+  RegistryImage,
   RegistryStatus,
   Session,
   UpdateRealtimeServiceRequest,
@@ -264,6 +265,11 @@ export class HeteroCloudApiClient {
       this.request<RegistryStatus>(organizationPath(organizationId, "registry"), {
         signal,
       }),
+    listImages: (organizationId: string, signal?: AbortSignal) =>
+      this.request<CollectionResponse<RegistryImage>>(
+        organizationPath(organizationId, "registry/images"),
+        { signal },
+      ),
     createCredential: (organizationId: string, name: string) =>
       this.request<RegistryCredentialSecret>(
         organizationPath(organizationId, "registry/credentials"),

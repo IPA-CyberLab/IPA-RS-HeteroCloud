@@ -20,6 +20,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { PageLoading } from "@/components/shared/page-loading";
 import { useActiveOrganization } from "@/features/organizations/organization-context";
 import { api, getApiErrorMessage } from "@/lib/api-client";
+import { registryImagesQueryOptions } from "@/lib/queries";
 import type {
   RegistryCredential,
   RegistryCredentialSecret,
@@ -61,6 +62,7 @@ export function RegistryPage() {
     queryKey,
     queryFn: ({ signal }) => api.registry.get(organizationId, signal),
   });
+  const images = useQuery(registryImagesQueryOptions(organizationId));
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [secret, setSecret] = useState<RegistryCredentialSecret | null>(null);
@@ -85,15 +87,18 @@ export function RegistryPage() {
     },
   });
 
-  if (registry.isPending) {
-    return <PageLoading label="コンテナレジストリを読み込んでいます" />;
+  if (registry.isPending || images.isPending) {
+    return <PageLoading label="Flash Registryを読み込んでいます" />;
   }
-  if (registry.isError) {
+  if (registry.isError || images.isError) {
     return (
       <ErrorState
-        title="コンテナレジストリに接続できません"
-        description={getApiErrorMessage(registry.error)}
-        onRetry={() => void registry.refetch()}
+        title="Flash Registryに接続できません"
+        description={getApiErrorMessage(registry.error ?? images.error)}
+        onRetry={() => {
+          void registry.refetch();
+          void images.refetch();
+        }}
       />
     );
   }
@@ -110,19 +115,22 @@ export function RegistryPage() {
   return (
     <SpaceBetween size="l">
       <PageHeader
-        title="コンテナレジストリ"
-        description="組織専用のプライベートOCIレジストリ"
+        title="Flash Registry"
+        description="Flashコンテナイメージを保存・配布する組織専用OCIレジストリ"
         actions={
           <Button
             variant="icon"
             iconName="refresh"
-            ariaLabel="レジストリ情報を更新"
-            onClick={() => void registry.refetch()}
+            ariaLabel="Flash Registry情報を更新"
+            onClick={() => {
+              void registry.refetch();
+              void images.refetch();
+            }}
           />
         }
       />
 
-      <Container header={<Header variant="h2">レジストリ</Header>}>
+      <Container header={<Header variant="h2">Flash Registry</Header>}>
         <ColumnLayout columns={3} variant="text-grid">
           <div>
             <Box variant="awsui-key-label">エンドポイント</Box>
@@ -152,6 +160,63 @@ export function RegistryPage() {
         variant="container"
         stickyHeader
         wrapLines
+        trackBy="reference"
+        items={images.data.items}
+        header={
+          <Header
+            variant="h2"
+            counter={`(${images.data.items.length})`}
+            description="Flashで起動できるタグ付きコンテナイメージ"
+          >
+            イメージ
+          </Header>
+        }
+        columnDefinitions={[
+          {
+            id: "repository",
+            header: "リポジトリ",
+            cell: (item) => <Box fontWeight="bold">{item.repository}</Box>,
+          },
+          {
+            id: "tag",
+            header: "タグ",
+            cell: (item) => <Box variant="code">{item.tag}</Box>,
+          },
+          {
+            id: "digest",
+            header: "Digest",
+            cell: (item) => (
+              <Box variant="code">
+                {item.digest.length > 24
+                  ? `${item.digest.slice(0, 24)}...`
+                  : item.digest}
+              </Box>
+            ),
+          },
+          {
+            id: "size",
+            header: "サイズ",
+            cell: (item) => formatBytes(item.size_bytes),
+          },
+          {
+            id: "pushed",
+            header: "Push日時",
+            cell: (item) =>
+              item.pushed_at ? formatDateTime(item.pushed_at) : "-",
+          },
+        ]}
+        empty={
+          <EmptyState
+            title="イメージがありません"
+            description="認証情報を発行してコンテナイメージをPushしてください。"
+          />
+        }
+      />
+
+      <Table
+        variant="container"
+        stickyHeader
+        wrapLines
         trackBy="id"
         items={value.credentials}
         header={
@@ -174,7 +239,7 @@ export function RegistryPage() {
               </Button>
             }
           >
-            レジストリ認証情報
+            Flash Registry認証情報
           </Header>
         }
         columnDefinitions={[
@@ -230,7 +295,7 @@ export function RegistryPage() {
 
       <Modal
         visible={createOpen}
-        header="レジストリ認証情報を発行"
+        header="Flash Registry認証情報を発行"
         onDismiss={() => setCreateOpen(false)}
         footer={
           <Box float="right">
@@ -324,7 +389,7 @@ export function RegistryPage() {
 
       <Modal
         visible={revokeTarget !== null}
-        header="レジストリ認証情報を失効"
+        header="Flash Registry認証情報を失効"
         onDismiss={() => setRevokeTarget(null)}
         footer={
           <Box float="right">

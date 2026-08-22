@@ -15,12 +15,16 @@ import type {
   FlashPortProtocol,
   FlashServiceSpec,
   FlashServiceSpecInput,
+  RegistryImage,
 } from "@/lib/api-types";
+
+export type FlashImageSource = "registry" | "manual";
 
 export interface FlashServiceFormValue {
   projectId: string;
   name: string;
   region: string;
+  imageSource: FlashImageSource;
   image: string;
   replicas: number;
   cpuMillis: number;
@@ -38,6 +42,7 @@ export const defaultFlashServiceFormValue: FlashServiceFormValue = {
   projectId: "",
   name: "",
   region: "heteronet-global",
+  imageSource: "registry",
   image: "",
   replicas: 1,
   cpuMillis: 500,
@@ -77,6 +82,27 @@ function lines(value: string): string[] {
     .split("\n")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function formatImageSize(value: number): string {
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let amount = Math.max(0, value);
+  let unit = 0;
+  while (amount >= 1024 && unit < units.length - 1) {
+    amount /= 1024;
+    unit += 1;
+  }
+  return `${amount.toLocaleString("ja-JP", { maximumFractionDigits: 1 })} ${units[unit]}`;
+}
+
+export function flashRegistryImageOptions(registryImages: RegistryImage[]) {
+  return registryImages.map((image) => ({
+    value: image.reference,
+    label: `${image.repository}:${image.tag}`,
+    description: image.digest,
+    labelTag: formatImageSize(image.size_bytes),
+    filteringTags: [image.reference],
+  }));
 }
 
 export function parseFlashEnvironment(value: string): {
@@ -156,11 +182,17 @@ export function flashFormFromService(
     name: string;
     spec: FlashServiceSpec;
   },
+  registryImages: RegistryImage[] = [],
 ): FlashServiceFormValue {
   return {
     projectId: service.project_id,
     name: service.name,
     region: service.spec.region,
+    imageSource: registryImages.some(
+      (image) => image.reference === service.spec.image,
+    )
+      ? "registry"
+      : "manual",
     image: service.spec.image,
     replicas: service.spec.replicas,
     cpuMillis: service.spec.cpu_millis,
@@ -187,6 +219,8 @@ export function FlashServiceForm({
   onSubmit,
   disabled,
   projectLocked,
+  registryImages = [],
+  registryImagesStatus = "finished",
   children,
 }: {
   value: FlashServiceFormValue;
@@ -194,6 +228,8 @@ export function FlashServiceForm({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   disabled?: boolean;
   projectLocked?: boolean;
+  registryImages?: RegistryImage[];
+  registryImagesStatus?: "loading" | "error" | "finished";
   children: ReactNode;
 }) {
   const update = <Key extends keyof FlashServiceFormValue>(
@@ -211,6 +247,9 @@ export function FlashServiceForm({
     update("ports", ports);
   };
   const environmentError = parseFlashEnvironment(value.environment).error;
+  const registryImageOptions = flashRegistryImageOptions(registryImages);
+  const selectedRegistryImage =
+    registryImageOptions.find((option) => option.value === value.image) ?? null;
 
   return (
     <form onSubmit={onSubmit}>
@@ -233,12 +272,55 @@ export function FlashServiceForm({
           </FormField>
         </ColumnLayout>
         <FormField label="コンテナイメージ">
-          <Input
-            value={value.image}
-            disabled={disabled}
-            placeholder="ghcr.io/example/game-server:v1"
-            onChange={({ detail }) => update("image", detail.value.slice(0, 500))}
-          />
+          <SpaceBetween size="xs">
+            <SegmentedControl
+              selectedId={value.imageSource}
+              options={[
+                { id: "registry", text: "Flash Registry", disabled },
+                { id: "manual", text: "直接入力", disabled },
+              ]}
+              label="イメージの指定方法"
+              onChange={({ detail }) => {
+                if (disabled) return;
+                const imageSource = detail.selectedId as FlashImageSource;
+                onChange({
+                  ...value,
+                  imageSource,
+                  image:
+                    imageSource === "registry" && !selectedRegistryImage
+                      ? ""
+                      : value.image,
+                });
+              }}
+            />
+            {value.imageSource === "registry" ? (
+              <Select
+                ariaLabel="Flash Registryイメージ"
+                selectedAriaLabel="選択済み"
+                selectedOption={selectedRegistryImage}
+                options={registryImageOptions}
+                filteringType="auto"
+                filteringPlaceholder="リポジトリまたはタグを検索"
+                filteringAriaLabel="Flash Registryイメージを検索"
+                placeholder="イメージを選択"
+                statusType={registryImagesStatus}
+                loadingText="Flash Registryを読み込んでいます"
+                errorText="Flash Registryからイメージを取得できません"
+                empty="Flash Registryにタグ付きイメージがありません"
+                disabled={disabled}
+                onChange={({ detail }) =>
+                  update("image", detail.selectedOption.value ?? "")
+                }
+              />
+            ) : (
+              <Input
+                value={value.image}
+                disabled={disabled}
+                placeholder="ghcr.io/example/game-server:v1"
+                onChange={({ detail }) => update("image", detail.value.slice(0, 500))}
+              />
+            )}
+          </SpaceBetween>
         </FormField>
         <ColumnLayout columns={3}>
           <FormField label="リージョン">

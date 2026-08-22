@@ -36,7 +36,7 @@ function breadcrumbs(pathname: string) {
   } else if (pathname.startsWith("/flash/")) {
     items.push({ text: "Flash", href: "/flash/services" });
   } else if (pathname.startsWith("/registry")) {
-    items.push({ text: "Registry", href: "/registry" });
+    items.push({ text: "Flash Registry", href: "/registry" });
   } else if (pathname.startsWith("/owner/")) {
     items.push({ text: "所有者管理", href: "/owner/quotas" });
   }

@@ -162,6 +162,10 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             get(get_registry),
         )
         .route(
+            "/organizations/{organization_id}/registry/images",
+            get(list_registry_images),
+        )
+        .route(
             "/organizations/{organization_id}/registry/credentials",
             post(create_registry_credential),
         )
@@ -378,11 +382,9 @@ async fn get_registry(
         .list_registry_credentials(OrganizationId(organization_id))
         .await
         .map_err(ApiError::from_store)?;
-    let image_prefix = format!(
-        "{}/{}",
-        project.endpoint.as_str().trim_end_matches('/'),
-        project.name
-    );
+    let image_prefix = project
+        .image_prefix()
+        .map_err(|_| ApiError::RegistryProviderUnavailable)?;
     Ok(Json(json!({
         "endpoint": project.endpoint,
         "project": project.name,
@@ -392,6 +394,44 @@ async fn get_registry(
         "max_credentials": limits.registry.max_credentials,
         "credentials": credentials,
     })))
+}
+
+async fn list_registry_images(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "registry:GetRegistry",
+        &organization_resource(organization_id, "registry/*"),
+    )
+    .await?;
+    let limits = state
+        .store
+        .effective_resource_quota(OrganizationId(organization_id))
+        .await
+        .map_err(ApiError::from_store)?;
+    let registry = state
+        .registry
+        .as_deref()
+        .ok_or(ApiError::RegistryProviderUnavailable)?;
+    let project = registry
+        .ensure_project(OrganizationId(organization_id), &limits)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%organization_id, error = %error, "registry project reconciliation failed");
+            ApiError::RegistryProviderUnavailable
+        })?;
+    let images = registry.list_images(&project).await.map_err(|error| {
+        tracing::warn!(%organization_id, error = %error, "registry image listing failed");
+        ApiError::RegistryProviderUnavailable
+    })?;
+    Ok(Json(json!({ "items": images })))
 }
 
 #[derive(Deserialize)]
@@ -481,9 +521,11 @@ async fn create_registry_credential(
         }
     };
     let login_host = project
-        .endpoint
-        .host_str()
-        .ok_or(ApiError::RegistryProviderUnavailable)?;
+        .authority()
+        .map_err(|_| ApiError::RegistryProviderUnavailable)?;
+    let image_prefix = project
+        .image_prefix()
+        .map_err(|_| ApiError::RegistryProviderUnavailable)?;
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -492,7 +534,7 @@ async fn create_registry_credential(
             "password": secret.password,
             "login_host": login_host,
             "login_command": format!("docker login {login_host} --username '{}' --password-stdin", credential.username.as_deref().unwrap_or("")),
-            "image_prefix": format!("{}/{}", project.endpoint.as_str().trim_end_matches('/'), project.name),
+            "image_prefix": image_prefix,
         })),
     ))
 }

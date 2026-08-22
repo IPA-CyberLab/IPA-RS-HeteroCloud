@@ -177,6 +177,14 @@ export function flashServiceQueryOptions(
   });
 }
 
+export function registryImagesQueryOptions(organizationId: string) {
+  return queryOptions({
+    queryKey: ["registry", organizationId, "images"],
+    queryFn: ({ signal }) => api.registry.listImages(organizationId, signal),
+    staleTime: 30_000,
+  });
+}
+
 export function auditEventsQueryOptions(organizationId: string) {
   return queryOptions({
     queryKey: ["organizations", organizationId, "audit-events"],

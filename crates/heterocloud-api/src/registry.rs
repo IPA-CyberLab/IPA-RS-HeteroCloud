@@ -1,11 +1,16 @@
+use std::collections::BTreeSet;
+
 use heterocloud_domain::{OrganizationId, ResourceQuotaLimits};
 use reqwest::{Client, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use url::Url;
+use url::{Host, Url};
 
 const GIB_BYTES: u64 = 1024 * 1024 * 1024;
+const HARBOR_PAGE_SIZE: usize = 100;
+const MAX_REGISTRY_IMAGES: usize = 500;
+const MAX_REGISTRY_REPOSITORIES: usize = 100;
 
 pub struct RegistryClient {
     internal_endpoint: Url,
@@ -128,6 +133,106 @@ impl RegistryClient {
         })
     }
 
+    pub async fn list_images(
+        &self,
+        project: &RegistryProject,
+    ) -> Result<Vec<RegistryImage>, RegistryError> {
+        let mut repositories_url = self
+            .internal_endpoint
+            .join(&format!("api/v2.0/projects/{}/repositories", project.name))?;
+        repositories_url
+            .query_pairs_mut()
+            .append_pair("page", "1")
+            .append_pair("page_size", &HARBOR_PAGE_SIZE.to_string())
+            .append_pair("sort", "-update_time");
+        let response = self
+            .request(self.client.get(repositories_url))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(RegistryError::Status(response.status().as_u16()));
+        }
+        let repositories: Vec<RepositoryResponse> = response.json().await?;
+        let authority = project.authority()?;
+        let mut references = BTreeSet::new();
+        let mut images = Vec::new();
+
+        for repository in repositories.into_iter().take(MAX_REGISTRY_REPOSITORIES) {
+            let repository_name = relative_repository_name(&project.name, &repository.name);
+            if repository_name.is_empty() {
+                continue;
+            }
+            let mut page = 1;
+            while images.len() < MAX_REGISTRY_IMAGES {
+                let mut artifacts_url =
+                    artifact_list_url(&self.internal_endpoint, &project.name, repository_name)?;
+                artifacts_url
+                    .query_pairs_mut()
+                    .append_pair("page", &page.to_string())
+                    .append_pair("page_size", &HARBOR_PAGE_SIZE.to_string())
+                    .append_pair("q", "tags=*")
+                    .append_pair("sort", "-push_time")
+                    .append_pair("with_tag", "true")
+                    .append_pair("with_label", "false")
+                    .append_pair("with_scan_overview", "false")
+                    .append_pair("with_sbom_overview", "false");
+                let response = self.request(self.client.get(artifacts_url)).send().await?;
+                if !response.status().is_success() {
+                    return Err(RegistryError::Status(response.status().as_u16()));
+                }
+                let artifacts: Vec<ArtifactResponse> = response.json().await?;
+                let artifact_count = artifacts.len();
+                for artifact in artifacts {
+                    if artifact
+                        .kind
+                        .as_deref()
+                        .is_some_and(|kind| !kind.eq_ignore_ascii_case("image"))
+                    {
+                        continue;
+                    }
+                    for tag in artifact.tags {
+                        let reference = format!(
+                            "{authority}/{}/{repository_name}:{}",
+                            project.name, tag.name
+                        );
+                        if !references.insert(reference.clone()) {
+                            continue;
+                        }
+                        images.push(RegistryImage {
+                            reference,
+                            repository: repository_name.to_owned(),
+                            tag: tag.name,
+                            digest: artifact.digest.clone(),
+                            size_bytes: artifact.size.max(0) as u64,
+                            pushed_at: artifact.push_time.clone(),
+                        });
+                        if images.len() >= MAX_REGISTRY_IMAGES {
+                            break;
+                        }
+                    }
+                    if images.len() >= MAX_REGISTRY_IMAGES {
+                        break;
+                    }
+                }
+                if artifact_count < HARBOR_PAGE_SIZE {
+                    break;
+                }
+                page += 1;
+            }
+            if images.len() >= MAX_REGISTRY_IMAGES {
+                break;
+            }
+        }
+
+        images.sort_by(|left, right| {
+            right
+                .pushed_at
+                .cmp(&left.pushed_at)
+                .then_with(|| left.reference.cmp(&right.reference))
+        });
+        Ok(images)
+    }
+
     pub async fn revoke_credential(&self, robot_id: i64) -> Result<(), RegistryError> {
         let url = self
             .internal_endpoint
@@ -187,6 +292,26 @@ pub struct RegistryProject {
     pub endpoint: Url,
 }
 
+impl RegistryProject {
+    pub fn authority(&self) -> Result<String, RegistryError> {
+        registry_authority(&self.endpoint)
+    }
+
+    pub fn image_prefix(&self) -> Result<String, RegistryError> {
+        Ok(format!("{}/{}", self.authority()?, self.name))
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RegistryImage {
+    pub reference: String,
+    pub repository: String,
+    pub tag: String,
+    pub digest: String,
+    pub size_bytes: u64,
+    pub pushed_at: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct RegistryCredentialSecret {
     #[serde(skip_serializing)]
@@ -198,6 +323,27 @@ pub struct RegistryCredentialSecret {
 #[derive(Deserialize)]
 struct ProjectResponse {
     project_id: i64,
+}
+
+#[derive(Deserialize)]
+struct RepositoryResponse {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct ArtifactResponse {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    digest: String,
+    size: i64,
+    push_time: Option<String>,
+    #[serde(default)]
+    tags: Vec<TagResponse>,
+}
+
+#[derive(Deserialize)]
+struct TagResponse {
+    name: String,
 }
 
 #[derive(Deserialize)]
@@ -230,10 +376,82 @@ pub enum RegistryError {
     MissingProject,
     #[error("registry quota was not found")]
     MissingQuota,
+    #[error("registry endpoint is invalid")]
+    InvalidEndpoint,
     #[error("registry returned HTTP {0}")]
     Status(u16),
     #[error(transparent)]
     Http(#[from] reqwest::Error),
     #[error(transparent)]
     Url(#[from] url::ParseError),
+}
+
+fn relative_repository_name<'a>(project_name: &str, repository_name: &'a str) -> &'a str {
+    repository_name
+        .strip_prefix(project_name)
+        .and_then(|name| name.strip_prefix('/'))
+        .unwrap_or(repository_name)
+}
+
+fn artifact_list_url(
+    endpoint: &Url,
+    project_name: &str,
+    repository_name: &str,
+) -> Result<Url, RegistryError> {
+    let encoded_repository = repository_name.replace('/', "%2F");
+    let mut url = endpoint.clone();
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|()| RegistryError::InvalidEndpoint)?;
+        segments.pop_if_empty();
+        segments.extend(["api", "v2.0", "projects", project_name, "repositories"]);
+        segments.push(&encoded_repository);
+        segments.push("artifacts");
+    }
+    Ok(url)
+}
+
+fn registry_authority(endpoint: &Url) -> Result<String, RegistryError> {
+    let host = match endpoint.host().ok_or(RegistryError::InvalidEndpoint)? {
+        Host::Domain(host) => host.to_owned(),
+        Host::Ipv4(host) => host.to_string(),
+        Host::Ipv6(host) => format!("[{host}]"),
+    };
+    Ok(match endpoint.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{artifact_list_url, registry_authority, relative_repository_name};
+    use url::Url;
+
+    #[test]
+    fn registry_image_references_omit_the_url_scheme() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            registry_authority(&Url::parse("https://registry.example.com/")?)?,
+            "registry.example.com"
+        );
+        assert_eq!(
+            registry_authority(&Url::parse("https://registry.example.com:5443/")?)?,
+            "registry.example.com:5443"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nested_harbor_repository_names_are_double_encoded() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let repository = relative_repository_name("hc-tenant", "hc-tenant/team/game");
+        assert_eq!(repository, "team/game");
+        assert_eq!(
+            artifact_list_url(&Url::parse("http://harbor-core/")?, "hc-tenant", repository)?
+                .as_str(),
+            "http://harbor-core/api/v2.0/projects/hc-tenant/repositories/team%252Fgame/artifacts"
+        );
+        Ok(())
+    }
 }

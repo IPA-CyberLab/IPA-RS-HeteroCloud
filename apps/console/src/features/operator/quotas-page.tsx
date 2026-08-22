@@ -95,7 +95,7 @@ function QuotaEditor({
           <NumberField label="合計ディスク (GiB)" value={value.flash.max_total_disk_gib} onChange={(next) => flash("max_total_disk_gib", next)} />
         </ColumnLayout>
       </Container>
-      <Container header={<Header variant="h3">コンテナレジストリ</Header>}>
+      <Container header={<Header variant="h3">Flash Registry</Header>}>
         <ColumnLayout columns={3} variant="text-grid">
           <NumberField
             label="保存容量 / テナント (GiB)"
@@ -190,7 +190,7 @@ export function OwnerQuotasPage() {
       },
       {
         id: "registry",
-        header: "レジストリ上限",
+        header: "Flash Registry上限",
         accessorFn: (tenant) => tenant.effective_limits.registry.storage_gib,
         cell: ({ row }) => `${formatNumber(row.original.effective_limits.registry.storage_gib)} GiB`,
       },
@@ -233,7 +233,7 @@ export function OwnerQuotasPage() {
     <SpaceBetween size="l">
       <PageHeader
         title="所有者設定"
-        description="あなた専用の内部画面でFlow、Flash、コンテナレジストリの既定値と組織別ハードリミットを管理します。"
+        description="あなた専用の内部画面でFlow、Flash、Flash Registryの既定値と組織別ハードリミットを管理します。"
         actions={
           <Button
             variant="primary"

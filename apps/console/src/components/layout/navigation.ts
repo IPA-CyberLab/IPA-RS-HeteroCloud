@@ -20,7 +20,7 @@ const baseNavigationItems: SideNavigationProps.Item[] = [
     items: [
       { type: "link", text: "Flow", href: "/flow/services" },
       { type: "link", text: "Flash", href: "/flash/services" },
-      { type: "link", text: "Registry", href: "/registry" },
+      { type: "link", text: "Flash Registry", href: "/registry" },
     ],
   },
   {
@@ -55,7 +55,7 @@ export const routeTitles: Record<string, string> = {
   "/iam/bindings": "バインディング",
   "/flow/services": "Flow",
   "/flash/services": "Flash",
-  "/registry": "Registry",
+  "/registry": "Flash Registry",
   "/audit-logs": "監査ログ",
   "/settings": "設定",
   "/owner/quotas": "所有者設定",
