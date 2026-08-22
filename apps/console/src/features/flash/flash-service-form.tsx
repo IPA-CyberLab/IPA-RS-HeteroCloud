@@ -322,7 +322,7 @@ export function FlashServiceForm({
             )}
           </SpaceBetween>
         </FormField>
-        <ColumnLayout columns={3}>
+        <ColumnLayout columns={2}>
           <FormField label="リージョン">
             <Select
               ariaLabel="リージョン"
@@ -343,24 +343,8 @@ export function FlashServiceForm({
               onChange={({ detail }) => update("replicas", boundedInteger(detail.value, 1, 100, value.replicas))}
             />
           </FormField>
-          <FormField label="ディスク上限" constraintText="コンテナイメージを含む 1〜10 GiB">
-            <Input
-              type="number"
-              inputMode="numeric"
-              step={1}
-              nativeInputAttributes={{ min: 1, max: 10 }}
-              value={String(value.ephemeralStorageGib)}
-              disabled={disabled}
-              onChange={({ detail }) =>
-                update(
-                  "ephemeralStorageGib",
-                  boundedInteger(detail.value, 1, 10, value.ephemeralStorageGib),
-                )
-              }
-            />
-          </FormField>
         </ColumnLayout>
-        <ColumnLayout columns={2}>
+        <ColumnLayout columns={3}>
           <FormField label="CPU" constraintText="10〜4,000 millicores">
             <Input
               type="number"
@@ -381,6 +365,22 @@ export function FlashServiceForm({
               value={String(value.memoryMib)}
               disabled={disabled}
               onChange={({ detail }) => update("memoryMib", boundedInteger(detail.value, 16, 8_128, value.memoryMib))}
+            />
+          </FormField>
+          <FormField label="ディスク上限" constraintText="コンテナイメージを含む 1〜10 GiB">
+            <Input
+              type="number"
+              inputMode="numeric"
+              step={1}
+              nativeInputAttributes={{ min: 1, max: 10 }}
+              value={String(value.ephemeralStorageGib)}
+              disabled={disabled}
+              onChange={({ detail }) =>
+                update(
+                  "ephemeralStorageGib",
+                  boundedInteger(detail.value, 1, 10, value.ephemeralStorageGib),
+                )
+              }
             />
           </FormField>
         </ColumnLayout>
