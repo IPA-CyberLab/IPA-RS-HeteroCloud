@@ -283,7 +283,7 @@ export class HeteroCloudApiClient {
         organizationPath(organizationId, "registry/credentials"),
         { method: "POST", body: { name } },
       ),
-    revokeCredential: (organizationId: string, credentialId: string) =>
+    deleteCredential: (organizationId: string, credentialId: string) =>
       this.request<void>(
         organizationPath(
           organizationId,

@@ -43,6 +43,7 @@ describe("RegistryPage", () => {
       ],
     });
     vi.spyOn(api.registry, "deleteImage").mockResolvedValue(undefined);
+    vi.spyOn(api.registry, "deleteCredential").mockResolvedValue(undefined);
   });
 
   it("確認後に選択したコンテナイメージを削除する", async () => {
@@ -69,6 +70,50 @@ describe("RegistryPage", () => {
         "organization-1",
         "game-server",
         `sha256:${"a".repeat(64)}`,
+      );
+    });
+  });
+
+  it("確認後にRegistry認証情報を削除する", async () => {
+    vi.mocked(api.registry.get).mockResolvedValue({
+      endpoint: "https://registry.example.com",
+      project: "hc-organization-1",
+      image_prefix: "registry.example.com/hc-organization-1",
+      storage_limit_bytes: 10 * 1024 * 1024 * 1024,
+      storage_used_bytes: 512 * 1024 * 1024,
+      max_credentials: 5,
+      credentials: [
+        {
+          id: "credential-1",
+          name: "development-machine",
+          username: "robot$development-machine",
+          status: "active",
+          created_at: "2026-08-22T05:00:00Z",
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RegistryPage />
+      </QueryClientProvider>,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "development-machineを削除" }),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "Flash Registry認証情報を削除" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "削除" }));
+
+    await waitFor(() => {
+      expect(api.registry.deleteCredential).toHaveBeenCalledWith(
+        "organization-1",
+        "credential-1",
       );
     });
   });

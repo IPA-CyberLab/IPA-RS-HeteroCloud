@@ -423,6 +423,56 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
             .await,
         Err(StoreError::RequestRejected(message)) if message.contains("disk limit")
     ));
+
+    let registry_credential = store
+        .reserve_registry_credential(
+            organization_id,
+            membership.principal_id,
+            "development-machine",
+        )
+        .await?;
+    let registry_credential = store
+        .activate_registry_credential(
+            organization_id,
+            registry_credential.id,
+            1234,
+            "robot$development-machine",
+        )
+        .await?;
+    assert_eq!(registry_credential.status, "active");
+    assert_eq!(
+        store
+            .list_registry_credentials(organization_id)
+            .await?
+            .len(),
+        1
+    );
+    store
+        .delete_registry_credential(organization_id, registry_credential.id)
+        .await?;
+    assert!(
+        store
+            .list_registry_credentials(organization_id)
+            .await?
+            .is_empty()
+    );
+    assert!(matches!(
+        store
+            .registry_credential_for_delete(organization_id, registry_credential.id)
+            .await,
+        Err(StoreError::NotFound)
+    ));
+    let replacement = store
+        .reserve_registry_credential(
+            organization_id,
+            membership.principal_id,
+            "development-machine",
+        )
+        .await?;
+    store
+        .cancel_registry_credential_reservation(organization_id, replacement.id)
+        .await?;
+
     assert!(matches!(
         store
             .begin_delete_service_instance(

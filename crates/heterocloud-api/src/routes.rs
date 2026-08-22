@@ -175,7 +175,7 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/organizations/{organization_id}/registry/credentials/{credential_id}",
-            axum::routing::delete(revoke_registry_credential),
+            axum::routing::delete(delete_registry_credential),
         )
         .route(
             "/organizations/{organization_id}/realtime/services/{service_instance_id}/access-credentials",
@@ -580,7 +580,7 @@ async fn create_registry_credential(
     {
         Ok(credential) => credential,
         Err(error) => {
-            let _ = registry.revoke_credential(secret.robot_id).await;
+            let _ = registry.delete_credential(secret.robot_id).await;
             let _ = state
                 .store
                 .cancel_registry_credential_reservation(
@@ -610,7 +610,7 @@ async fn create_registry_credential(
     ))
 }
 
-async fn revoke_registry_credential(
+async fn delete_registry_credential(
     State(state): State<Arc<AppState>>,
     Path((organization_id, credential_id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
@@ -621,7 +621,7 @@ async fn revoke_registry_credential(
         &state,
         &actor,
         OrganizationId(organization_id),
-        "registry:RevokeCredential",
+        "registry:DeleteCredential",
         &organization_resource(
             organization_id,
             &format!("registry/credential/{credential_id}"),
@@ -630,27 +630,24 @@ async fn revoke_registry_credential(
     .await?;
     let credential = state
         .store
-        .registry_credential_for_revoke(OrganizationId(organization_id), credential_id)
+        .registry_credential_for_delete(OrganizationId(organization_id), credential_id)
         .await
         .map_err(ApiError::from_store)?;
-    if credential.status != "active" {
-        return Err(ApiError::Conflict);
-    }
     let robot_id = credential.harbor_robot_id.ok_or(ApiError::Internal)?;
     let registry = state
         .registry
         .as_deref()
         .ok_or(ApiError::RegistryProviderUnavailable)?;
     registry
-        .revoke_credential(robot_id)
+        .delete_credential(robot_id)
         .await
         .map_err(|error| {
-            tracing::warn!(%organization_id, %credential_id, error = %error, "registry credential revocation failed");
+            tracing::warn!(%organization_id, %credential_id, error = %error, "registry credential deletion failed");
             ApiError::RegistryProviderUnavailable
         })?;
     state
         .store
-        .revoke_registry_credential(OrganizationId(organization_id), credential_id)
+        .delete_registry_credential(OrganizationId(organization_id), credential_id)
         .await
         .map_err(ApiError::from_store)?;
     Ok(StatusCode::NO_CONTENT)

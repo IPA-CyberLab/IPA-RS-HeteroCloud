@@ -67,7 +67,7 @@ export function RegistryPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [secret, setSecret] = useState<RegistryCredentialSecret | null>(null);
-  const [revokeTarget, setRevokeTarget] = useState<RegistryCredential | null>(null);
+  const [deleteCredentialTarget, setDeleteCredentialTarget] = useState<RegistryCredential | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RegistryImage | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -84,11 +84,11 @@ export function RegistryPage() {
       await refreshRegistry();
     },
   });
-  const revoke = useMutation({
+  const deleteCredential = useMutation({
     mutationFn: (credentialId: string) =>
-      api.registry.revokeCredential(organizationId, credentialId),
+      api.registry.deleteCredential(organizationId, credentialId),
     onSuccess: async () => {
-      setRevokeTarget(null);
+      setDeleteCredentialTarget(null);
       await refreshRegistry();
     },
   });
@@ -125,9 +125,7 @@ export function RegistryPage() {
   const usagePercent = value.storage_limit_bytes
     ? Math.min(100, (value.storage_used_bytes / value.storage_limit_bytes) * 100)
     : 0;
-  const activeCredentials = value.credentials.filter(
-    (credential) => credential.status === "active",
-  ).length;
+  const activeCredentials = value.credentials.length;
   const commands = secret ? credentialCommands(secret) : "";
 
   return (
@@ -294,12 +292,7 @@ export function RegistryPage() {
           {
             id: "status",
             header: "状態",
-            cell: (item) =>
-              item.status === "active" ? (
-                <StatusIndicator type="success">有効</StatusIndicator>
-              ) : (
-                <StatusIndicator type="stopped">失効済み</StatusIndicator>
-              ),
+            cell: () => <StatusIndicator type="success">有効</StatusIndicator>,
           },
           {
             id: "actions",
@@ -308,11 +301,10 @@ export function RegistryPage() {
               <Button
                 variant="inline-icon"
                 iconName="remove"
-                ariaLabel={`${item.name}を失効`}
-                disabled={item.status !== "active"}
+                ariaLabel={`${item.name}を削除`}
                 onClick={() => {
-                  revoke.reset();
-                  setRevokeTarget(item);
+                  deleteCredential.reset();
+                  setDeleteCredentialTarget(item);
                 }}
               />
             ),
@@ -453,20 +445,22 @@ export function RegistryPage() {
       </Modal>
 
       <Modal
-        visible={revokeTarget !== null}
-        header="Flash Registry認証情報を失効"
-        onDismiss={() => setRevokeTarget(null)}
+        visible={deleteCredentialTarget !== null}
+        header="Flash Registry認証情報を削除"
+        onDismiss={() => setDeleteCredentialTarget(null)}
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button onClick={() => setRevokeTarget(null)}>キャンセル</Button>
+              <Button onClick={() => setDeleteCredentialTarget(null)}>キャンセル</Button>
               <Button
                 variant="primary"
                 iconName="remove"
-                loading={revoke.isPending}
-                onClick={() => revokeTarget && revoke.mutate(revokeTarget.id)}
+                loading={deleteCredential.isPending}
+                onClick={() =>
+                  deleteCredentialTarget && deleteCredential.mutate(deleteCredentialTarget.id)
+                }
               >
-                失効
+                削除
               </Button>
             </SpaceBetween>
           </Box>
@@ -474,9 +468,14 @@ export function RegistryPage() {
       >
         <SpaceBetween size="l">
           <Alert type="warning">
-            {revokeTarget?.name ?? ""} を使用するPush/Pullを直ちに拒否します。
+            {deleteCredentialTarget?.name ?? ""}
+            を削除します。この認証情報を使用するPush/Pullは直ちに拒否されます。
           </Alert>
-          <FormError message={revoke.isError ? getApiErrorMessage(revoke.error) : null} />
+          <FormError
+            message={
+              deleteCredential.isError ? getApiErrorMessage(deleteCredential.error) : null
+            }
+          />
         </SpaceBetween>
       </Modal>
     </SpaceBetween>

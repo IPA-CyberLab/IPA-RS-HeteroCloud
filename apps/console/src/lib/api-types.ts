@@ -82,9 +82,8 @@ export interface RegistryCredential {
   id: string;
   name: string;
   username: string | null;
-  status: "active" | "revoked";
+  status: "active";
   created_at: string;
-  revoked_at: string | null;
 }
 
 export interface RegistryStatus {

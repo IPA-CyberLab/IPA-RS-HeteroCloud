@@ -689,7 +689,7 @@ impl Store {
              SELECT $1, $2, p.id, $4, 'provisioning'
              FROM principals p
              WHERE p.id = $3 AND p.organization_id = $2 AND p.enabled = true
-             RETURNING id, name, username, harbor_robot_id, status, created_at, revoked_at",
+             RETURNING id, name, username, harbor_robot_id, status, created_at",
         )
         .bind(Uuid::now_v7())
         .bind(organization_id.0)
@@ -713,7 +713,7 @@ impl Store {
             "UPDATE registry_credentials
              SET harbor_robot_id = $3, username = $4, status = 'active'
              WHERE id = $1 AND organization_id = $2 AND status = 'provisioning'
-             RETURNING id, name, username, harbor_robot_id, status, created_at, revoked_at",
+             RETURNING id, name, username, harbor_robot_id, status, created_at",
         )
         .bind(credential_id)
         .bind(organization_id.0)
@@ -745,9 +745,9 @@ impl Store {
         organization_id: OrganizationId,
     ) -> Result<Vec<RegistryCredentialRecord>, StoreError> {
         sqlx::query_as::<_, RegistryCredentialRecord>(
-            "SELECT id, name, username, harbor_robot_id, status, created_at, revoked_at
+            "SELECT id, name, username, harbor_robot_id, status, created_at
              FROM registry_credentials
-             WHERE organization_id = $1 AND status <> 'provisioning'
+             WHERE organization_id = $1 AND status = 'active'
              ORDER BY created_at DESC, id DESC
              LIMIT 100",
         )
@@ -757,15 +757,15 @@ impl Store {
         .map_err(StoreError::from)
     }
 
-    pub async fn registry_credential_for_revoke(
+    pub async fn registry_credential_for_delete(
         &self,
         organization_id: OrganizationId,
         credential_id: Uuid,
     ) -> Result<RegistryCredentialRecord, StoreError> {
         sqlx::query_as::<_, RegistryCredentialRecord>(
-            "SELECT id, name, username, harbor_robot_id, status, created_at, revoked_at
+            "SELECT id, name, username, harbor_robot_id, status, created_at
              FROM registry_credentials
-             WHERE id = $1 AND organization_id = $2",
+             WHERE id = $1 AND organization_id = $2 AND status = 'active'",
         )
         .bind(credential_id)
         .bind(organization_id.0)
@@ -774,22 +774,21 @@ impl Store {
         .ok_or(StoreError::NotFound)
     }
 
-    pub async fn revoke_registry_credential(
+    pub async fn delete_registry_credential(
         &self,
         organization_id: OrganizationId,
         credential_id: Uuid,
     ) -> Result<(), StoreError> {
-        let updated = sqlx::query(
-            "UPDATE registry_credentials
-             SET status = 'revoked', revoked_at = now()
+        let deleted = sqlx::query(
+            "DELETE FROM registry_credentials
              WHERE id = $1 AND organization_id = $2 AND status = 'active'",
         )
         .bind(credential_id)
         .bind(organization_id.0)
         .execute(&self.pool)
         .await?;
-        if updated.rows_affected() == 0 {
-            return Err(StoreError::Conflict);
+        if deleted.rows_affected() == 0 {
+            return Err(StoreError::NotFound);
         }
         Ok(())
     }
@@ -2646,7 +2645,6 @@ pub struct RegistryCredentialRecord {
     pub harbor_robot_id: Option<i64>,
     pub status: String,
     pub created_at: DateTime<Utc>,
-    pub revoked_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug)]

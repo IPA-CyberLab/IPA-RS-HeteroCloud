@@ -255,7 +255,7 @@ impl RegistryClient {
         Ok(true)
     }
 
-    pub async fn revoke_credential(&self, robot_id: i64) -> Result<(), RegistryError> {
+    pub async fn delete_credential(&self, robot_id: i64) -> Result<(), RegistryError> {
         let url = self
             .internal_endpoint
             .join(&format!("api/v2.0/robots/{robot_id}"))?;
