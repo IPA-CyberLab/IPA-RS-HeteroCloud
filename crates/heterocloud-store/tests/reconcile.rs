@@ -338,9 +338,10 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
             flash_request.clone(),
         )
         .await?;
-    assert_ne!(
+    assert_eq!(
         second_flash.spec["ports"][0]["service_port"],
-        flash.spec["ports"][0]["service_port"]
+        json!(assigned_port),
+        "a removed endpoint must release its protocol-specific service port"
     );
 
     let mut over_quota = flash_request.clone();
