@@ -233,6 +233,28 @@ impl RegistryClient {
         Ok(images)
     }
 
+    pub async fn delete_image(
+        &self,
+        project: &RegistryProject,
+        repository_name: &str,
+        digest: &str,
+    ) -> Result<bool, RegistryError> {
+        let url = artifact_url(
+            &self.internal_endpoint,
+            &project.name,
+            repository_name,
+            digest,
+        )?;
+        let response = self.request(self.client.delete(url)).send().await?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        if !response.status().is_success() {
+            return Err(RegistryError::Status(response.status().as_u16()));
+        }
+        Ok(true)
+    }
+
     pub async fn revoke_credential(&self, robot_id: i64) -> Result<(), RegistryError> {
         let url = self
             .internal_endpoint
@@ -412,6 +434,19 @@ fn artifact_list_url(
     Ok(url)
 }
 
+fn artifact_url(
+    endpoint: &Url,
+    project_name: &str,
+    repository_name: &str,
+    reference: &str,
+) -> Result<Url, RegistryError> {
+    let mut url = artifact_list_url(endpoint, project_name, repository_name)?;
+    url.path_segments_mut()
+        .map_err(|()| RegistryError::InvalidEndpoint)?
+        .push(reference);
+    Ok(url)
+}
+
 fn registry_authority(endpoint: &Url) -> Result<String, RegistryError> {
     let host = match endpoint.host().ok_or(RegistryError::InvalidEndpoint)? {
         Host::Domain(host) => host.to_owned(),
@@ -426,7 +461,7 @@ fn registry_authority(endpoint: &Url) -> Result<String, RegistryError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{artifact_list_url, registry_authority, relative_repository_name};
+    use super::{artifact_list_url, artifact_url, registry_authority, relative_repository_name};
     use url::Url;
 
     #[test]
@@ -451,6 +486,22 @@ mod tests {
             artifact_list_url(&Url::parse("http://harbor-core/")?, "hc-tenant", repository)?
                 .as_str(),
             "http://harbor-core/api/v2.0/projects/hc-tenant/repositories/team%252Fgame/artifacts"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn artifact_delete_url_preserves_the_digest_reference() -> Result<(), Box<dyn std::error::Error>>
+    {
+        assert_eq!(
+            artifact_url(
+                &Url::parse("http://harbor-core/")?,
+                "hc-tenant",
+                "team/game",
+                "sha256:0123456789abcdef",
+            )?
+            .as_str(),
+            "http://harbor-core/api/v2.0/projects/hc-tenant/repositories/team%252Fgame/artifacts/sha256:0123456789abcdef"
         );
         Ok(())
     }

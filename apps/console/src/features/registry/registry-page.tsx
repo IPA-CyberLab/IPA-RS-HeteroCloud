@@ -24,6 +24,7 @@ import { registryImagesQueryOptions } from "@/lib/queries";
 import type {
   RegistryCredential,
   RegistryCredentialSecret,
+  RegistryImage,
 } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/utils";
 
@@ -67,15 +68,20 @@ export function RegistryPage() {
   const [name, setName] = useState("");
   const [secret, setSecret] = useState<RegistryCredentialSecret | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<RegistryCredential | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<RegistryImage | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey });
+  const refreshRegistry = () => queryClient.invalidateQueries({ queryKey });
+  const refreshImages = () =>
+    queryClient.invalidateQueries({
+      queryKey: ["registry", organizationId, "images"],
+    });
   const create = useMutation({
     mutationFn: () => api.registry.createCredential(organizationId, name.trim()),
     onSuccess: async (value) => {
       setCreateOpen(false);
       setSecret(value);
-      await refresh();
+      await refreshRegistry();
     },
   });
   const revoke = useMutation({
@@ -83,7 +89,19 @@ export function RegistryPage() {
       api.registry.revokeCredential(organizationId, credentialId),
     onSuccess: async () => {
       setRevokeTarget(null);
-      await refresh();
+      await refreshRegistry();
+    },
+  });
+  const deleteImage = useMutation({
+    mutationFn: (image: RegistryImage) =>
+      api.registry.deleteImage(
+        organizationId,
+        image.repository,
+        image.digest,
+      ),
+    onSuccess: async () => {
+      setDeleteTarget(null);
+      await Promise.all([refreshRegistry(), refreshImages()]);
     },
   });
 
@@ -204,6 +222,21 @@ export function RegistryPage() {
             cell: (item) =>
               item.pushed_at ? formatDateTime(item.pushed_at) : "-",
           },
+          {
+            id: "actions",
+            header: "操作",
+            cell: (item) => (
+              <Button
+                variant="inline-icon"
+                iconName="remove"
+                ariaLabel={`${item.repository}:${item.tag}を削除`}
+                onClick={() => {
+                  deleteImage.reset();
+                  setDeleteTarget(item);
+                }}
+              />
+            ),
+          },
         ]}
         empty={
           <EmptyState
@@ -292,6 +325,38 @@ export function RegistryPage() {
           />
         }
       />
+
+      <Modal
+        visible={deleteTarget !== null}
+        header="コンテナイメージを削除"
+        onDismiss={() => setDeleteTarget(null)}
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button onClick={() => setDeleteTarget(null)}>キャンセル</Button>
+              <Button
+                variant="primary"
+                iconName="remove"
+                loading={deleteImage.isPending}
+                onClick={() => deleteTarget && deleteImage.mutate(deleteTarget)}
+              >
+                削除
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="l">
+          <Alert type="warning">
+            {deleteTarget
+              ? `${deleteTarget.repository}:${deleteTarget.tag} を削除します。同じDigestを参照するタグも削除され、Flashの再起動時に取得できなくなる可能性があります。`
+              : ""}
+          </Alert>
+          <FormError
+            message={deleteImage.isError ? getApiErrorMessage(deleteImage.error) : null}
+          />
+        </SpaceBetween>
+      </Modal>
 
       <Modal
         visible={createOpen}

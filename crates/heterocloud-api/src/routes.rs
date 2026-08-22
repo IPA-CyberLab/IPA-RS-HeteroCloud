@@ -166,6 +166,10 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             get(list_registry_images),
         )
         .route(
+            "/organizations/{organization_id}/registry/images/{digest}",
+            axum::routing::delete(delete_registry_image),
+        )
+        .route(
             "/organizations/{organization_id}/registry/credentials",
             post(create_registry_credential),
         )
@@ -432,6 +436,73 @@ async fn list_registry_images(
         ApiError::RegistryProviderUnavailable
     })?;
     Ok(Json(json!({ "items": images })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeleteRegistryImageQuery {
+    repository: String,
+}
+
+async fn delete_registry_image(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, digest)): Path<(Uuid, String)>,
+    Query(query): Query<DeleteRegistryImageQuery>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "registry:DeleteImage",
+        &organization_resource(organization_id, &format!("registry/image/{digest}")),
+    )
+    .await?;
+    let limits = state
+        .store
+        .effective_resource_quota(OrganizationId(organization_id))
+        .await
+        .map_err(ApiError::from_store)?;
+    let registry = state
+        .registry
+        .as_deref()
+        .ok_or(ApiError::RegistryProviderUnavailable)?;
+    let project = registry
+        .ensure_project(OrganizationId(organization_id), &limits)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%organization_id, error = %error, "registry project reconciliation failed");
+            ApiError::RegistryProviderUnavailable
+        })?;
+    let images = registry.list_images(&project).await.map_err(|error| {
+        tracing::warn!(%organization_id, error = %error, "registry image lookup before deletion failed");
+        ApiError::RegistryProviderUnavailable
+    })?;
+    if !images
+        .iter()
+        .any(|image| image.repository == query.repository && image.digest == digest)
+    {
+        return Err(ApiError::NotFound);
+    }
+    let deleted = registry
+        .delete_image(&project, &query.repository, &digest)
+        .await
+        .map_err(|error| {
+            tracing::warn!(
+                %organization_id,
+                repository = %query.repository,
+                %digest,
+                error = %error,
+                "registry image deletion failed"
+            );
+            ApiError::RegistryProviderUnavailable
+        })?;
+    if !deleted {
+        return Err(ApiError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]

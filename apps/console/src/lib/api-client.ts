@@ -270,6 +270,14 @@ export class HeteroCloudApiClient {
         organizationPath(organizationId, "registry/images"),
         { signal },
       ),
+    deleteImage: (organizationId: string, repository: string, digest: string) =>
+      this.request<void>(
+        `${organizationPath(
+          organizationId,
+          `registry/images/${encodeURIComponent(digest)}`,
+        )}${queryString({ repository })}`,
+        { method: "DELETE" },
+      ),
     createCredential: (organizationId: string, name: string) =>
       this.request<RegistryCredentialSecret>(
         organizationPath(organizationId, "registry/credentials"),
