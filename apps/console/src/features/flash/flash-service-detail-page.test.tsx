@@ -35,11 +35,16 @@ const service: FlashService = {
     replicas: 3,
     cpu_millis: 1_000,
     memory_mib: 2_048,
-    ephemeral_storage_gib: 20,
+    ephemeral_storage_gib: 10,
     ports: [
       { name: "game", protocol: "udp", container_port: 7777, service_port: 7777 },
     ],
-    exposure: { type: "public", traffic_mode: "forwarded" },
+    exposure: {
+      type: "public",
+      traffic_mode: "forwarded",
+      allowed_source_cidrs: ["203.0.113.0/24"],
+      denied_source_cidrs: ["203.0.113.128/25"],
+    },
     env: { GAME_MODE: "production" },
     command: ["/app/server"],
     args: ["--listen", "0.0.0.0:7777"],
@@ -96,11 +101,15 @@ describe("FlashServiceDetailPage", () => {
     expect(screen.queryByText(/gVisor/)).not.toBeInTheDocument();
     expect(screen.getByText("203.0.113.10:7777")).toBeInTheDocument();
     expect(screen.getByText("公開・転送")).toBeInTheDocument();
+    expect(screen.getByText("203.0.113.0/24")).toBeInTheDocument();
+    expect(screen.getByText("203.0.113.128/25")).toBeInTheDocument();
     expect(screen.getByText("GAME_MODE")).toBeInTheDocument();
     expect(screen.getAllByText("2").length).toBeGreaterThan(0);
     expect(screen.getAllByText("3").length).toBeGreaterThan(0);
 
-    await user.click(screen.getByRole("button", { name: "編集" }));
+    await user.click(
+      screen.getByRole("button", { name: "エンドポイントを編集" }),
+    );
     expect(screen.getByRole("dialog", { name: "Flashサービスを編集" })).toBeInTheDocument();
     expect(screen.queryByText(/gVisor/)).not.toBeInTheDocument();
     expect(screen.getByDisplayValue("ghcr.io/example/game-server:v1")).toBeInTheDocument();

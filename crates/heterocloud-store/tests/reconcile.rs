@@ -184,7 +184,12 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
             "protocol": "udp",
             "container_port": 7777
         }],
-        "exposure": {"type": "public", "traffic_mode": "forwarded"},
+        "exposure": {
+            "type": "public",
+            "traffic_mode": "forwarded",
+            "allowed_source_cidrs": ["203.0.113.0/24"],
+            "denied_source_cidrs": ["203.0.113.128/25"]
+        },
         "env": {},
         "command": [],
         "args": [],
@@ -267,6 +272,18 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
     ));
     let mut updated_flash_request = flash_request.clone();
     updated_flash_request["replicas"] = json!(2);
+    updated_flash_request["ports"] = json!([
+        {
+            "name": "game-udp",
+            "protocol": "udp",
+            "container_port": 7777
+        },
+        {
+            "name": "admin-tcp",
+            "protocol": "tcp",
+            "container_port": 8080
+        }
+    ]);
     let flash = store
         .update_service_instance(
             organization_id,
@@ -280,6 +297,36 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
     assert_eq!(flash.provider, "flash");
     assert_eq!(flash.spec["replicas"], json!(2));
     assert_eq!(flash.spec["ports"][0]["service_port"], json!(assigned_port));
+    assert_eq!(
+        flash.spec["exposure"]["denied_source_cidrs"],
+        json!(["203.0.113.128/25"])
+    );
+    let added_tcp_port = flash.spec["ports"][1]["service_port"]
+        .as_u64()
+        .ok_or("added Flash endpoint did not receive a service port")?;
+
+    let mut removed_flash_request = flash.spec.clone();
+    removed_flash_request["ports"] = json!([{
+        "name": "admin-tcp",
+        "protocol": "tcp",
+        "container_port": 8080
+    }]);
+    let flash = store
+        .update_service_instance(
+            organization_id,
+            flash.id,
+            "flash",
+            membership.principal_id,
+            "flash-service-updated",
+            removed_flash_request,
+        )
+        .await?;
+    assert_eq!(flash.spec["ports"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        flash.spec["ports"][0]["service_port"],
+        json!(added_tcp_port),
+        "unchanged endpoints must keep their assigned public port"
+    );
 
     let second_flash = store
         .create_service_instance(

@@ -3321,6 +3321,8 @@ mod tests {
             exposure: FlashExposure {
                 exposure_type: FlashExposureType::Public,
                 traffic_mode: FlashTrafficMode::Direct,
+                allowed_source_cidrs: Vec::new(),
+                denied_source_cidrs: Vec::new(),
             },
             env: Default::default(),
             command: Vec::new(),

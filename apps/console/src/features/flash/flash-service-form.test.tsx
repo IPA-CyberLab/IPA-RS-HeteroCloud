@@ -9,6 +9,7 @@ import {
   flashRegistryImageOptions,
   flashSpecFromForm,
   parseFlashEnvironment,
+  parseFlashSourceCidrs,
   type FlashServiceFormValue,
 } from "./flash-service-form";
 
@@ -77,6 +78,9 @@ describe("FlashServiceForm", () => {
     expect(screen.queryByRole("spinbutton", { name: "サービスポート" })).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "CPU" })).toHaveAttribute("max", "4000");
     expect(screen.getByRole("spinbutton", { name: "メモリ" })).toHaveAttribute("max", "8128");
+    expect(
+      screen.getByRole("button", { name: "エンドポイントを追加" }),
+    ).toBeInTheDocument();
 
     fireEvent.change(screen.getByRole("spinbutton", { name: "レプリカ" }), {
       target: { value: "4" },
@@ -117,6 +121,8 @@ describe("FlashServiceForm", () => {
       processMode: "custom",
       command: "/app/server\n--foreground",
       args: "--listen\n0.0.0.0:7777",
+      allowedSourceCidrs: "203.0.113.10\n2001:db8::/48",
+      deniedSourceCidrs: "198.51.100.0/24",
     };
 
     expect(flashFormValidationError(value)).toBeNull();
@@ -124,7 +130,12 @@ describe("FlashServiceForm", () => {
       env: { GAME_MODE: "production", EMPTY: "", TOKEN: "a=b" },
       command: ["/app/server", "--foreground"],
       args: ["--listen", "0.0.0.0:7777"],
-      exposure: { type: "public", traffic_mode: "forwarded" },
+      exposure: {
+        type: "public",
+        traffic_mode: "forwarded",
+        allowed_source_cidrs: ["203.0.113.10", "2001:db8::/48"],
+        denied_source_cidrs: ["198.51.100.0/24"],
+      },
       ports: [
         {
           name: "udp",
@@ -133,6 +144,17 @@ describe("FlashServiceForm", () => {
         },
       ],
     });
+  });
+
+  it("編集フォームでエンドポイントを追加・削除できる", () => {
+    render(<FormHarness />);
+
+    const add = screen.getByRole("button", { name: "エンドポイントを追加" });
+    fireEvent.click(add);
+    expect(screen.getAllByRole("button", { name: /を削除/ })).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "port-2を削除" }));
+    expect(screen.getAllByRole("button", { name: /を削除/ })).toHaveLength(1);
   });
 
   it("Web Shell待機モードを常駐プロセスへ変換する", () => {
@@ -153,6 +175,9 @@ describe("FlashServiceForm", () => {
   it("不正または重複した環境変数とポート名を拒否する", () => {
     expect(parseFlashEnvironment("INVALID LINE").error).toContain("KEY=value");
     expect(parseFlashEnvironment("PORT=1\nPORT=2").error).toContain("重複");
+    expect(parseFlashSourceCidrs("203.0.113.1\ninvalid").error).toContain(
+      "有効なIPv4 / IPv6",
+    );
 
     const value: FlashServiceFormValue = {
       ...defaultFlashServiceFormValue,
@@ -181,6 +206,8 @@ describe("FlashServiceForm", () => {
     expect(flashSpecFromForm(value).exposure).toEqual({
       type: "internal",
       traffic_mode: "forwarded",
+      allowed_source_cidrs: [],
+      denied_source_cidrs: [],
     });
   });
 });

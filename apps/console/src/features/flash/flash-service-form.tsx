@@ -7,6 +7,7 @@ import SegmentedControl from "@cloudscape-design/components/segmented-control";
 import Select from "@cloudscape-design/components/select";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Textarea from "@cloudscape-design/components/textarea";
+import ipaddr from "ipaddr.js";
 import type { FormEvent, ReactNode } from "react";
 import { ProjectSelector } from "@/components/shared/resource-selectors";
 import type {
@@ -34,6 +35,8 @@ export interface FlashServiceFormValue {
   ports: FlashPortInput[];
   exposureType: FlashExposure["type"];
   trafficMode: FlashExposure["traffic_mode"];
+  allowedSourceCidrs: string;
+  deniedSourceCidrs: string;
   environment: string;
   processMode: FlashProcessMode;
   command: string;
@@ -59,6 +62,8 @@ export const defaultFlashServiceFormValue: FlashServiceFormValue = {
   ],
   exposureType: "public",
   trafficMode: "forwarded",
+  allowedSourceCidrs: "",
+  deniedSourceCidrs: "",
   environment: "",
   processMode: "image",
   command: "",
@@ -141,6 +146,41 @@ export function parseFlashEnvironment(value: string): {
   return { env, error: null };
 }
 
+export function parseFlashSourceCidrs(value: string): {
+  cidrs: string[];
+  error: string | null;
+} {
+  const cidrs = value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (cidrs.length > 64) {
+    return { cidrs: [], error: "IP / CIDRは64件まで設定できます。" };
+  }
+  const seen = new Set<string>();
+  for (const cidr of cidrs) {
+    try {
+      const [address, prefix] = cidr.includes("/")
+        ? ipaddr.parseCIDR(cidr)
+        : (() => {
+            const parsed = ipaddr.parse(cidr);
+            return [parsed, parsed.kind() === "ipv4" ? 32 : 128] as const;
+          })();
+      const key = `${address.kind()}:${address.toString()}/${prefix}`;
+      if (seen.has(key)) {
+        return { cidrs: [], error: `${cidr} が重複しています。` };
+      }
+      seen.add(key);
+    } catch {
+      return {
+        cidrs: [],
+        error: `${cidr} は有効なIPv4 / IPv6アドレスまたはCIDRではありません。`,
+      };
+    }
+  }
+  return { cidrs, error: null };
+}
+
 export function flashFormValidationError(
   value: FlashServiceFormValue,
 ): string | null {
@@ -161,6 +201,10 @@ export function flashFormValidationError(
     if (names.has(port.name)) return `ポート名 ${port.name} が重複しています。`;
     names.add(port.name);
   }
+  const allowedSources = parseFlashSourceCidrs(value.allowedSourceCidrs);
+  if (allowedSources.error) return `許可IP: ${allowedSources.error}`;
+  const deniedSources = parseFlashSourceCidrs(value.deniedSourceCidrs);
+  if (deniedSources.error) return `拒否IP: ${deniedSources.error}`;
   return parseFlashEnvironment(value.environment).error;
 }
 
@@ -186,6 +230,8 @@ export function flashSpecFromForm(
       type: value.exposureType,
       traffic_mode:
         value.exposureType === "internal" ? "forwarded" : value.trafficMode,
+      allowed_source_cidrs: parseFlashSourceCidrs(value.allowedSourceCidrs).cidrs,
+      denied_source_cidrs: parseFlashSourceCidrs(value.deniedSourceCidrs).cidrs,
     },
     env: parseFlashEnvironment(value.environment).env,
     command,
@@ -230,6 +276,8 @@ export function flashFormFromService(
     })),
     exposureType: service.spec.exposure.type,
     trafficMode: service.spec.exposure.traffic_mode,
+    allowedSourceCidrs: (service.spec.exposure.allowed_source_cidrs ?? []).join("\n"),
+    deniedSourceCidrs: (service.spec.exposure.denied_source_cidrs ?? []).join("\n"),
     environment: Object.entries(service.spec.env)
       .map(([key, envValue]) => `${key}=${envValue}`)
       .join("\n"),
@@ -273,6 +321,8 @@ export function FlashServiceForm({
     update("ports", ports);
   };
   const environmentError = parseFlashEnvironment(value.environment).error;
+  const allowedSourceError = parseFlashSourceCidrs(value.allowedSourceCidrs).error;
+  const deniedSourceError = parseFlashSourceCidrs(value.deniedSourceCidrs).error;
   const registryImageOptions = flashRegistryImageOptions(registryImages);
   const selectedRegistryImage =
     registryImageOptions.find((option) => option.value === value.image) ?? null;
@@ -473,11 +523,11 @@ export function FlashServiceForm({
                   ])
                 }
               >
-                ポートを追加
+                エンドポイントを追加
               </Button>
             }
           >
-            ポート
+            エンドポイント
           </Header>
           {value.ports.map((port, index) => (
             <ColumnLayout columns={4} key={index}>
@@ -520,6 +570,34 @@ export function FlashServiceForm({
             </ColumnLayout>
           ))}
         </SpaceBetween>
+        <ColumnLayout columns={2}>
+          <FormField
+            label="許可IP / CIDR"
+            constraintText="空欄の場合はすべて許可。1行につき1件"
+            errorText={allowedSourceError ?? undefined}
+          >
+            <Textarea
+              value={value.allowedSourceCidrs}
+              disabled={disabled}
+              placeholder={"203.0.113.10\n2001:db8::/48"}
+              rows={4}
+              onChange={({ detail }) => update("allowedSourceCidrs", detail.value)}
+            />
+          </FormField>
+          <FormField
+            label="拒否IP / CIDR"
+            constraintText="許可IPより優先。1行につき1件"
+            errorText={deniedSourceError ?? undefined}
+          >
+            <Textarea
+              value={value.deniedSourceCidrs}
+              disabled={disabled}
+              placeholder={"198.51.100.25\n2001:db8:ffff::/48"}
+              rows={4}
+              onChange={({ detail }) => update("deniedSourceCidrs", detail.value)}
+            />
+          </FormField>
+        </ColumnLayout>
         <FormField
           label="環境変数"
           description="1行につき KEY=value"

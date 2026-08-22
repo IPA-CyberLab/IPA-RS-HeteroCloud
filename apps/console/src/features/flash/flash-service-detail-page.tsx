@@ -184,6 +184,13 @@ export function FlashServiceDetailPage() {
     event.preventDefault();
     if (editForm && !validationError) updateService.mutate(editForm);
   };
+  const openEditor = () => {
+    setEditForm(flashFormFromService(item, registryImages.data?.items));
+    updateService.reset();
+    setEditOpen(true);
+  };
+  const allowedSources = item.spec.exposure.allowed_source_cidrs ?? [];
+  const deniedSources = item.spec.exposure.denied_source_cidrs ?? [];
 
   return (
     <SpaceBetween size="l">
@@ -214,13 +221,7 @@ export function FlashServiceDetailPage() {
             <Button
               iconName="edit"
               disabled={disabled}
-              onClick={() => {
-                setEditForm(
-                  flashFormFromService(item, registryImages.data?.items),
-                );
-                updateService.reset();
-                setEditOpen(true);
-              }}
+              onClick={openEditor}
             >
               編集
             </Button>
@@ -253,7 +254,20 @@ export function FlashServiceDetailPage() {
         </ColumnLayout>
       </Container>
       {statusMessage ? <Alert type={item.state === "error" ? "error" : "info"}>{statusMessage}</Alert> : null}
-      <Container header={<Header variant="h2">エンドポイント</Header>}>
+      <Container
+        header={
+          <Header
+            variant="h2"
+            actions={
+              <Button iconName="edit" disabled={disabled} onClick={openEditor}>
+                エンドポイントを編集
+              </Button>
+            }
+          >
+            エンドポイント
+          </Header>
+        }
+      >
         <FlashEndpoints endpoints={endpoints} />
       </Container>
       <ColumnLayout columns={2}>
@@ -268,6 +282,22 @@ export function FlashServiceDetailPage() {
               { label: "メモリ", value: `${formatNumber(item.spec.memory_mib)} MiB` },
               { label: "ディスク上限（イメージ込み）", value: `${formatNumber(item.spec.ephemeral_storage_gib)} GiB` },
               { label: "接続", value: flashExposureLabel(item.spec.exposure) },
+              {
+                label: "許可IP / CIDR",
+                value: allowedSources.length ? (
+                  <Box variant="code">{allowedSources.join(", ")}</Box>
+                ) : (
+                  "すべて"
+                ),
+              },
+              {
+                label: "拒否IP / CIDR",
+                value: deniedSources.length ? (
+                  <Box variant="code">{deniedSources.join(", ")}</Box>
+                ) : (
+                  "-"
+                ),
+              },
               { label: "更新日時", value: formatDateTime(item.updated_at) },
             ]}
           />
@@ -284,15 +314,15 @@ export function FlashServiceDetailPage() {
           />
         </Container>
       </ColumnLayout>
-      <Container header={<Header variant="h2">ポート</Header>}>
+      <Container header={<Header variant="h2">エンドポイント設定</Header>}>
         <DataTable
           columns={portColumns}
           data={item.spec.ports}
           getRowId={(port) => `${port.protocol}-${port.name}-${port.service_port}`}
           mobileVisibleColumns={["name", "protocol", "service_port"]}
           searchPlaceholder="名前、プロトコル、ポート番号で検索"
-          emptyTitle="ポートがありません"
-          emptyDescription="編集画面からポートを追加してください。"
+          emptyTitle="エンドポイントがありません"
+          emptyDescription="編集画面からエンドポイントを追加してください。"
         />
       </Container>
       <Modal

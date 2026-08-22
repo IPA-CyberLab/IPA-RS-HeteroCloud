@@ -4,6 +4,7 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
+use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -246,6 +247,7 @@ pub const MAX_FLASH_ORGANIZATION_REPLICAS: u64 = 100;
 pub const MIN_FLASH_SERVICE_PORT: u16 = 30_000;
 pub const MAX_FLASH_SERVICE_PORT: u16 = 32_767;
 pub const MAX_FLASH_PORTS: usize = 16;
+pub const MAX_FLASH_SOURCE_CIDRS: usize = 64;
 pub const MAX_FLASH_REGION_LENGTH: usize = 63;
 pub const MAX_FLASH_IMAGE_LENGTH: usize = 512;
 pub const MAX_FLASH_PORT_NAME_LENGTH: usize = 63;
@@ -439,12 +441,16 @@ pub enum FlashTrafficMode {
     Direct,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlashExposure {
     #[serde(rename = "type")]
     pub exposure_type: FlashExposureType,
     pub traffic_mode: FlashTrafficMode,
+    #[serde(default)]
+    pub allowed_source_cidrs: Vec<String>,
+    #[serde(default)]
+    pub denied_source_cidrs: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -562,6 +568,8 @@ impl FlashSpec {
                 "internal exposure requires forwarded traffic_mode",
             ));
         }
+        validate_flash_source_cidrs("allowed_source_cidrs", &self.exposure.allowed_source_cidrs)?;
+        validate_flash_source_cidrs("denied_source_cidrs", &self.exposure.denied_source_cidrs)?;
         if self.env.len() > MAX_FLASH_ENV_VARS {
             return Err(invalid_flash_spec(format!(
                 "env must contain at most {MAX_FLASH_ENV_VARS} entries"
@@ -590,6 +598,37 @@ impl FlashSpec {
         }
         Ok(())
     }
+}
+
+fn validate_flash_source_cidrs(field: &str, values: &[String]) -> Result<(), DomainError> {
+    if values.len() > MAX_FLASH_SOURCE_CIDRS {
+        return Err(invalid_flash_spec(format!(
+            "{field} must contain at most {MAX_FLASH_SOURCE_CIDRS} entries"
+        )));
+    }
+    let mut normalized = BTreeSet::new();
+    for value in values {
+        if value.is_empty() || value.trim() != value {
+            return Err(invalid_flash_spec(format!(
+                "{field} entries must be trimmed IP addresses or CIDRs"
+            )));
+        }
+        let network = value
+            .parse::<IpNet>()
+            .or_else(|_| value.parse::<std::net::IpAddr>().map(IpNet::from))
+            .map_err(|_| {
+                invalid_flash_spec(format!(
+                    "{field} entry {value:?} must be an IPv4/IPv6 address or CIDR"
+                ))
+            })?
+            .trunc();
+        if !normalized.insert(network) {
+            return Err(invalid_flash_spec(format!(
+                "{field} must not contain duplicate networks"
+            )));
+        }
+    }
+    Ok(())
 }
 
 const fn default_flash_ephemeral_storage_gib() -> u32 {
@@ -790,6 +829,8 @@ mod tests {
             exposure: FlashExposure {
                 exposure_type: FlashExposureType::Public,
                 traffic_mode: FlashTrafficMode::Direct,
+                allowed_source_cidrs: vec!["192.0.2.10".into(), "2001:db8::/48".into()],
+                denied_source_cidrs: vec!["192.0.2.128/25".into()],
             },
             env: [("LOG_LEVEL".into(), "info".into())].into_iter().collect(),
             command: vec!["/app/server".into()],
@@ -806,6 +847,14 @@ mod tests {
         assert_eq!(value["ports"][0]["protocol"], json!("udp"));
         assert_eq!(value["exposure"]["type"], json!("public"));
         assert_eq!(value["exposure"]["traffic_mode"], json!("direct"));
+        assert_eq!(
+            value["exposure"]["allowed_source_cidrs"],
+            json!(["192.0.2.10", "2001:db8::/48"])
+        );
+        assert_eq!(
+            value["exposure"]["denied_source_cidrs"],
+            json!(["192.0.2.128/25"])
+        );
         assert_eq!(value["ephemeral_storage_gib"], json!(10));
 
         let mut unknown = value;
@@ -822,8 +871,18 @@ mod tests {
             .as_object_mut()
             .ok_or("Flash spec must be an object")?
             .remove("ephemeral_storage_gib");
+        value["exposure"]
+            .as_object_mut()
+            .ok_or("Flash exposure must be an object")?
+            .remove("allowed_source_cidrs");
+        value["exposure"]
+            .as_object_mut()
+            .ok_or("Flash exposure must be an object")?
+            .remove("denied_source_cidrs");
         let defaulted = serde_json::from_value::<FlashSpec>(value)?;
         assert_eq!(defaulted.ephemeral_storage_gib, 10);
+        assert!(defaulted.exposure.allowed_source_cidrs.is_empty());
+        assert!(defaulted.exposure.denied_source_cidrs.is_empty());
 
         let mut oversized = flash_spec();
         oversized.ephemeral_storage_gib = 11;
@@ -868,6 +927,14 @@ mod tests {
         let mut value = serde_json::to_value(flash_spec())?;
         value["metadata"] = json!([]);
         assert!(serde_json::from_value::<FlashSpec>(value).is_err());
+
+        let mut spec = flash_spec();
+        spec.exposure.allowed_source_cidrs = vec!["not-an-ip".into()];
+        assert!(spec.validate().is_err());
+
+        let mut spec = flash_spec();
+        spec.exposure.denied_source_cidrs = vec!["192.0.2.1".into(), "192.0.2.1/32".into()];
+        assert!(spec.validate().is_err());
         Ok(())
     }
 
