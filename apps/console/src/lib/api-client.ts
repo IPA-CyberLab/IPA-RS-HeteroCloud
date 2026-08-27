@@ -33,6 +33,7 @@ import type {
   ResourceQuotaLimits,
   RegistryCredentialSecret,
   RegistryImage,
+  RegistryImageDeleteResult,
   RegistryStatus,
   Session,
   UpdateRealtimeServiceRequest,
@@ -159,6 +160,7 @@ export class HeteroCloudApiClient {
         ...requestOptions,
         headers,
         body,
+        cache: requestOptions.cache ?? (method === "GET" ? "no-store" : "default"),
         credentials: "include",
         // The browser owns the Origin header and emits it for same-origin POSTs.
         mode: "same-origin",
@@ -271,7 +273,7 @@ export class HeteroCloudApiClient {
         { signal },
       ),
     deleteImage: (organizationId: string, repository: string, digest: string) =>
-      this.request<void>(
+      this.request<RegistryImageDeleteResult>(
         `${organizationPath(
           organizationId,
           `registry/images/${encodeURIComponent(digest)}`,

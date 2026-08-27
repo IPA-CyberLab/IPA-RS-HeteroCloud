@@ -105,6 +105,10 @@ export interface RegistryImage {
   pushed_at: string | null;
 }
 
+export interface RegistryImageDeleteResult {
+  storage_used_bytes: number;
+}
+
 export interface RegistryCredentialSecret {
   credential: RegistryCredential;
   username: string;

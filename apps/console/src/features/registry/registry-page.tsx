@@ -25,6 +25,7 @@ import type {
   RegistryCredential,
   RegistryCredentialSecret,
   RegistryImage,
+  RegistryStatus,
 } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/utils";
 
@@ -99,9 +100,14 @@ export function RegistryPage() {
         image.repository,
         image.digest,
       ),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       setDeleteTarget(null);
-      await Promise.all([refreshRegistry(), refreshImages()]);
+      queryClient.setQueryData<RegistryStatus>(queryKey, (current) =>
+        current
+          ? { ...current, storage_used_bytes: result.storage_used_bytes }
+          : current,
+      );
+      await refreshImages();
     },
   });
 

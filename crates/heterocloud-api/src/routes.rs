@@ -450,7 +450,7 @@ async fn delete_registry_image(
     Query(query): Query<DeleteRegistryImageQuery>,
     headers: HeaderMap,
     jar: CookieJar,
-) -> Result<StatusCode, ApiError> {
+) -> Result<Json<Value>, ApiError> {
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     authorize_actor(
         &state,
@@ -502,7 +502,15 @@ async fn delete_registry_image(
     if !deleted {
         return Err(ApiError::NotFound);
     }
-    Ok(StatusCode::NO_CONTENT)
+    let storage_used_bytes = registry.storage_usage(&project).await.map_err(|error| {
+        tracing::warn!(
+            %organization_id,
+            error = %error,
+            "registry usage lookup after image deletion failed"
+        );
+        ApiError::RegistryProviderUnavailable
+    })?;
+    Ok(Json(json!({ "storage_used_bytes": storage_used_bytes })))
 }
 
 #[derive(Deserialize)]

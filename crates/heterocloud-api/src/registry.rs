@@ -255,6 +255,11 @@ impl RegistryClient {
         Ok(true)
     }
 
+    pub async fn storage_usage(&self, project: &RegistryProject) -> Result<u64, RegistryError> {
+        let quota = self.project_quota(project.project_id).await?;
+        Ok(quota.used.get("storage").copied().unwrap_or(0).max(0) as u64)
+    }
+
     pub async fn delete_credential(&self, robot_id: i64) -> Result<(), RegistryError> {
         let url = self
             .internal_endpoint

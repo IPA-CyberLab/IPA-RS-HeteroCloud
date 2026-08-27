@@ -42,7 +42,9 @@ describe("RegistryPage", () => {
         },
       ],
     });
-    vi.spyOn(api.registry, "deleteImage").mockResolvedValue(undefined);
+    vi.spyOn(api.registry, "deleteImage").mockResolvedValue({
+      storage_used_bytes: 128 * 1024 * 1024,
+    });
     vi.spyOn(api.registry, "deleteCredential").mockResolvedValue(undefined);
   });
 
@@ -72,6 +74,7 @@ describe("RegistryPage", () => {
         `sha256:${"a".repeat(64)}`,
       );
     });
+    expect(await screen.findByText("128 MiB / 10 GiB")).toBeInTheDocument();
   });
 
   it("確認後にRegistry認証情報を削除する", async () => {
