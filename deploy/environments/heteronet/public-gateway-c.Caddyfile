@@ -6,7 +6,7 @@
 		fail_duration 10s
 		max_fails 1
 		unhealthy_status 5xx
-		health_uri /realms/heterocloud/.well-known/openid-configuration
+		health_uri /health/ready
 		health_interval 2s
 		health_timeout 2s
 		health_status 2xx

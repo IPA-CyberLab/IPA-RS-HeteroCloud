@@ -91,6 +91,7 @@ for gateway_id in a b c d; do
   grep -Fq 'http://:18082 {' "$gateway_file"
   grep -Fq "bind $local_vpn_ip" "$gateway_file"
   grep -Fq '@vpn remote_ip 10.250.0.0/16 127.0.0.0/8' "$gateway_file"
+  grep -Fq 'health_uri /health/ready' "$gateway_file"
   grep -Fq 'health_uri {args[0]}' "$gateway_file"
   grep -Fq 'lb_try_duration 5s' "$gateway_file"
   grep -Fq 'registry.heterocloud.mizuame.app {' "$gateway_file"
