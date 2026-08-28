@@ -12,6 +12,7 @@ fullnameOverride: ""
 
 publicOrigin: https://cloud.example.com
 additionalOrigins: []
+trustedProxyNetworks: []
 secureCookie: true
 sessionTtlSeconds: 43200
 databaseMaxConnections: 20

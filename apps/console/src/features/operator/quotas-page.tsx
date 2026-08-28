@@ -20,12 +20,26 @@ import { api, getApiErrorMessage } from "@/lib/api-client";
 import type {
   FlashQuotaLimits,
   FlowQuotaLimits,
+  OwnerAccount,
   ResourceQuotaLimits,
   ResourceQuotaTenant,
+  UserLoginEvent,
 } from "@/lib/api-types";
-import { formatNumber } from "@/lib/utils";
+import { formatDateTime, formatNumber } from "@/lib/utils";
 
 const quotaQueryKey = ["owner", "resource-quotas"] as const;
+const accountQueryKey = ["owner", "accounts"] as const;
+
+function authenticationMethodLabel(method: UserLoginEvent["authentication_method"]) {
+  return method === "oidc" ? "Keycloak (OIDC)" : "ローカル";
+}
+
+function accountAuthenticationLabel(account: OwnerAccount) {
+  const methods = [];
+  if (account.external_identities.length > 0) methods.push("Keycloak (OIDC)");
+  if (account.has_local_password) methods.push("ローカル");
+  return methods.join(" / ") || "未設定";
+}
 
 function positiveInteger(value: string, fallback: number) {
   const parsed = Number(value);
@@ -123,13 +137,27 @@ export function OwnerQuotasPage() {
     queryKey: quotaQueryKey,
     queryFn: ({ signal }) => api.owner.quotas.overview(signal),
   });
+  const accounts = useQuery({
+    queryKey: accountQueryKey,
+    queryFn: ({ signal }) => api.owner.accounts.list(signal),
+  });
   const [defaults, setDefaults] = useState<ResourceQuotaLimits | null>(null);
   const [editing, setEditing] = useState<ResourceQuotaTenant | null>(null);
   const [tenantLimits, setTenantLimits] = useState<ResourceQuotaLimits | null>(null);
+  const [selectedAccount, setSelectedAccount] = useState<OwnerAccount | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const accountLogins = useQuery({
+    queryKey: [...accountQueryKey, selectedAccount?.user.id, "logins"],
+    queryFn: ({ signal }) =>
+      api.owner.accounts.logins(selectedAccount?.user.id ?? "", 100, signal),
+    enabled: selectedAccount !== null,
+  });
 
   const refresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: quotaQueryKey });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: quotaQueryKey }),
+      queryClient.invalidateQueries({ queryKey: accountQueryKey }),
+    ]);
   };
   const saveDefaults = useMutation({
     mutationFn: (limits: ResourceQuotaLimits) => api.owner.quotas.updateDefaults(limits),
@@ -152,6 +180,94 @@ export function OwnerQuotasPage() {
     mutationFn: api.owner.quotas.clearOrganization,
     onSuccess: refresh,
   });
+
+  const accountColumns = useMemo<ColumnDef<OwnerAccount, unknown>[]>(
+    () => [
+      {
+        id: "user",
+        header: "登録ユーザー",
+        accessorFn: (account) =>
+          `${account.user.display_name} ${account.user.email} ${account.user.id}`,
+        cell: ({ row }) => (
+          <SpaceBetween size="xxs">
+            <Box fontWeight="bold">{row.original.user.display_name}</Box>
+            <Box color="text-body-secondary">{row.original.user.id}</Box>
+          </SpaceBetween>
+        ),
+      },
+      {
+        id: "email",
+        header: "メールアドレス",
+        accessorFn: (account) => account.user.email,
+      },
+      {
+        id: "status",
+        header: "状態",
+        accessorFn: (account) => account.user.status,
+        cell: ({ row }) => (
+          <Badge color={row.original.user.status === "active" ? "green" : "red"}>
+            {row.original.user.status === "active" ? "有効" : "停止中"}
+          </Badge>
+        ),
+      },
+      {
+        id: "authentication",
+        header: "認証",
+        accessorFn: accountAuthenticationLabel,
+      },
+      {
+        id: "organizations",
+        header: "クラウドアカウント",
+        accessorFn: (account) =>
+          account.memberships
+            .map(
+              (membership) =>
+                `${membership.organization_name} ${membership.organization_slug}`,
+            )
+            .join(" "),
+        cell: ({ row }) =>
+          row.original.memberships
+            .map((membership) => membership.organization_name)
+            .join(", ") || "—",
+      },
+      {
+        id: "last_login_ip",
+        header: "最終ログインIP",
+        accessorFn: (account) => account.last_login?.source_ip ?? "",
+        cell: ({ row }) => row.original.last_login?.source_ip ?? "—",
+      },
+      {
+        id: "last_login_at",
+        header: "最終ログイン",
+        accessorFn: (account) => account.last_login?.occurred_at ?? "",
+        cell: ({ row }) => formatDateTime(row.original.last_login?.occurred_at),
+      },
+    ],
+    [],
+  );
+
+  const loginColumns = useMemo<ColumnDef<UserLoginEvent, unknown>[]>(
+    () => [
+      {
+        id: "occurred_at",
+        header: "ログイン日時",
+        accessorFn: (event) => event.occurred_at,
+        cell: ({ row }) => formatDateTime(row.original.occurred_at),
+      },
+      {
+        id: "source_ip",
+        header: "IPアドレス",
+        accessorFn: (event) => event.source_ip ?? "",
+        cell: ({ row }) => row.original.source_ip ?? "—",
+      },
+      {
+        id: "authentication_method",
+        header: "認証方式",
+        accessorFn: (event) => authenticationMethodLabel(event.authentication_method),
+      },
+    ],
+    [],
+  );
 
   const columns = useMemo<ColumnDef<ResourceQuotaTenant, unknown>[]>(
     () => [
@@ -223,12 +339,20 @@ export function OwnerQuotasPage() {
     [clearTenant],
   );
 
-  if (quotas.isPending) return <PageLoading label="所有者設定を読み込んでいます" />;
-  if (quotas.isError) {
-    return <ErrorState description="所有者設定を取得できませんでした。" onRetry={() => void quotas.refetch()} />;
+  if (quotas.isPending || accounts.isPending) {
+    return <PageLoading label="全アカウント情報を読み込んでいます" />;
+  }
+  if (quotas.isError || accounts.isError) {
+    return (
+      <ErrorState
+        description="全アカウント情報を取得できませんでした。"
+        onRetry={() => void refresh()}
+      />
+    );
   }
   const currentDefaults = defaults ?? quotas.data.defaults;
   const tenants = quotas.data.tenants;
+  const registeredAccounts = accounts.data.items;
   const aggregate = tenants.reduce(
     (totals, tenant) => ({
       flowServices: totals.flowServices + tenant.usage.flow_services,
@@ -248,15 +372,16 @@ export function OwnerQuotasPage() {
         actions={
           <Button
             iconName="refresh"
-            onClick={() => void quotas.refetch()}
+            onClick={() => void refresh()}
           >
             更新
           </Button>
         }
       />
       <Container header={<Header variant="h2">サービス全体</Header>}>
-        <ColumnLayout columns={5} variant="text-grid">
+        <ColumnLayout columns={6} variant="text-grid">
           {([
+            ["登録ユーザー", registeredAccounts.length],
             ["クラウドアカウント", tenants.length],
             ["Flowサービス", aggregate.flowServices],
             ["設定済みルーム上限", aggregate.configuredRooms],
@@ -270,6 +395,144 @@ export function OwnerQuotasPage() {
           ))}
         </ColumnLayout>
       </Container>
+      <Header
+        variant="h2"
+        counter={`(${formatNumber(registeredAccounts.length)})`}
+        description="登録情報、認証方式、所属クラウドアカウント、最終ログインIPを確認できます。"
+      >
+        登録ユーザー
+      </Header>
+      <DataTable
+        columns={accountColumns}
+        data={registeredAccounts}
+        getRowId={(account) => account.user.id}
+        onRowClick={setSelectedAccount}
+        getRowAriaLabel={(account) => `${account.user.display_name}の登録情報を表示`}
+        searchPlaceholder="氏名、メール、ユーザーID、IPで検索"
+        emptyTitle="登録ユーザーがいません"
+        emptyDescription="HeteroCloudに登録されたユーザーはまだいません。"
+        mobileVisibleColumns={["user", "status", "last_login_ip"]}
+      />
+      <Modal
+        visible={selectedAccount !== null}
+        size="max"
+        header={
+          selectedAccount
+            ? `${selectedAccount.user.display_name} のアカウント情報`
+            : "アカウント情報"
+        }
+        onDismiss={() => setSelectedAccount(null)}
+        footer={
+          <Box float="right">
+            <Button onClick={() => setSelectedAccount(null)}>閉じる</Button>
+          </Box>
+        }
+      >
+        {selectedAccount ? (
+          <SpaceBetween size="l">
+            <Header variant="h3">登録情報</Header>
+            <ColumnLayout columns={3} variant="text-grid">
+              <div>
+                <Box variant="awsui-key-label">ユーザーID</Box>
+                <Box>{selectedAccount.user.id}</Box>
+              </div>
+              <div>
+                <Box variant="awsui-key-label">氏名</Box>
+                <Box>{selectedAccount.user.display_name}</Box>
+              </div>
+              <div>
+                <Box variant="awsui-key-label">メールアドレス</Box>
+                <Box>{selectedAccount.user.email}</Box>
+              </div>
+              <div>
+                <Box variant="awsui-key-label">状態</Box>
+                <Box>
+                  {selectedAccount.user.status === "active" ? "有効" : "停止中"}
+                </Box>
+              </div>
+              <div>
+                <Box variant="awsui-key-label">登録日時</Box>
+                <Box>{formatDateTime(selectedAccount.user.created_at)}</Box>
+              </div>
+              <div>
+                <Box variant="awsui-key-label">記録済みログイン</Box>
+                <Box>{formatNumber(selectedAccount.login_count)} 件</Box>
+              </div>
+            </ColumnLayout>
+
+            <Header variant="h3">認証情報</Header>
+            <ColumnLayout columns={2} variant="text-grid">
+              <div>
+                <Box variant="awsui-key-label">ローカル資格情報</Box>
+                <Box>
+                  {selectedAccount.has_local_password ? "登録あり" : "登録なし"}
+                </Box>
+              </div>
+              {selectedAccount.external_identities.map((identity) => (
+                <div key={`${identity.issuer}:${identity.subject}`}>
+                  <SpaceBetween size="xxs">
+                    <Box variant="awsui-key-label">Keycloak / OIDC</Box>
+                    <Box>{identity.issuer}</Box>
+                    <Box color="text-body-secondary">Subject: {identity.subject}</Box>
+                    <Box color="text-body-secondary">
+                      連携日時: {formatDateTime(identity.created_at)}
+                    </Box>
+                  </SpaceBetween>
+                </div>
+              ))}
+            </ColumnLayout>
+
+            <Header
+              variant="h3"
+              counter={`(${formatNumber(selectedAccount.memberships.length)})`}
+            >
+              所属クラウドアカウント
+            </Header>
+            {selectedAccount.memberships.length > 0 ? (
+              <ColumnLayout columns={2} variant="text-grid">
+                {selectedAccount.memberships.map((membership) => (
+                  <div key={membership.organization_id}>
+                    <Box variant="awsui-key-label">
+                      {membership.organization_name}
+                    </Box>
+                    <Box>{membership.organization_slug}</Box>
+                    <Box color="text-body-secondary">
+                      {membership.role === "owner" ? "所有者" : "メンバー"} · {membership.organization_id}
+                    </Box>
+                  </div>
+                ))}
+              </ColumnLayout>
+            ) : (
+              <Box color="text-body-secondary">所属はありません。</Box>
+            )}
+
+            <Header
+              variant="h3"
+              description="成功したログインを新しい順に最大100件保存します。"
+            >
+              ログイン履歴
+            </Header>
+            {accountLogins.isPending ? (
+              <PageLoading label="ログイン履歴を読み込んでいます" />
+            ) : accountLogins.isError ? (
+              <ErrorState
+                description="ログイン履歴を取得できませんでした。"
+                onRetry={() => void accountLogins.refetch()}
+              />
+            ) : (
+              <DataTable
+                columns={loginColumns}
+                data={accountLogins.data.items}
+                getRowId={(event) => String(event.id)}
+                searchPlaceholder="IPアドレスまたは認証方式で検索"
+                emptyTitle="ログイン履歴がありません"
+                emptyDescription="次回のログインからIPアドレスが記録されます。"
+                initialPageSize={10}
+              />
+            )}
+          </SpaceBetween>
+        ) : null}
+      </Modal>
       {message ? <Box color="text-status-success">{message}</Box> : null}
       {saveDefaults.isError ? <FormError message={getApiErrorMessage(saveDefaults.error)} /> : null}
       <Header

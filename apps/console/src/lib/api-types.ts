@@ -78,6 +78,29 @@ export interface OwnerQuotaOverview {
   tenants: ResourceQuotaTenant[];
 }
 
+export interface UserExternalIdentity {
+  issuer: string;
+  subject: string;
+  created_at: string;
+}
+
+export interface UserLoginEvent {
+  id: number;
+  user_id: string;
+  source_ip: string | null;
+  authentication_method: "local" | "oidc";
+  occurred_at: string;
+}
+
+export interface OwnerAccount {
+  user: CloudUser;
+  has_local_password: boolean;
+  external_identities: UserExternalIdentity[];
+  memberships: Membership[];
+  last_login: UserLoginEvent | null;
+  login_count: number;
+}
+
 export interface RegistryCredential {
   id: string;
   name: string;

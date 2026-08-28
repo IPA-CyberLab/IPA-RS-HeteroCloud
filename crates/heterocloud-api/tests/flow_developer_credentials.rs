@@ -435,6 +435,8 @@ async fn test_state() -> Result<
             owner.user.id,
             &session_hash,
             Utc::now() + Duration::hours(1),
+            None,
+            "local",
         )
         .await?;
     let csrf_key = SecretString::from("test-csrf-key-at-least-32-bytes");
@@ -444,6 +446,7 @@ async fn test_state() -> Result<
         config: RuntimeConfig {
             public_origin: Url::parse(PUBLIC_ORIGIN)?,
             allowed_origins: vec![PUBLIC_ORIGIN.to_owned()],
+            trusted_proxy_networks: Vec::new(),
             secure_cookie: false,
             session_ttl: StdDuration::from_secs(3600),
             csrf_key,

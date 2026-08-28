@@ -103,6 +103,13 @@ pub struct Config {
 
     #[arg(
         long,
+        env = "HETEROCLOUD_TRUSTED_PROXY_NETWORKS",
+        value_delimiter = ','
+    )]
+    pub trusted_proxy_networks: Vec<IpNet>,
+
+    #[arg(
+        long,
         env = "HETEROCLOUD_SECURE_COOKIE",
         default_value_t = true,
         action = clap::ArgAction::Set
@@ -214,6 +221,7 @@ pub struct Config {
 pub struct RuntimeConfig {
     pub public_origin: Url,
     pub allowed_origins: Vec<String>,
+    pub trusted_proxy_networks: Vec<IpNet>,
     pub secure_cookie: bool,
     pub session_ttl: Duration,
     pub csrf_key: SecretString,
@@ -343,6 +351,7 @@ impl Config {
         Ok(RuntimeConfig {
             public_origin: self.public_origin.clone(),
             allowed_origins,
+            trusted_proxy_networks: self.trusted_proxy_networks.clone(),
             secure_cookie: self.secure_cookie,
             session_ttl: Duration::from_secs(self.session_ttl_seconds.clamp(300, 86_400)),
             csrf_key,

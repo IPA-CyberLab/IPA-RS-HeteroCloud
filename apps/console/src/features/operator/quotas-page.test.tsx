@@ -32,6 +32,55 @@ const limits: ResourceQuotaLimits = {
 
 describe("OwnerQuotasPage", () => {
   beforeEach(() => {
+    vi.spyOn(api.owner.accounts, "list").mockResolvedValue({
+      items: [
+        {
+          user: {
+            id: "0198a3be-b69a-7b37-9ff2-934b8907685b",
+            email: "user@example.test",
+            display_name: "Example User",
+            status: "active",
+            created_at: "2026-08-27T00:00:00Z",
+          },
+          has_local_password: false,
+          external_identities: [
+            {
+              issuer: "https://idp.example.test/realms/heterocloud",
+              subject: "keycloak-subject-1",
+              created_at: "2026-08-27T00:00:00Z",
+            },
+          ],
+          memberships: [
+            {
+              organization_id: "0198a3be-b69a-7b37-9ff2-934b8907685a",
+              organization_slug: "user-example",
+              organization_name: "Example account",
+              principal_id: "0198a3be-b69a-7b37-9ff2-934b8907685c",
+              role: "owner",
+            },
+          ],
+          last_login: {
+            id: 1,
+            user_id: "0198a3be-b69a-7b37-9ff2-934b8907685b",
+            source_ip: "203.0.113.42",
+            authentication_method: "oidc",
+            occurred_at: "2026-08-28T01:00:00Z",
+          },
+          login_count: 1,
+        },
+      ],
+    });
+    vi.spyOn(api.owner.accounts, "logins").mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          user_id: "0198a3be-b69a-7b37-9ff2-934b8907685b",
+          source_ip: "203.0.113.42",
+          authentication_method: "oidc",
+          occurred_at: "2026-08-28T01:00:00Z",
+        },
+      ],
+    });
     vi.spyOn(api.owner.quotas, "overview").mockResolvedValue({
       defaults: structuredClone(limits),
       tenants: [
@@ -81,10 +130,24 @@ describe("OwnerQuotasPage", () => {
     expect(
       await screen.findByRole("heading", { name: "全アカウント管理" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Example account")).toBeInTheDocument();
+    expect(screen.getAllByText("Example account").length).toBeGreaterThan(0);
+    expect(screen.getByText("203.0.113.42")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "全アカウントの既定ハードリミット" }),
     ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("link", { name: "Example Userの登録情報を表示" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Example User のアカウント情報" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Subject: keycloak-subject-1")).toBeInTheDocument();
+    expect(api.owner.accounts.logins).toHaveBeenCalledWith(
+      "0198a3be-b69a-7b37-9ff2-934b8907685b",
+      100,
+      expect.any(AbortSignal),
+    );
 
     await user.click(screen.getByRole("button", { name: "既定値を保存" }));
     await waitFor(() => {

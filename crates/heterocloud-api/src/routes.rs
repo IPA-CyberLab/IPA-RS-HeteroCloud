@@ -1,4 +1,9 @@
-use std::{collections::BTreeSet, convert::Infallible, net::SocketAddr, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    convert::Infallible,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
 
 use axum::{
     Json, Router,
@@ -27,8 +32,8 @@ use heterocloud_store::{
     AuditEvent, AuthorizationContext, DeveloperCredentialMint, DeveloperCredentialMintOutcome,
     FlowDeveloperCredentialRecord, MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE,
     MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE, MAX_REALTIME_METRIC_HISTORY_SAMPLES,
-    NewFlowAccessContext, NewFlowDeveloperCredential, OidcUser, RealtimeMetricCollectionTarget,
-    RegisterWithInvitation, SessionUser, Store,
+    MAX_USER_LOGIN_EVENTS_PER_USER, NewFlowAccessContext, NewFlowDeveloperCredential, OidcUser,
+    RealtimeMetricCollectionTarget, RegisterWithInvitation, SessionUser, Store,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -95,6 +100,11 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route("/auth/session", get(session))
         .route("/auth/logout", post(logout))
         .route("/owner/quotas", get(owner_quota_overview))
+        .route("/owner/accounts", get(list_owner_accounts))
+        .route(
+            "/owner/accounts/{user_id}/logins",
+            get(list_owner_account_logins),
+        )
         .route(
             "/owner/quotas/defaults",
             axum::routing::put(update_owner_quota_defaults),
@@ -257,6 +267,45 @@ async fn owner_quota_overview(
         .await
         .map_err(ApiError::from_store)?;
     Ok(Json(json!({ "defaults": defaults, "tenants": tenants })))
+}
+
+async fn list_owner_accounts(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &jar, peer, false).await?;
+    let items = state
+        .store
+        .list_owner_accounts()
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(json!({ "items": items })))
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnerLoginHistoryQuery {
+    limit: Option<i64>,
+}
+
+async fn list_owner_account_logins(
+    State(state): State<Arc<AppState>>,
+    Path(user_id): Path<Uuid>,
+    Query(query): Query<OwnerLoginHistoryQuery>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &jar, peer, false).await?;
+    let limit = validate_list_limit(query.limit, MAX_USER_LOGIN_EVENTS_PER_USER)?;
+    let items = state
+        .store
+        .list_user_login_events(heterocloud_domain::UserId(user_id), limit)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(json!({ "items": items })))
 }
 
 async fn update_owner_quota_defaults(
@@ -672,6 +721,7 @@ async fn login(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
     Json(request): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     require_same_origin(&state.config, &headers)?;
@@ -696,9 +746,22 @@ async fn login(
     let token_digest = token_hash(token.expose_secret());
     let expires_at = Utc::now()
         + ChronoDuration::from_std(state.config.session_ttl).map_err(|_| ApiError::Internal)?;
+    let source_ip = request_source_ip(
+        state.config.owner_console_mode,
+        &state.config.trusted_proxy_networks,
+        &headers,
+        peer,
+    )
+    .map(|address| address.to_string());
     state
         .store
-        .create_session(password_user.user.id, &token_digest, expires_at)
+        .create_session(
+            password_user.user.id,
+            &token_digest,
+            expires_at,
+            source_ip.as_deref(),
+            "local",
+        )
         .await
         .map_err(ApiError::from_store)?;
     let session_user = state
@@ -733,6 +796,7 @@ async fn register(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
     Json(request): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     require_same_origin(&state.config, &headers)?;
@@ -768,7 +832,14 @@ async fn register(
         })
         .await
         .map_err(ApiError::from_store)?;
-    issue_session(&state, jar, session_user).await
+    let source_ip = request_source_ip(
+        state.config.owner_console_mode,
+        &state.config.trusted_proxy_networks,
+        &headers,
+        peer,
+    )
+    .map(|address| address.to_string());
+    issue_session(&state, jar, session_user, source_ip.as_deref(), "local").await
 }
 
 async fn oidc_start(
@@ -800,7 +871,9 @@ struct OidcStartQuery {
 async fn oidc_callback(
     State(state): State<Arc<AppState>>,
     Query(query): Query<OidcCallbackQuery>,
+    headers: HeaderMap,
     jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
 ) -> Response {
     let transaction_cookie = jar
         .get(OIDC_TRANSACTION_COOKIE)
@@ -833,7 +906,16 @@ async fn oidc_callback(
         if session_user.user.status != UserStatus::Active {
             return Err(ApiError::Unauthorized);
         }
-        let (cookie, _) = create_session_cookie(&state, session_user.user.id).await?;
+        let source_ip = request_source_ip(
+            state.config.owner_console_mode,
+            &state.config.trusted_proxy_networks,
+            &headers,
+            peer,
+        )
+        .map(|address| address.to_string());
+        let (cookie, _) =
+            create_session_cookie(&state, session_user.user.id, source_ip.as_deref(), "oidc")
+                .await?;
         Ok::<_, ApiError>((jar.clone().add(cookie), Redirect::to("/")).into_response())
     }
     .await;
@@ -2689,8 +2771,16 @@ async fn issue_session(
     state: &AppState,
     jar: CookieJar,
     session_user: SessionUser,
+    source_ip: Option<&str>,
+    authentication_method: &str,
 ) -> Result<(CookieJar, Json<SessionResponse>), ApiError> {
-    let (cookie, csrf) = create_session_cookie(state, session_user.user.id).await?;
+    let (cookie, csrf) = create_session_cookie(
+        state,
+        session_user.user.id,
+        source_ip,
+        authentication_method,
+    )
+    .await?;
     Ok((
         jar.add(cookie),
         Json(SessionResponse::new(session_user, csrf, false)),
@@ -2700,6 +2790,8 @@ async fn issue_session(
 async fn create_session_cookie(
     state: &AppState,
     user_id: heterocloud_domain::UserId,
+    source_ip: Option<&str>,
+    authentication_method: &str,
 ) -> Result<(Cookie<'static>, SecretString), ApiError> {
     let token = generate_token().map_err(|_| ApiError::Internal)?;
     let digest = token_hash(token.expose_secret());
@@ -2707,7 +2799,13 @@ async fn create_session_cookie(
         + ChronoDuration::from_std(state.config.session_ttl).map_err(|_| ApiError::Internal)?;
     state
         .store
-        .create_session(user_id, &digest, expires_at)
+        .create_session(
+            user_id,
+            &digest,
+            expires_at,
+            source_ip,
+            authentication_method,
+        )
         .await
         .map_err(ApiError::from_store)?;
     let csrf = csrf_token(token.expose_secret(), &state.config.csrf_key)
@@ -2833,6 +2931,27 @@ fn owner_network_boundary_allows(
                 .iter()
                 .any(|network| network.contains(&peer.ip()))
         })
+}
+
+fn request_source_ip(
+    owner_console_mode: bool,
+    trusted_proxy_networks: &[ipnet::IpNet],
+    headers: &HeaderMap,
+    peer: Option<SocketAddr>,
+) -> Option<IpAddr> {
+    let peer_ip = peer?.ip();
+    let peer_is_trusted_proxy = !owner_console_mode
+        && trusted_proxy_networks
+            .iter()
+            .any(|network| network.contains(&peer_ip));
+    if !peer_is_trusted_proxy {
+        return Some(peer_ip);
+    }
+    headers
+        .get("x-envoy-external-address")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<IpAddr>().ok())
+        .or(Some(peer_ip))
 }
 
 async fn authenticated_actor(
@@ -3219,8 +3338,12 @@ fn _service_id_type_guard(id: Uuid) -> ServiceInstanceId {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, net::SocketAddr};
+    use std::{
+        collections::BTreeSet,
+        net::{IpAddr, SocketAddr},
+    };
 
+    use axum::http::{HeaderMap, HeaderValue};
     use chrono::Utc;
     use heterocloud_domain::{
         FlashExposure, FlashExposureType, FlashPort, FlashProtocol, FlashSpec, FlashTrafficMode,
@@ -3241,11 +3364,11 @@ mod tests {
         INVITATION_MAX_TTL_HOURS, RealtimeMetricHistoryRange, RealtimeMetricHistoryResponse,
         SESSION_COOKIE, deserialize_stored_flow_spec, flash_collection_resource,
         flash_service_resource, flow_permission_iam_action, owner_network_boundary_allows,
-        parse_api_key_prefix, parse_flow_developer_credential_prefix, valid_kubernetes_name,
-        validate_developer_credential_expiry, validate_developer_credential_name,
-        validate_flash_spec, validate_flow_access_target, validate_flow_access_ttl,
-        validate_flow_permissions, validate_flow_spec, validate_invitation_ttl,
-        validate_list_limit, validate_slug,
+        parse_api_key_prefix, parse_flow_developer_credential_prefix, request_source_ip,
+        valid_kubernetes_name, validate_developer_credential_expiry,
+        validate_developer_credential_name, validate_flash_spec, validate_flow_access_target,
+        validate_flow_access_ttl, validate_flow_permissions, validate_flow_spec,
+        validate_invitation_ttl, validate_list_limit, validate_slug,
     };
 
     #[test]
@@ -3281,6 +3404,35 @@ mod tests {
             &allowed_networks,
             None,
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn login_ip_uses_only_the_canonical_header_from_a_trusted_proxy()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let trusted = ["10.244.0.0/16".parse::<IpNet>()?];
+        let proxy = "10.244.2.7:43120".parse::<SocketAddr>()?;
+        let direct = "198.51.100.8:43120".parse::<SocketAddr>()?;
+        let client = "203.0.113.42".parse::<IpAddr>()?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-envoy-external-address",
+            HeaderValue::from_static("203.0.113.42"),
+        );
+
+        assert_eq!(
+            request_source_ip(false, &trusted, &headers, Some(proxy)),
+            Some(client)
+        );
+        assert_eq!(
+            request_source_ip(false, &trusted, &headers, Some(direct)),
+            Some(direct.ip())
+        );
+        assert_eq!(
+            request_source_ip(true, &trusted, &headers, Some(proxy)),
+            Some(proxy.ip())
+        );
+        assert_eq!(request_source_ip(false, &trusted, &headers, None), None);
         Ok(())
     }
 

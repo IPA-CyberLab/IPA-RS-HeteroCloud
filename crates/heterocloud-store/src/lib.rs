@@ -20,6 +20,7 @@ pub const MAX_FLOW_ACCESS_CONTEXT_RECORDS_PER_SERVICE: i64 = 100;
 pub const MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE: i64 = MAX_FLOW_ACCESS_CONTEXT_RECORDS_PER_SERVICE;
 pub const MAX_FLOW_DEVELOPER_CREDENTIALS_PER_SERVICE: i64 = 100;
 pub const MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE: i64 = 100;
+pub const MAX_USER_LOGIN_EVENTS_PER_USER: i64 = 100;
 
 #[derive(Clone)]
 pub struct Store {
@@ -49,6 +50,83 @@ impl Store {
     pub async fn ping(&self) -> Result<(), StoreError> {
         sqlx::query("SELECT 1").execute(&self.pool).await?;
         Ok(())
+    }
+
+    pub async fn list_owner_accounts(&self) -> Result<Vec<OwnerAccountRecord>, StoreError> {
+        let rows = sqlx::query_as::<_, OwnerAccountRow>(
+            "SELECT u.id, u.email, u.display_name, u.status, u.created_at,
+                    (u.password_hash IS NOT NULL) AS has_local_password,
+                    COALESCE(identities.items, '[]'::jsonb) AS external_identities,
+                    COALESCE(memberships.items, '[]'::jsonb) AS memberships,
+                    latest.id AS last_login_id,
+                    host(latest.source_ip) AS last_login_ip,
+                    latest.authentication_method AS last_login_authentication_method,
+                    latest.occurred_at AS last_login_occurred_at,
+                    COALESCE(logins.login_count, 0) AS login_count
+             FROM users u
+             LEFT JOIN LATERAL (
+                 SELECT jsonb_agg(
+                     jsonb_build_object(
+                         'issuer', i.issuer,
+                         'subject', i.subject,
+                         'created_at', i.created_at
+                     ) ORDER BY i.created_at, i.issuer
+                 ) AS items
+                 FROM user_external_identities i
+                 WHERE i.user_id = u.id
+             ) identities ON true
+             LEFT JOIN LATERAL (
+                 SELECT jsonb_agg(
+                     jsonb_build_object(
+                         'organization_id', m.organization_id,
+                         'organization_slug', o.slug,
+                         'organization_name', o.name,
+                         'principal_id', m.principal_id,
+                         'role', m.role
+                     ) ORDER BY o.name, o.id
+                 ) AS items
+                 FROM organization_memberships m
+                 JOIN organizations o ON o.id = m.organization_id
+                 WHERE m.user_id = u.id
+             ) memberships ON true
+             LEFT JOIN LATERAL (
+                 SELECT l.id, l.source_ip, l.authentication_method, l.occurred_at
+                 FROM user_login_events l
+                 WHERE l.user_id = u.id
+                 ORDER BY l.occurred_at DESC, l.id DESC
+                 LIMIT 1
+             ) latest ON true
+             LEFT JOIN LATERAL (
+                 SELECT count(*) AS login_count
+                 FROM user_login_events l
+                 WHERE l.user_id = u.id
+             ) logins ON true
+             ORDER BY u.created_at DESC, u.id DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(owner_account_from_row).collect()
+    }
+
+    pub async fn list_user_login_events(
+        &self,
+        user_id: UserId,
+        limit: i64,
+    ) -> Result<Vec<UserLoginEventRecord>, StoreError> {
+        let limit = limit.clamp(1, MAX_USER_LOGIN_EVENTS_PER_USER);
+        let events = sqlx::query_as::<_, UserLoginEventRecord>(
+            "SELECT id, user_id, host(source_ip) AS source_ip,
+                    authentication_method, occurred_at
+             FROM user_login_events
+             WHERE user_id = $1
+             ORDER BY occurred_at DESC, id DESC
+             LIMIT $2",
+        )
+        .bind(user_id.0)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(events)
     }
 
     pub async fn resource_quota_defaults(&self) -> Result<ResourceQuotaLimits, StoreError> {
@@ -288,8 +366,16 @@ impl Store {
         user_id: UserId,
         token_hash: &[u8; 32],
         expires_at: DateTime<Utc>,
+        source_ip: Option<&str>,
+        authentication_method: &str,
     ) -> Result<Uuid, StoreError> {
+        if !matches!(authentication_method, "local" | "oidc") {
+            return Err(StoreError::RequestRejected(
+                "unsupported authentication method".to_owned(),
+            ));
+        }
         let id = Uuid::now_v7();
+        let mut transaction = self.pool.begin().await?;
         sqlx::query(
             "INSERT INTO sessions (id, user_id, token_hash, expires_at)
              VALUES ($1, $2, $3, $4)",
@@ -298,8 +384,35 @@ impl Store {
         .bind(user_id.0)
         .bind(token_hash.as_slice())
         .bind(expires_at)
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await?;
+        sqlx::query(
+            "INSERT INTO user_login_events
+                (user_id, session_id, source_ip, authentication_method)
+             VALUES ($1, $2, $3::inet, $4)",
+        )
+        .bind(user_id.0)
+        .bind(id)
+        .bind(source_ip)
+        .bind(authentication_method)
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "DELETE FROM user_login_events
+             WHERE user_id = $1
+               AND id NOT IN (
+                   SELECT id
+                   FROM user_login_events
+                   WHERE user_id = $1
+                   ORDER BY occurred_at DESC, id DESC
+                   LIMIT $2
+               )",
+        )
+        .bind(user_id.0)
+        .bind(MAX_USER_LOGIN_EVENTS_PER_USER)
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
         Ok(id)
     }
 
@@ -2602,7 +2715,7 @@ pub struct PasswordUser {
     pub password_hash: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Membership {
     pub organization_id: OrganizationId,
     pub organization_slug: String,
@@ -2615,6 +2728,32 @@ pub struct Membership {
 pub struct SessionUser {
     pub user: User,
     pub memberships: Vec<Membership>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct UserExternalIdentityRecord {
+    pub issuer: String,
+    pub subject: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct UserLoginEventRecord {
+    pub id: i64,
+    pub user_id: Uuid,
+    pub source_ip: Option<String>,
+    pub authentication_method: String,
+    pub occurred_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct OwnerAccountRecord {
+    pub user: User,
+    pub has_local_password: bool,
+    pub external_identities: Vec<UserExternalIdentityRecord>,
+    pub memberships: Vec<Membership>,
+    pub last_login: Option<UserLoginEventRecord>,
+    pub login_count: u64,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -2844,6 +2983,23 @@ struct UserRow {
     created_at: DateTime<Utc>,
 }
 
+#[derive(sqlx::FromRow)]
+struct OwnerAccountRow {
+    id: Uuid,
+    email: String,
+    display_name: String,
+    status: String,
+    created_at: DateTime<Utc>,
+    has_local_password: bool,
+    external_identities: Value,
+    memberships: Value,
+    last_login_id: Option<i64>,
+    last_login_ip: Option<String>,
+    last_login_authentication_method: Option<String>,
+    last_login_occurred_at: Option<DateTime<Utc>>,
+    login_count: i64,
+}
+
 impl TryFrom<UserRow> for PasswordUser {
     type Error = StoreError;
 
@@ -2871,6 +3027,43 @@ fn user_from_row(row: UserRow) -> Result<User, StoreError> {
         display_name: row.display_name,
         status,
         created_at: row.created_at,
+    })
+}
+
+fn owner_account_from_row(row: OwnerAccountRow) -> Result<OwnerAccountRecord, StoreError> {
+    let external_identities = serde_json::from_value(row.external_identities)?;
+    let memberships = serde_json::from_value(row.memberships)?;
+    let last_login = match (
+        row.last_login_id,
+        row.last_login_authentication_method,
+        row.last_login_occurred_at,
+    ) {
+        (Some(id), Some(authentication_method), Some(occurred_at)) => Some(UserLoginEventRecord {
+            id,
+            user_id: row.id,
+            source_ip: row.last_login_ip,
+            authentication_method,
+            occurred_at,
+        }),
+        (None, None, None) => None,
+        _ => return Err(StoreError::Invariant("incomplete latest login event")),
+    };
+    let login_count = u64::try_from(row.login_count)
+        .map_err(|_| StoreError::Invariant("negative login event count"))?;
+    Ok(OwnerAccountRecord {
+        user: user_from_row(UserRow {
+            id: row.id,
+            email: row.email,
+            display_name: row.display_name,
+            password_hash: None,
+            status: row.status,
+            created_at: row.created_at,
+        })?,
+        has_local_password: row.has_local_password,
+        external_identities,
+        memberships,
+        last_login,
+        login_count,
     })
 }
 

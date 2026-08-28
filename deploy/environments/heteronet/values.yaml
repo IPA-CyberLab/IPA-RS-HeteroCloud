@@ -6,6 +6,8 @@ additionalOrigins:
   - https://cloud-a.heterocloud.mizuame.app
   - https://cloud-b.heterocloud.mizuame.app
   - https://cloud-c.heterocloud.mizuame.app
+trustedProxyNetworks:
+  - 10.244.0.0/16
 
 oidc:
   enabled: true

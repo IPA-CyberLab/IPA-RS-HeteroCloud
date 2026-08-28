@@ -88,6 +88,9 @@ spec:
             {{- if .Values.additionalOrigins }}
             - --additional-origins={{ join "," .Values.additionalOrigins }}
             {{- end }}
+            {{- if .Values.trustedProxyNetworks }}
+            - --trusted-proxy-networks={{ join "," .Values.trustedProxyNetworks }}
+            {{- end }}
             - --secure-cookie={{ .Values.secureCookie }}
             - --session-ttl-seconds={{ .Values.sessionTtlSeconds }}
             - --database-max-connections={{ .Values.databaseMaxConnections }}

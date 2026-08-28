@@ -178,6 +178,35 @@ async fn registration_checks_invitation_before_hashing_and_consumes_it_once()
             .await?;
     assert_eq!(external_identity_count, 1);
 
+    store
+        .create_session(
+            oidc_user.user.id,
+            &[7_u8; 32],
+            Utc::now() + Duration::hours(1),
+            Some("203.0.113.42"),
+            "oidc",
+        )
+        .await?;
+    let accounts = store.list_owner_accounts().await?;
+    let account = accounts
+        .iter()
+        .find(|account| account.user.id == oidc_user.user.id)
+        .ok_or("OIDC account is missing from owner account list")?;
+    assert!(!account.has_local_password);
+    assert_eq!(account.external_identities.len(), 1);
+    assert_eq!(account.memberships.len(), 1);
+    assert_eq!(account.login_count, 1);
+    assert_eq!(
+        account
+            .last_login
+            .as_ref()
+            .and_then(|login| login.source_ip.as_deref()),
+        Some("203.0.113.42")
+    );
+    let login_events = store.list_user_login_events(oidc_user.user.id, 100).await?;
+    assert_eq!(login_events.len(), 1);
+    assert_eq!(login_events[0].authentication_method, "oidc");
+
     Ok(())
 }
 
@@ -214,6 +243,7 @@ async fn test_state() -> Result<Option<(Store, Arc<AppState>)>, Box<dyn Error>> 
         config: RuntimeConfig {
             public_origin,
             allowed_origins: vec![PUBLIC_ORIGIN.to_owned()],
+            trusted_proxy_networks: Vec::new(),
             secure_cookie: false,
             session_ttl: StdDuration::from_secs(3600),
             csrf_key: SecretString::from("test-csrf-key-at-least-32-bytes"),

@@ -18,6 +18,7 @@ import type {
   InvitationResponse,
   LoginRequest,
   Organization,
+  OwnerAccount,
   OwnerQuotaOverview,
   Principal,
   Project,
@@ -38,6 +39,7 @@ import type {
   Session,
   UpdateRealtimeServiceRequest,
   UpdateFlashServiceRequest,
+  UserLoginEvent,
 } from "@/lib/api-types";
 
 const API_BASE_URL = "/api/v1";
@@ -241,6 +243,15 @@ export class HeteroCloudApiClient {
   };
 
   readonly owner = {
+    accounts: {
+      list: (signal?: AbortSignal) =>
+        this.request<CollectionResponse<OwnerAccount>>("/owner/accounts", { signal }),
+      logins: (userId: string, limit = 100, signal?: AbortSignal) =>
+        this.request<CollectionResponse<UserLoginEvent>>(
+          `/owner/accounts/${encodeURIComponent(userId)}/logins${queryString({ limit })}`,
+          { signal },
+        ),
+    },
     quotas: {
       overview: (signal?: AbortSignal) =>
         this.request<OwnerQuotaOverview>("/owner/quotas", { signal }),
