@@ -2,5 +2,5 @@ apiVersion: v2
 name: heterocloud
 description: HeteroCloud public identity, IAM, and service control plane
 type: application
-version: 0.1.44
-appVersion: "0.1.44"
+version: 0.1.45
+appVersion: "0.1.45"
