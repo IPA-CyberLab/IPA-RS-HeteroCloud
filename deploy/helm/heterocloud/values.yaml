@@ -82,6 +82,8 @@ ownerConsole:
     image: docker.io/library/haproxy:3.2.7-alpine@sha256:3b80483d47e1c7d1fc7eb4b9104f33d9a51259769be299eb675524dca2bc8157
   allowedNetworks:
     - 10.250.0.0/24
+  # Source addresses used by the cluster service proxy after forwarding VPN traffic.
+  serviceProxyNetworks: []
   externalIPs: []
   podDisruptionBudget:
     minAvailable: 2

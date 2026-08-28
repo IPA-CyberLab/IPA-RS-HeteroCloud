@@ -27,6 +27,8 @@ ownerConsole:
     endpoint: postgres-ha-connector.kube-system.svc.cluster.local:25432
   allowedNetworks:
     - 10.250.0.0/24
+  serviceProxyNetworks:
+    - 10.244.0.0/16
   externalIPs:
     - 10.250.0.4
     - 10.250.0.5
