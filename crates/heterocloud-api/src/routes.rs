@@ -3255,14 +3255,11 @@ mod tests {
     }
 
     #[test]
-    fn owner_only_deployment_relies_on_its_network_policy_after_service_snat() {
-        let allowed_networks = ["10.250.0.0/24".parse::<IpNet>().expect("valid CIDR")];
-        let vpn_peer = "10.250.0.42:12345"
-            .parse::<SocketAddr>()
-            .expect("valid VPN peer");
-        let snat_peer = "10.244.3.1:12345"
-            .parse::<SocketAddr>()
-            .expect("valid SNAT peer");
+    fn owner_only_deployment_relies_on_its_network_policy_after_service_snat()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let allowed_networks = ["10.250.0.0/24".parse::<IpNet>()?];
+        let vpn_peer = "10.250.0.42:12345".parse::<SocketAddr>()?;
+        let snat_peer = "10.244.3.1:12345".parse::<SocketAddr>()?;
 
         assert!(owner_network_boundary_allows(
             true,
@@ -3284,6 +3281,7 @@ mod tests {
             &allowed_networks,
             None,
         ));
+        Ok(())
     }
 
     #[test]
