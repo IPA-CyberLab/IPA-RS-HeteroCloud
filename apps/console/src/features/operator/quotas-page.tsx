@@ -228,12 +228,53 @@ export function OwnerQuotasPage() {
     return <ErrorState description="所有者設定を取得できませんでした。" onRetry={() => void quotas.refetch()} />;
   }
   const currentDefaults = defaults ?? quotas.data.defaults;
+  const tenants = quotas.data.tenants;
+  const aggregate = tenants.reduce(
+    (totals, tenant) => ({
+      flowServices: totals.flowServices + tenant.usage.flow_services,
+      configuredRooms: totals.configuredRooms + tenant.usage.flow_configured_rooms,
+      flashServices: totals.flashServices + tenant.usage.flash_services,
+      flashReplicas: totals.flashReplicas + tenant.usage.flash_replicas,
+    }),
+    { flowServices: 0, configuredRooms: 0, flashServices: 0, flashReplicas: 0 },
+  );
+  const customLimitCount = tenants.filter((tenant) => tenant.override_limits).length;
 
   return (
     <SpaceBetween size="l">
       <PageHeader
-        title="所有者設定"
-        description="あなた専用の内部画面でFlow、Flash、Flash Registryの既定値と組織別ハードリミットを管理します。"
+        title="全アカウント管理"
+        description="HeteroCloudサービス全体の利用状況と、全クラウドアカウントに適用するハードリミットを管理します。"
+        actions={
+          <Button
+            iconName="refresh"
+            onClick={() => void quotas.refetch()}
+          >
+            更新
+          </Button>
+        }
+      />
+      <Container header={<Header variant="h2">サービス全体</Header>}>
+        <ColumnLayout columns={5} variant="text-grid">
+          {([
+            ["クラウドアカウント", tenants.length],
+            ["Flowサービス", aggregate.flowServices],
+            ["設定済みルーム上限", aggregate.configuredRooms],
+            ["Flashサービス", aggregate.flashServices],
+            ["Flash VM", aggregate.flashReplicas],
+          ] as const).map(([label, value]) => (
+            <div key={label}>
+              <Box variant="awsui-key-label">{label}</Box>
+              <Box variant="awsui-value-large">{formatNumber(value)}</Box>
+            </div>
+          ))}
+        </ColumnLayout>
+      </Container>
+      {message ? <Box color="text-status-success">{message}</Box> : null}
+      {saveDefaults.isError ? <FormError message={getApiErrorMessage(saveDefaults.error)} /> : null}
+      <Header
+        variant="h2"
+        description="個別上書きのない全クラウドアカウントへ適用されます。"
         actions={
           <Button
             variant="primary"
@@ -243,30 +284,35 @@ export function OwnerQuotasPage() {
             既定値を保存
           </Button>
         }
-      />
-      {message ? <Box color="text-status-success">{message}</Box> : null}
-      {saveDefaults.isError ? <FormError message={getApiErrorMessage(saveDefaults.error)} /> : null}
-      <QuotaEditor value={currentDefaults} onChange={setDefaults} />
-      <Container
-        header={
-          <Header variant="h2" description="個別設定を削除すると直ちに既定値へ戻ります。">
-            テナント別上限
-          </Header>
-        }
       >
-        <DataTable
-          columns={columns}
-          data={quotas.data.tenants}
-          getRowId={(tenant) => tenant.organization.id}
-          searchPlaceholder="テナント名またはslugで検索"
-          emptyTitle="テナントがありません"
-          emptyDescription="登録済みテナントはありません。"
-        />
-      </Container>
+        全アカウントの既定ハードリミット
+      </Header>
+      <QuotaEditor value={currentDefaults} onChange={setDefaults} />
+      {clearTenant.isError ? <FormError message={getApiErrorMessage(clearTenant.error)} /> : null}
+      <Header
+        variant="h2"
+        counter={`(${formatNumber(tenants.length)})`}
+        description={`${formatNumber(customLimitCount)}件に個別上限を設定中です。個別設定を解除すると既定値へ戻ります。`}
+      >
+        クラウドアカウント別ハードリミット
+      </Header>
+      <DataTable
+        columns={columns}
+        data={tenants}
+        getRowId={(tenant) => tenant.organization.id}
+        onRowClick={(tenant) => {
+          setEditing(tenant);
+          setTenantLimits(structuredClone(tenant.effective_limits));
+        }}
+        getRowAriaLabel={(tenant) => `${tenant.organization.name}の上限を編集`}
+        searchPlaceholder="アカウント名またはIDで検索"
+        emptyTitle="クラウドアカウントがありません"
+        emptyDescription="登録済みクラウドアカウントはありません。"
+      />
       <Modal
         visible={editing !== null && tenantLimits !== null}
         size="max"
-        header={editing ? `${editing.organization.name} のハードリミット` : "テナント上限"}
+        header={editing ? `${editing.organization.name} のハードリミット` : "アカウント上限"}
         onDismiss={() => {
           setEditing(null);
           setTenantLimits(null);

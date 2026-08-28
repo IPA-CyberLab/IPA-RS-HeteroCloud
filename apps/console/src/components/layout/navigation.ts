@@ -36,13 +36,7 @@ const baseNavigationItems: SideNavigationProps.Item[] = [
 export function navigationItems(ownerConsole: boolean): SideNavigationProps.Item[] {
   if (!ownerConsole) return baseNavigationItems;
   return [
-    ...baseNavigationItems,
-    { type: "divider" },
-    {
-      type: "section",
-      text: "所有者管理",
-      items: [{ type: "link", text: "ハードリミット", href: "/owner/quotas" }],
-    },
+    { type: "link", text: "全アカウント管理", href: "/overview" },
   ];
 }
 
@@ -58,5 +52,5 @@ export const routeTitles: Record<string, string> = {
   "/registry": "Flash Registry",
   "/audit-logs": "監査ログ",
   "/settings": "設定",
-  "/owner/quotas": "所有者設定",
+  "/owner/quotas": "全アカウント管理",
 };

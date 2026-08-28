@@ -2,7 +2,9 @@ import AppLayout from "@cloudscape-design/components/app-layout";
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
 import Flashbar, { type FlashbarProps } from "@cloudscape-design/components/flashbar";
 import SideNavigation from "@cloudscape-design/components/side-navigation";
-import TopNavigation from "@cloudscape-design/components/top-navigation";
+import TopNavigation, {
+  type TopNavigationProps,
+} from "@cloudscape-design/components/top-navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -27,7 +29,10 @@ function routeTitle(pathname: string) {
   return routeTitles[pathname] ?? "HeteroCloud";
 }
 
-function breadcrumbs(pathname: string) {
+function breadcrumbs(pathname: string, ownerConsole: boolean) {
+  if (ownerConsole) {
+    return [{ text: "HeteroCloud Owner", href: "/overview" }, { text: "全アカウント管理", href: pathname }];
+  }
   const items = [{ text: "HeteroCloud", href: "/overview" }];
   if (pathname.startsWith("/iam/")) {
     items.push({ text: "IAM", href: "/iam/principals" });
@@ -86,55 +91,56 @@ export function AppShell() {
         ? "form"
         : "table";
 
+  const accountUtility: TopNavigationProps.Utility = {
+    type: "menu-dropdown",
+    text: session.user.display_name,
+    description: session.user.email,
+    iconName: "user-profile",
+    ariaLabel: "アカウントメニュー",
+    items: session.owner_console
+      ? [{ id: "logout", text: "ログアウト", iconName: "exit-full-screen" }]
+      : [
+          { id: "settings", text: "アカウント設定", iconName: "settings" },
+          { id: "logout", text: "ログアウト", iconName: "exit-full-screen" },
+        ],
+    onItemClick: ({ detail }) => {
+      if (detail.id === "settings") navigate("/settings");
+      if (detail.id === "logout" && !logout.isPending) logout.mutate();
+    },
+  };
+  const organizationUtility: TopNavigationProps.Utility = {
+    type: "menu-dropdown",
+    text: activeOrganization.organization_name,
+    iconName: "folder",
+    ariaLabel: "操作対象の組織",
+    items: memberships.map((membership) => ({
+      id: `organization:${membership.organization_id}`,
+      text: membership.organization_name,
+      iconName:
+        membership.organization_id === activeOrganization.organization_id
+          ? "status-positive"
+          : undefined,
+    })),
+    onItemClick: ({ detail }) => {
+      if (detail.id.startsWith("organization:")) {
+        setActiveOrganizationId(detail.id.slice("organization:".length));
+      }
+    },
+  };
+
   return (
     <div className="cloudscape-console">
       <header id="hcloud-header" className="cloudscape-console__header">
         <TopNavigation
           identity={{
             href: "/overview",
-            title: "HeteroCloud",
+            title: session.owner_console ? "HeteroCloud Owner" : "HeteroCloud",
             onFollow: (event) => {
               event.preventDefault();
               navigate("/overview");
             },
           }}
-          utilities={[
-            {
-              type: "menu-dropdown",
-              text: activeOrganization.organization_name,
-              iconName: "folder",
-              ariaLabel: "操作対象の組織",
-              items: memberships.map((membership) => ({
-                id: `organization:${membership.organization_id}`,
-                text: membership.organization_name,
-                iconName:
-                  membership.organization_id ===
-                  activeOrganization.organization_id
-                    ? "status-positive"
-                    : undefined,
-              })),
-              onItemClick: ({ detail }) => {
-                if (detail.id.startsWith("organization:")) {
-                  setActiveOrganizationId(detail.id.slice("organization:".length));
-                }
-              },
-            },
-            {
-              type: "menu-dropdown",
-              text: session.user.display_name,
-              description: session.user.email,
-              iconName: "user-profile",
-              ariaLabel: "アカウントメニュー",
-              items: [
-                { id: "settings", text: "アカウント設定", iconName: "settings" },
-                { id: "logout", text: "ログアウト", iconName: "exit-full-screen" },
-              ],
-              onItemClick: ({ detail }) => {
-                if (detail.id === "settings") navigate("/settings");
-                if (detail.id === "logout" && !logout.isPending) logout.mutate();
-              },
-            },
-          ]}
+          utilities={session.owner_console ? [accountUtility] : [organizationUtility, accountUtility]}
           i18nStrings={{
             overflowMenuTriggerText: "その他",
             overflowMenuTitleText: "メニュー",
@@ -148,7 +154,10 @@ export function AppShell() {
         onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}
         navigation={
           <SideNavigation
-            header={{ href: "/overview", text: "管理コンソール" }}
+            header={{
+              href: "/overview",
+              text: session.owner_console ? "サービス運営" : "管理コンソール",
+            }}
             activeHref={location.pathname}
             items={navigationItems(session.owner_console)}
             onFollow={(event) => {
@@ -161,7 +170,7 @@ export function AppShell() {
         }
         breadcrumbs={
           <BreadcrumbGroup
-            items={breadcrumbs(location.pathname)}
+            items={breadcrumbs(location.pathname, session.owner_console)}
             onFollow={(event) => {
               event.preventDefault();
               navigate(event.detail.href);

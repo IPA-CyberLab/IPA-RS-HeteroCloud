@@ -95,6 +95,15 @@ function OwnerRoute({ children }: { children: React.ReactNode }) {
   return useSession().data?.owner_console ? children : <Navigate to="/overview" replace />;
 }
 
+function OverviewRoute() {
+  const ownerConsole = useSession().data?.owner_console ?? false;
+  return (
+    <LazyPage>
+      {ownerConsole ? <OwnerQuotasPage /> : <OverviewPage />}
+    </LazyPage>
+  );
+}
+
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -108,11 +117,7 @@ export function App() {
               <Route index element={<Navigate to="/overview" replace />} />
               <Route
                 path="/overview"
-                element={
-                  <LazyPage>
-                    <OverviewPage />
-                  </LazyPage>
-                }
+                element={<OverviewRoute />}
               />
               <Route
                 path="/organizations"
