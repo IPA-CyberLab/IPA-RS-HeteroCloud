@@ -2789,18 +2789,17 @@ fn owner_request_allowed(
     peer: Option<SocketAddr>,
     email: &str,
 ) -> bool {
-    let (Some(origin), Some(owner_email), Some(peer)) = (
-        config.owner_origin.as_ref(),
-        config.owner_email.as_deref(),
-        peer,
-    ) else {
+    let (Some(origin), Some(owner_email)) =
+        (config.owner_origin.as_ref(), config.owner_email.as_deref())
+    else {
         return false;
     };
     if !email.eq_ignore_ascii_case(owner_email)
-        || !config
-            .owner_allowed_networks
-            .iter()
-            .any(|network| network.contains(&peer.ip()))
+        || !owner_network_boundary_allows(
+            config.owner_console_mode,
+            &config.owner_allowed_networks,
+            peer,
+        )
     {
         return false;
     }
@@ -2818,6 +2817,22 @@ fn owner_request_allowed(
         None => expected_host.to_owned(),
     };
     host.eq_ignore_ascii_case(&expected_authority)
+}
+
+fn owner_network_boundary_allows(
+    owner_console_mode: bool,
+    allowed_networks: &[ipnet::IpNet],
+    peer: Option<SocketAddr>,
+) -> bool {
+    // The owner-only Kubernetes deployment is already restricted by a
+    // NetworkPolicy. Its ClusterIP Service may SNAT the TCP peer before Axum
+    // sees it, so the application cannot repeat that CIDR check reliably.
+    owner_console_mode
+        || peer.is_some_and(|peer| {
+            allowed_networks
+                .iter()
+                .any(|network| network.contains(&peer.ip()))
+        })
 }
 
 async fn authenticated_actor(
@@ -3204,7 +3219,7 @@ fn _service_id_type_guard(id: Uuid) -> ServiceInstanceId {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::{collections::BTreeSet, net::SocketAddr};
 
     use chrono::Utc;
     use heterocloud_domain::{
@@ -3212,6 +3227,7 @@ mod tests {
         FlowRateLimit, FlowSpec, MAX_FLOW_ROOMS, OrganizationId, ProjectId, ServiceInstance,
         ServiceInstanceId, ServiceState,
     };
+    use ipnet::IpNet;
     use serde_json::{Value, json};
     use url::Url;
     use uuid::Uuid;
@@ -3224,8 +3240,8 @@ mod tests {
         FlowDeveloperCredentialCreationResponse, FlowDeveloperCredentialResponse,
         INVITATION_MAX_TTL_HOURS, RealtimeMetricHistoryRange, RealtimeMetricHistoryResponse,
         SESSION_COOKIE, deserialize_stored_flow_spec, flash_collection_resource,
-        flash_service_resource, flow_permission_iam_action, parse_api_key_prefix,
-        parse_flow_developer_credential_prefix, valid_kubernetes_name,
+        flash_service_resource, flow_permission_iam_action, owner_network_boundary_allows,
+        parse_api_key_prefix, parse_flow_developer_credential_prefix, valid_kubernetes_name,
         validate_developer_credential_expiry, validate_developer_credential_name,
         validate_flash_spec, validate_flow_access_target, validate_flow_access_ttl,
         validate_flow_permissions, validate_flow_spec, validate_invitation_ttl,
@@ -3236,6 +3252,38 @@ mod tests {
     fn public_security_names_are_stable() {
         assert_eq!(SESSION_COOKIE, "hc_session");
         assert_eq!(CSRF_HEADER, "x-heterocloud-csrf");
+    }
+
+    #[test]
+    fn owner_only_deployment_relies_on_its_network_policy_after_service_snat() {
+        let allowed_networks = ["10.250.0.0/24".parse::<IpNet>().expect("valid CIDR")];
+        let vpn_peer = "10.250.0.42:12345"
+            .parse::<SocketAddr>()
+            .expect("valid VPN peer");
+        let snat_peer = "10.244.3.1:12345"
+            .parse::<SocketAddr>()
+            .expect("valid SNAT peer");
+
+        assert!(owner_network_boundary_allows(
+            true,
+            &allowed_networks,
+            Some(snat_peer),
+        ));
+        assert!(owner_network_boundary_allows(
+            false,
+            &allowed_networks,
+            Some(vpn_peer),
+        ));
+        assert!(!owner_network_boundary_allows(
+            false,
+            &allowed_networks,
+            Some(snat_peer),
+        ));
+        assert!(!owner_network_boundary_allows(
+            false,
+            &allowed_networks,
+            None,
+        ));
     }
 
     #[test]

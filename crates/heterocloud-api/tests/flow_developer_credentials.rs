@@ -457,6 +457,7 @@ async fn test_state() -> Result<
             oidc: None,
             owner_origin: None,
             owner_email: None,
+            owner_console_mode: false,
             owner_allowed_networks: Vec::new(),
         },
         flow_client: reqwest::Client::builder()

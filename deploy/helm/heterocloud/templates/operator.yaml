@@ -120,6 +120,7 @@ spec:
             - --database-max-connections={{ .Values.databaseMaxConnections }}
             - --owner-origin={{ required "ownerConsole.origin is required" .Values.ownerConsole.origin }}
             - --owner-email={{ required "ownerConsole.email is required" .Values.ownerConsole.email }}
+            - --owner-console-mode=true
             - --owner-allowed-networks={{ join "," .Values.ownerConsole.allowedNetworks }}
             {{- if .Values.oidc.enabled }}
             - --oidc-issuer-url={{ required "oidc.issuerUrl is required" .Values.oidc.issuerUrl }}

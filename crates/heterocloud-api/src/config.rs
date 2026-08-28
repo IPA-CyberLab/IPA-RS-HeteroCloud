@@ -152,6 +152,14 @@ pub struct Config {
 
     #[arg(
         long,
+        env = "HETEROCLOUD_OWNER_CONSOLE_MODE",
+        default_value_t = false,
+        action = clap::ArgAction::Set
+    )]
+    pub owner_console_mode: bool,
+
+    #[arg(
+        long,
         env = "HETEROCLOUD_OWNER_ALLOWED_NETWORKS",
         value_delimiter = ',',
         default_value = "10.250.0.0/24"
@@ -215,6 +223,7 @@ pub struct RuntimeConfig {
     pub oidc: Option<OidcConfig>,
     pub owner_origin: Option<Url>,
     pub owner_email: Option<String>,
+    pub owner_console_mode: bool,
     pub owner_allowed_networks: Vec<IpNet>,
 }
 
@@ -347,6 +356,7 @@ impl Config {
             oidc,
             owner_origin: self.owner_origin.clone(),
             owner_email: self.owner_email.as_ref().map(|email| email.to_lowercase()),
+            owner_console_mode: self.owner_console_mode,
             owner_allowed_networks: self.owner_allowed_networks.clone(),
         })
     }
