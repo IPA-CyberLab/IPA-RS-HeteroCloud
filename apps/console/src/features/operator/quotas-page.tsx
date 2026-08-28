@@ -29,6 +29,36 @@ import { formatDateTime, formatNumber } from "@/lib/utils";
 
 const quotaQueryKey = ["owner", "resource-quotas"] as const;
 const accountQueryKey = ["owner", "accounts"] as const;
+const QUOTA_BOUNDS = {
+  flow: {
+    maxServices: 10_000,
+    maxRoomsPerService: 1_000_000,
+    maxTotalRooms: 100_000_000,
+    maxParticipantsPerService: 100_000,
+    maxRequestsPerSecond: 1_000,
+    maxBurst: 5_000,
+    maxDeveloperCredentialsPerService: 10_000,
+  },
+  flash: {
+    minReplicasPerService: 1,
+    maxReplicasPerService: 100,
+    minCpuMillisPerVm: 10,
+    maxCpuMillisPerVm: 4_000,
+    minMemoryMibPerVm: 16,
+    maxMemoryMibPerVm: 8_128,
+    minDiskGibPerVm: 1,
+    maxDiskGibPerVm: 10,
+    maxServices: 10_000,
+    maxTotalReplicas: 100_000,
+    maxTotalCpuMillis: 100_000_000,
+    maxTotalMemoryMib: 1_048_576,
+    maxTotalDiskGib: 1_000_000,
+  },
+  registry: {
+    maxStorageGib: 10_240,
+    maxCredentials: 1_000,
+  },
+} as const;
 
 function authenticationMethodLabel(method: UserLoginEvent["authentication_method"]) {
   return method === "oidc" ? "Keycloak (OIDC)" : "ローカル";
@@ -41,9 +71,117 @@ function accountAuthenticationLabel(account: OwnerAccount) {
   return methods.join(" / ") || "未設定";
 }
 
-function positiveInteger(value: string, fallback: number) {
+function clampInteger(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function boundedInteger(value: string, fallback: number, min: number, max: number) {
   const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+  return value.trim() !== "" && Number.isSafeInteger(parsed)
+    ? clampInteger(parsed, min, max)
+    : fallback;
+}
+
+export function normalizeResourceQuotaLimits(
+  value: ResourceQuotaLimits,
+): ResourceQuotaLimits {
+  const flowRoomsPerService = clampInteger(
+    value.flow.max_rooms_per_service,
+    1,
+    QUOTA_BOUNDS.flow.maxRoomsPerService,
+  );
+  const flowRequestsPerSecond = clampInteger(
+    value.flow.max_rate_limit_requests_per_second,
+    1,
+    QUOTA_BOUNDS.flow.maxRequestsPerSecond,
+  );
+  const flashReplicasPerService = clampInteger(
+    value.flash.max_replicas_per_service,
+    QUOTA_BOUNDS.flash.minReplicasPerService,
+    QUOTA_BOUNDS.flash.maxReplicasPerService,
+  );
+  const flashCpuMillisPerVm = clampInteger(
+    value.flash.max_cpu_millis_per_vm,
+    QUOTA_BOUNDS.flash.minCpuMillisPerVm,
+    QUOTA_BOUNDS.flash.maxCpuMillisPerVm,
+  );
+  const flashMemoryMibPerVm = clampInteger(
+    value.flash.max_memory_mib_per_vm,
+    QUOTA_BOUNDS.flash.minMemoryMibPerVm,
+    QUOTA_BOUNDS.flash.maxMemoryMibPerVm,
+  );
+  const flashDiskGibPerVm = clampInteger(
+    value.flash.max_disk_gib_per_vm,
+    QUOTA_BOUNDS.flash.minDiskGibPerVm,
+    QUOTA_BOUNDS.flash.maxDiskGibPerVm,
+  );
+
+  return {
+    flow: {
+      max_services: clampInteger(value.flow.max_services, 1, QUOTA_BOUNDS.flow.maxServices),
+      max_rooms_per_service: flowRoomsPerService,
+      max_total_rooms: clampInteger(
+        value.flow.max_total_rooms,
+        flowRoomsPerService,
+        QUOTA_BOUNDS.flow.maxTotalRooms,
+      ),
+      max_participants_per_service: clampInteger(
+        value.flow.max_participants_per_service,
+        1,
+        QUOTA_BOUNDS.flow.maxParticipantsPerService,
+      ),
+      max_rate_limit_requests_per_second: flowRequestsPerSecond,
+      max_rate_limit_burst: clampInteger(
+        value.flow.max_rate_limit_burst,
+        flowRequestsPerSecond,
+        QUOTA_BOUNDS.flow.maxBurst,
+      ),
+      max_developer_credentials_per_service: clampInteger(
+        value.flow.max_developer_credentials_per_service,
+        1,
+        QUOTA_BOUNDS.flow.maxDeveloperCredentialsPerService,
+      ),
+    },
+    flash: {
+      max_services: clampInteger(value.flash.max_services, 1, QUOTA_BOUNDS.flash.maxServices),
+      max_replicas_per_service: flashReplicasPerService,
+      max_cpu_millis_per_vm: flashCpuMillisPerVm,
+      max_memory_mib_per_vm: flashMemoryMibPerVm,
+      max_disk_gib_per_vm: flashDiskGibPerVm,
+      max_total_replicas: clampInteger(
+        value.flash.max_total_replicas,
+        flashReplicasPerService,
+        QUOTA_BOUNDS.flash.maxTotalReplicas,
+      ),
+      max_total_cpu_millis: clampInteger(
+        value.flash.max_total_cpu_millis,
+        flashCpuMillisPerVm,
+        QUOTA_BOUNDS.flash.maxTotalCpuMillis,
+      ),
+      max_total_memory_mib: clampInteger(
+        value.flash.max_total_memory_mib,
+        flashMemoryMibPerVm,
+        QUOTA_BOUNDS.flash.maxTotalMemoryMib,
+      ),
+      max_total_disk_gib: clampInteger(
+        value.flash.max_total_disk_gib,
+        flashDiskGibPerVm,
+        QUOTA_BOUNDS.flash.maxTotalDiskGib,
+      ),
+    },
+    registry: {
+      storage_gib: clampInteger(
+        value.registry.storage_gib,
+        1,
+        QUOTA_BOUNDS.registry.maxStorageGib,
+      ),
+      max_credentials: clampInteger(
+        value.registry.max_credentials,
+        1,
+        QUOTA_BOUNDS.registry.maxCredentials,
+      ),
+    },
+  };
 }
 
 function NumberField({
@@ -51,11 +189,15 @@ function NumberField({
   value,
   onChange,
   description,
+  min = 1,
+  max = Number.MAX_SAFE_INTEGER,
 }: {
   label: string;
   value: number;
   onChange: (value: number) => void;
   description?: string;
+  min?: number;
+  max?: number;
 }) {
   return (
     <FormField label={label} description={description}>
@@ -63,9 +205,11 @@ function NumberField({
         type="number"
         inputMode="numeric"
         step={1}
-        nativeInputAttributes={{ min: 1 }}
+        nativeInputAttributes={{ min, max }}
         value={String(value)}
-        onChange={({ detail }) => onChange(positiveInteger(detail.value, value))}
+        onChange={({ detail }) =>
+          onChange(boundedInteger(detail.value, value, min, max))
+        }
       />
     </FormField>
   );
@@ -78,35 +222,37 @@ function QuotaEditor({
   value: ResourceQuotaLimits;
   onChange: (value: ResourceQuotaLimits) => void;
 }) {
+  const update = (next: ResourceQuotaLimits) =>
+    onChange(normalizeResourceQuotaLimits(next));
   const flow = <Key extends keyof FlowQuotaLimits>(key: Key, next: number) =>
-    onChange({ ...value, flow: { ...value.flow, [key]: next } });
+    update({ ...value, flow: { ...value.flow, [key]: next } });
   const flash = <Key extends keyof FlashQuotaLimits>(key: Key, next: number) =>
-    onChange({ ...value, flash: { ...value.flash, [key]: next } });
+    update({ ...value, flash: { ...value.flash, [key]: next } });
 
   return (
     <SpaceBetween size="l">
       <Container header={<Header variant="h3">Flow</Header>}>
         <ColumnLayout columns={3} variant="text-grid">
-          <NumberField label="サービス数" value={value.flow.max_services} onChange={(next) => flow("max_services", next)} />
-          <NumberField label="1サービスのルーム数" value={value.flow.max_rooms_per_service} onChange={(next) => flow("max_rooms_per_service", next)} />
-          <NumberField label="合計ルーム数" value={value.flow.max_total_rooms} onChange={(next) => flow("max_total_rooms", next)} />
-          <NumberField label="1サービスの同時参加者" value={value.flow.max_participants_per_service} onChange={(next) => flow("max_participants_per_service", next)} />
-          <NumberField label="IPあたりRPS" value={value.flow.max_rate_limit_requests_per_second} onChange={(next) => flow("max_rate_limit_requests_per_second", next)} />
-          <NumberField label="IPあたりバースト" value={value.flow.max_rate_limit_burst} onChange={(next) => flow("max_rate_limit_burst", next)} />
-          <NumberField label="開発者認証情報 / サービス" value={value.flow.max_developer_credentials_per_service} onChange={(next) => flow("max_developer_credentials_per_service", next)} />
+          <NumberField label="サービス数" value={value.flow.max_services} max={QUOTA_BOUNDS.flow.maxServices} onChange={(next) => flow("max_services", next)} />
+          <NumberField label="1サービスのルーム数" value={value.flow.max_rooms_per_service} max={QUOTA_BOUNDS.flow.maxRoomsPerService} onChange={(next) => flow("max_rooms_per_service", next)} />
+          <NumberField label="合計ルーム数" value={value.flow.max_total_rooms} min={value.flow.max_rooms_per_service} max={QUOTA_BOUNDS.flow.maxTotalRooms} onChange={(next) => flow("max_total_rooms", next)} />
+          <NumberField label="1サービスの同時参加者" value={value.flow.max_participants_per_service} max={QUOTA_BOUNDS.flow.maxParticipantsPerService} onChange={(next) => flow("max_participants_per_service", next)} />
+          <NumberField label="IPあたりRPS" value={value.flow.max_rate_limit_requests_per_second} max={QUOTA_BOUNDS.flow.maxRequestsPerSecond} onChange={(next) => flow("max_rate_limit_requests_per_second", next)} />
+          <NumberField label="IPあたりバースト" value={value.flow.max_rate_limit_burst} min={value.flow.max_rate_limit_requests_per_second} max={QUOTA_BOUNDS.flow.maxBurst} onChange={(next) => flow("max_rate_limit_burst", next)} />
+          <NumberField label="開発者認証情報 / サービス" value={value.flow.max_developer_credentials_per_service} max={QUOTA_BOUNDS.flow.maxDeveloperCredentialsPerService} onChange={(next) => flow("max_developer_credentials_per_service", next)} />
         </ColumnLayout>
       </Container>
       <Container header={<Header variant="h3">Flash</Header>}>
         <ColumnLayout columns={3} variant="text-grid">
-          <NumberField label="サービス数" value={value.flash.max_services} onChange={(next) => flash("max_services", next)} />
-          <NumberField label="レプリカ / サービス" value={value.flash.max_replicas_per_service} onChange={(next) => flash("max_replicas_per_service", next)} />
-          <NumberField label="CPU / VM (millicores)" value={value.flash.max_cpu_millis_per_vm} onChange={(next) => flash("max_cpu_millis_per_vm", next)} />
-          <NumberField label="メモリ / VM (MiB)" value={value.flash.max_memory_mib_per_vm} onChange={(next) => flash("max_memory_mib_per_vm", next)} />
-          <NumberField label="ディスク / VM (GiB)" value={value.flash.max_disk_gib_per_vm} onChange={(next) => flash("max_disk_gib_per_vm", next)} />
-          <NumberField label="合計レプリカ" value={value.flash.max_total_replicas} onChange={(next) => flash("max_total_replicas", next)} />
-          <NumberField label="合計CPU (millicores)" value={value.flash.max_total_cpu_millis} onChange={(next) => flash("max_total_cpu_millis", next)} />
-          <NumberField label="合計メモリ (MiB)" value={value.flash.max_total_memory_mib} onChange={(next) => flash("max_total_memory_mib", next)} />
-          <NumberField label="合計ディスク (GiB)" value={value.flash.max_total_disk_gib} onChange={(next) => flash("max_total_disk_gib", next)} />
+          <NumberField label="サービス数" value={value.flash.max_services} max={QUOTA_BOUNDS.flash.maxServices} onChange={(next) => flash("max_services", next)} />
+          <NumberField label="レプリカ / サービス" value={value.flash.max_replicas_per_service} min={QUOTA_BOUNDS.flash.minReplicasPerService} max={QUOTA_BOUNDS.flash.maxReplicasPerService} onChange={(next) => flash("max_replicas_per_service", next)} />
+          <NumberField label="CPU / VM (millicores)" value={value.flash.max_cpu_millis_per_vm} min={QUOTA_BOUNDS.flash.minCpuMillisPerVm} max={QUOTA_BOUNDS.flash.maxCpuMillisPerVm} onChange={(next) => flash("max_cpu_millis_per_vm", next)} />
+          <NumberField label="メモリ / VM (MiB)" value={value.flash.max_memory_mib_per_vm} min={QUOTA_BOUNDS.flash.minMemoryMibPerVm} max={QUOTA_BOUNDS.flash.maxMemoryMibPerVm} onChange={(next) => flash("max_memory_mib_per_vm", next)} />
+          <NumberField label="ディスク / VM (GiB)" value={value.flash.max_disk_gib_per_vm} min={QUOTA_BOUNDS.flash.minDiskGibPerVm} max={QUOTA_BOUNDS.flash.maxDiskGibPerVm} onChange={(next) => flash("max_disk_gib_per_vm", next)} />
+          <NumberField label="合計レプリカ" value={value.flash.max_total_replicas} min={value.flash.max_replicas_per_service} max={QUOTA_BOUNDS.flash.maxTotalReplicas} onChange={(next) => flash("max_total_replicas", next)} />
+          <NumberField label="合計CPU (millicores)" value={value.flash.max_total_cpu_millis} min={value.flash.max_cpu_millis_per_vm} max={QUOTA_BOUNDS.flash.maxTotalCpuMillis} onChange={(next) => flash("max_total_cpu_millis", next)} />
+          <NumberField label="合計メモリ (MiB)" value={value.flash.max_total_memory_mib} min={value.flash.max_memory_mib_per_vm} max={QUOTA_BOUNDS.flash.maxTotalMemoryMib} onChange={(next) => flash("max_total_memory_mib", next)} />
+          <NumberField label="合計ディスク (GiB)" value={value.flash.max_total_disk_gib} min={value.flash.max_disk_gib_per_vm} max={QUOTA_BOUNDS.flash.maxTotalDiskGib} onChange={(next) => flash("max_total_disk_gib", next)} />
         </ColumnLayout>
       </Container>
       <Container header={<Header variant="h3">Flash Registry</Header>}>
@@ -114,15 +260,17 @@ function QuotaEditor({
           <NumberField
             label="保存容量 / テナント (GiB)"
             value={value.registry.storage_gib}
+            max={QUOTA_BOUNDS.registry.maxStorageGib}
             onChange={(next) =>
-              onChange({ ...value, registry: { ...value.registry, storage_gib: next } })
+              update({ ...value, registry: { ...value.registry, storage_gib: next } })
             }
           />
           <NumberField
             label="認証情報数 / テナント"
             value={value.registry.max_credentials}
+            max={QUOTA_BOUNDS.registry.maxCredentials}
             onChange={(next) =>
-              onChange({ ...value, registry: { ...value.registry, max_credentials: next } })
+              update({ ...value, registry: { ...value.registry, max_credentials: next } })
             }
           />
         </ColumnLayout>
@@ -322,7 +470,9 @@ export function OwnerQuotasPage() {
               ariaLabel={`${row.original.organization.name}の上限を編集`}
               onClick={() => {
                 setEditing(row.original);
-                setTenantLimits(structuredClone(row.original.effective_limits));
+                setTenantLimits(
+                  normalizeResourceQuotaLimits(row.original.effective_limits),
+                );
               }}
             />
             <Button
@@ -350,7 +500,9 @@ export function OwnerQuotasPage() {
       />
     );
   }
-  const currentDefaults = defaults ?? quotas.data.defaults;
+  const currentDefaults = normalizeResourceQuotaLimits(
+    defaults ?? quotas.data.defaults,
+  );
   const tenants = quotas.data.tenants;
   const registeredAccounts = accounts.data.items;
   const aggregate = tenants.reduce(
@@ -565,7 +717,7 @@ export function OwnerQuotasPage() {
         getRowId={(tenant) => tenant.organization.id}
         onRowClick={(tenant) => {
           setEditing(tenant);
-          setTenantLimits(structuredClone(tenant.effective_limits));
+          setTenantLimits(normalizeResourceQuotaLimits(tenant.effective_limits));
         }}
         getRowAriaLabel={(tenant) => `${tenant.organization.name}の上限を編集`}
         searchPlaceholder="アカウント名またはIDで検索"

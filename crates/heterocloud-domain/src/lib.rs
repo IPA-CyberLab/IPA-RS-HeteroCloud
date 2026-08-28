@@ -368,29 +368,62 @@ impl ResourceQuotaLimits {
         }
 
         let flash = &self.flash;
-        if !(1..=MAX_TENANT_SERVICES).contains(&flash.max_services)
-            || !(MIN_FLASH_REPLICAS..=MAX_FLASH_REPLICAS).contains(&flash.max_replicas_per_service)
-            || !(MIN_FLASH_CPU_MILLIS..=MAX_FLASH_CPU_MILLIS).contains(&flash.max_cpu_millis_per_vm)
-            || !(MIN_FLASH_MEMORY_MIB..=MAX_FLASH_MEMORY_MIB).contains(&flash.max_memory_mib_per_vm)
-            || !(MIN_FLASH_EPHEMERAL_STORAGE_GIB..=MAX_FLASH_EPHEMERAL_STORAGE_GIB)
-                .contains(&flash.max_disk_gib_per_vm)
-        {
-            return Err(invalid_quota(
-                "Flash per-service limits are outside the safety range",
-            ));
+        if !(1..=MAX_TENANT_SERVICES).contains(&flash.max_services) {
+            return Err(invalid_quota(format!(
+                "flash.max_services must be between 1 and {MAX_TENANT_SERVICES}"
+            )));
         }
-        if flash.max_total_replicas < u64::from(flash.max_replicas_per_service)
-            || flash.max_total_replicas > 100_000
-            || flash.max_total_cpu_millis < u64::from(flash.max_cpu_millis_per_vm)
-            || flash.max_total_cpu_millis > 100_000_000
-            || flash.max_total_memory_mib < u64::from(flash.max_memory_mib_per_vm)
-            || flash.max_total_memory_mib > 1_048_576
-            || flash.max_total_disk_gib < u64::from(flash.max_disk_gib_per_vm)
-            || flash.max_total_disk_gib > 1_000_000
+        if !(MIN_FLASH_REPLICAS..=MAX_FLASH_REPLICAS).contains(&flash.max_replicas_per_service) {
+            return Err(invalid_quota(format!(
+                "flash.max_replicas_per_service must be between {MIN_FLASH_REPLICAS} and {MAX_FLASH_REPLICAS}"
+            )));
+        }
+        if !(MIN_FLASH_CPU_MILLIS..=MAX_FLASH_CPU_MILLIS).contains(&flash.max_cpu_millis_per_vm) {
+            return Err(invalid_quota(format!(
+                "flash.max_cpu_millis_per_vm must be between {MIN_FLASH_CPU_MILLIS} and {MAX_FLASH_CPU_MILLIS}"
+            )));
+        }
+        if !(MIN_FLASH_MEMORY_MIB..=MAX_FLASH_MEMORY_MIB).contains(&flash.max_memory_mib_per_vm) {
+            return Err(invalid_quota(format!(
+                "flash.max_memory_mib_per_vm must be between {MIN_FLASH_MEMORY_MIB} and {MAX_FLASH_MEMORY_MIB}"
+            )));
+        }
+        if !(MIN_FLASH_EPHEMERAL_STORAGE_GIB..=MAX_FLASH_EPHEMERAL_STORAGE_GIB)
+            .contains(&flash.max_disk_gib_per_vm)
         {
-            return Err(invalid_quota(
-                "Flash tenant totals are inconsistent or outside the safety range",
-            ));
+            return Err(invalid_quota(format!(
+                "flash.max_disk_gib_per_vm must be between {MIN_FLASH_EPHEMERAL_STORAGE_GIB} and {MAX_FLASH_EPHEMERAL_STORAGE_GIB}"
+            )));
+        }
+        if !(u64::from(flash.max_replicas_per_service)..=100_000)
+            .contains(&flash.max_total_replicas)
+        {
+            return Err(invalid_quota(format!(
+                "flash.max_total_replicas must be between {} and 100000",
+                flash.max_replicas_per_service
+            )));
+        }
+        if !(u64::from(flash.max_cpu_millis_per_vm)..=100_000_000)
+            .contains(&flash.max_total_cpu_millis)
+        {
+            return Err(invalid_quota(format!(
+                "flash.max_total_cpu_millis must be between {} and 100000000",
+                flash.max_cpu_millis_per_vm
+            )));
+        }
+        if !(u64::from(flash.max_memory_mib_per_vm)..=1_048_576)
+            .contains(&flash.max_total_memory_mib)
+        {
+            return Err(invalid_quota(format!(
+                "flash.max_total_memory_mib must be between {} and 1048576",
+                flash.max_memory_mib_per_vm
+            )));
+        }
+        if !(u64::from(flash.max_disk_gib_per_vm)..=1_000_000).contains(&flash.max_total_disk_gib) {
+            return Err(invalid_quota(format!(
+                "flash.max_total_disk_gib must be between {} and 1000000",
+                flash.max_disk_gib_per_vm
+            )));
         }
         if !(1..=10_240).contains(&self.registry.storage_gib) {
             return Err(invalid_quota(
@@ -731,6 +764,7 @@ mod tests {
         DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, FlashExposure, FlashExposureType, FlashPort,
         FlashProtocol, FlashSpec, FlashTrafficMode, FlowRateLimit, FlowSpec,
         MIN_FLASH_SERVICE_PORT, POLICY_VERSION, PolicyDocument, PolicyEffect, PolicyStatement,
+        ResourceQuotaLimits,
     };
 
     #[test]
@@ -888,6 +922,20 @@ mod tests {
         oversized.ephemeral_storage_gib = 11;
         assert!(oversized.validate().is_err());
         Ok(())
+    }
+
+    #[test]
+    fn resource_quota_identifies_an_oversized_flash_disk_limit() {
+        let mut limits = ResourceQuotaLimits::default();
+        limits.flash.max_disk_gib_per_vm = 20;
+
+        assert_eq!(
+            limits.validate().map_err(|error| error.to_string()),
+            Err(
+                "invalid resource quota: flash.max_disk_gib_per_vm must be between 1 and 10"
+                    .to_owned()
+            )
+        );
     }
 
     #[test]

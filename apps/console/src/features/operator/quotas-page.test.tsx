@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api-client";
 import type { ResourceQuotaLimits } from "@/lib/api-types";
-import { OwnerQuotasPage } from "./quotas-page";
+import { OwnerQuotasPage, normalizeResourceQuotaLimits } from "./quotas-page";
 
 const limits: ResourceQuotaLimits = {
   flow: {
@@ -29,6 +29,19 @@ const limits: ResourceQuotaLimits = {
   },
   registry: { storage_gib: 10, max_credentials: 10 },
 };
+
+it("API安全上限を超える古いハードリミットを保存前に正規化する", () => {
+  const staleLimits = structuredClone(limits);
+  staleLimits.flash.max_disk_gib_per_vm = 20;
+  staleLimits.flash.max_total_disk_gib = 5;
+  staleLimits.flow.max_rate_limit_burst = 100;
+
+  const normalized = normalizeResourceQuotaLimits(staleLimits);
+
+  expect(normalized.flash.max_disk_gib_per_vm).toBe(10);
+  expect(normalized.flash.max_total_disk_gib).toBe(10);
+  expect(normalized.flow.max_rate_limit_burst).toBe(1_000);
+});
 
 describe("OwnerQuotasPage", () => {
   beforeEach(() => {
