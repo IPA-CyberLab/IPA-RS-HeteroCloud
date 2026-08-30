@@ -158,6 +158,14 @@ export function flashServicesQueryOptions(organizationId: string) {
   });
 }
 
+export function flashQuotaQueryOptions(organizationId: string) {
+  return queryOptions({
+    queryKey: ["organizations", organizationId, "flash", "quota"],
+    queryFn: ({ signal }) => api.flash.quota(organizationId, signal),
+    staleTime: 30_000,
+  });
+}
+
 export function flashServiceQueryOptions(
   organizationId: string,
   serviceId: string,

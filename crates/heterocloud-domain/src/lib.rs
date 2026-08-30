@@ -232,18 +232,26 @@ pub const MAX_TENANT_SERVICES: u32 = 10_000;
 pub const MAX_TENANT_FLOW_ROOMS: u64 = 100_000_000;
 
 pub const MIN_FLASH_REPLICAS: u32 = 1;
-pub const MAX_FLASH_REPLICAS: u32 = 100;
+pub const MAX_FLASH_REPLICAS: u32 = 100_000;
 pub const MIN_FLASH_CPU_MILLIS: u32 = 10;
-pub const MAX_FLASH_CPU_MILLIS: u32 = 4_000;
+pub const MAX_FLASH_CPU_MILLIS: u32 = 100_000_000;
 pub const MIN_FLASH_MEMORY_MIB: u32 = 16;
-pub const MAX_FLASH_MEMORY_MIB: u32 = 8_128;
+pub const MAX_FLASH_MEMORY_MIB: u32 = 1_048_576;
 pub const MIN_FLASH_EPHEMERAL_STORAGE_GIB: u32 = 1;
-pub const MAX_FLASH_EPHEMERAL_STORAGE_GIB: u32 = 10;
+pub const MAX_FLASH_EPHEMERAL_STORAGE_GIB: u32 = 1_000_000;
+pub const DEFAULT_FLASH_MAX_REPLICAS_PER_SERVICE: u32 = 100;
+pub const DEFAULT_FLASH_MAX_CPU_MILLIS_PER_VM: u32 = 4_000;
+pub const DEFAULT_FLASH_MAX_MEMORY_MIB_PER_VM: u32 = 8_128;
+pub const DEFAULT_FLASH_MAX_DISK_GIB_PER_VM: u32 = 10;
 pub const DEFAULT_FLASH_EPHEMERAL_STORAGE_GIB: u32 = 10;
-pub const MAX_FLASH_ORGANIZATION_CPU_MILLIS: u64 = 20_000;
-pub const MAX_FLASH_ORGANIZATION_MEMORY_MIB: u64 = 32_768;
-pub const MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB: u64 = 100;
-pub const MAX_FLASH_ORGANIZATION_REPLICAS: u64 = 100;
+pub const DEFAULT_FLASH_ORGANIZATION_CPU_MILLIS: u64 = 20_000;
+pub const DEFAULT_FLASH_ORGANIZATION_MEMORY_MIB: u64 = 32_768;
+pub const DEFAULT_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB: u64 = 100;
+pub const DEFAULT_FLASH_ORGANIZATION_REPLICAS: u64 = 100;
+pub const MAX_FLASH_ORGANIZATION_CPU_MILLIS: u64 = 100_000_000;
+pub const MAX_FLASH_ORGANIZATION_MEMORY_MIB: u64 = 1_048_576;
+pub const MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB: u64 = 1_000_000;
+pub const MAX_FLASH_ORGANIZATION_REPLICAS: u64 = 100_000;
 pub const MIN_FLASH_SERVICE_PORT: u16 = 30_000;
 pub const MAX_FLASH_SERVICE_PORT: u16 = 32_767;
 pub const MAX_FLASH_PORTS: usize = 16;
@@ -314,14 +322,14 @@ impl Default for ResourceQuotaLimits {
             },
             flash: FlashQuotaLimits {
                 max_services: 100,
-                max_replicas_per_service: MAX_FLASH_REPLICAS,
-                max_cpu_millis_per_vm: MAX_FLASH_CPU_MILLIS,
-                max_memory_mib_per_vm: MAX_FLASH_MEMORY_MIB,
-                max_disk_gib_per_vm: MAX_FLASH_EPHEMERAL_STORAGE_GIB,
-                max_total_replicas: MAX_FLASH_ORGANIZATION_REPLICAS,
-                max_total_cpu_millis: MAX_FLASH_ORGANIZATION_CPU_MILLIS,
-                max_total_memory_mib: MAX_FLASH_ORGANIZATION_MEMORY_MIB,
-                max_total_disk_gib: MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB,
+                max_replicas_per_service: DEFAULT_FLASH_MAX_REPLICAS_PER_SERVICE,
+                max_cpu_millis_per_vm: DEFAULT_FLASH_MAX_CPU_MILLIS_PER_VM,
+                max_memory_mib_per_vm: DEFAULT_FLASH_MAX_MEMORY_MIB_PER_VM,
+                max_disk_gib_per_vm: DEFAULT_FLASH_MAX_DISK_GIB_PER_VM,
+                max_total_replicas: DEFAULT_FLASH_ORGANIZATION_REPLICAS,
+                max_total_cpu_millis: DEFAULT_FLASH_ORGANIZATION_CPU_MILLIS,
+                max_total_memory_mib: DEFAULT_FLASH_ORGANIZATION_MEMORY_MIB,
+                max_total_disk_gib: DEFAULT_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB,
             },
             registry: RegistryQuotaLimits {
                 storage_gib: 10,
@@ -395,34 +403,36 @@ impl ResourceQuotaLimits {
                 "flash.max_disk_gib_per_vm must be between {MIN_FLASH_EPHEMERAL_STORAGE_GIB} and {MAX_FLASH_EPHEMERAL_STORAGE_GIB}"
             )));
         }
-        if !(u64::from(flash.max_replicas_per_service)..=100_000)
+        if !(u64::from(flash.max_replicas_per_service)..=MAX_FLASH_ORGANIZATION_REPLICAS)
             .contains(&flash.max_total_replicas)
         {
             return Err(invalid_quota(format!(
-                "flash.max_total_replicas must be between {} and 100000",
-                flash.max_replicas_per_service
+                "flash.max_total_replicas must be between {} and {MAX_FLASH_ORGANIZATION_REPLICAS}",
+                flash.max_replicas_per_service,
             )));
         }
-        if !(u64::from(flash.max_cpu_millis_per_vm)..=100_000_000)
+        if !(u64::from(flash.max_cpu_millis_per_vm)..=MAX_FLASH_ORGANIZATION_CPU_MILLIS)
             .contains(&flash.max_total_cpu_millis)
         {
             return Err(invalid_quota(format!(
-                "flash.max_total_cpu_millis must be between {} and 100000000",
-                flash.max_cpu_millis_per_vm
+                "flash.max_total_cpu_millis must be between {} and {MAX_FLASH_ORGANIZATION_CPU_MILLIS}",
+                flash.max_cpu_millis_per_vm,
             )));
         }
-        if !(u64::from(flash.max_memory_mib_per_vm)..=1_048_576)
+        if !(u64::from(flash.max_memory_mib_per_vm)..=MAX_FLASH_ORGANIZATION_MEMORY_MIB)
             .contains(&flash.max_total_memory_mib)
         {
             return Err(invalid_quota(format!(
-                "flash.max_total_memory_mib must be between {} and 1048576",
-                flash.max_memory_mib_per_vm
+                "flash.max_total_memory_mib must be between {} and {MAX_FLASH_ORGANIZATION_MEMORY_MIB}",
+                flash.max_memory_mib_per_vm,
             )));
         }
-        if !(u64::from(flash.max_disk_gib_per_vm)..=1_000_000).contains(&flash.max_total_disk_gib) {
+        if !(u64::from(flash.max_disk_gib_per_vm)..=MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB)
+            .contains(&flash.max_total_disk_gib)
+        {
             return Err(invalid_quota(format!(
-                "flash.max_total_disk_gib must be between {} and 1000000",
-                flash.max_disk_gib_per_vm
+                "flash.max_total_disk_gib must be between {} and {MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB}",
+                flash.max_disk_gib_per_vm,
             )));
         }
         if !(1..=10_240).contains(&self.registry.storage_gib) {
@@ -761,10 +771,10 @@ mod tests {
 
     use super::{
         DEFAULT_FLOW_MAX_ROOMS, DEFAULT_FLOW_RATE_LIMIT_BURST,
-        DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, FlashExposure, FlashExposureType, FlashPort,
-        FlashProtocol, FlashSpec, FlashTrafficMode, FlowRateLimit, FlowSpec,
-        MIN_FLASH_SERVICE_PORT, POLICY_VERSION, PolicyDocument, PolicyEffect, PolicyStatement,
-        ResourceQuotaLimits,
+        DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, DomainError, FlashExposure, FlashExposureType,
+        FlashPort, FlashProtocol, FlashSpec, FlashTrafficMode, FlowRateLimit, FlowSpec,
+        MAX_FLASH_EPHEMERAL_STORAGE_GIB, MIN_FLASH_SERVICE_PORT, POLICY_VERSION, PolicyDocument,
+        PolicyEffect, PolicyStatement, ResourceQuotaLimits,
     };
 
     #[test]
@@ -918,24 +928,23 @@ mod tests {
         assert!(defaulted.exposure.allowed_source_cidrs.is_empty());
         assert!(defaulted.exposure.denied_source_cidrs.is_empty());
 
+        let mut owner_authorized = flash_spec();
+        owner_authorized.ephemeral_storage_gib = 20;
+        owner_authorized.validate()?;
+
         let mut oversized = flash_spec();
-        oversized.ephemeral_storage_gib = 11;
+        oversized.ephemeral_storage_gib = MAX_FLASH_EPHEMERAL_STORAGE_GIB + 1;
         assert!(oversized.validate().is_err());
         Ok(())
     }
 
     #[test]
-    fn resource_quota_identifies_an_oversized_flash_disk_limit() {
+    fn resource_quota_allows_owner_configured_flash_limits() -> Result<(), DomainError> {
         let mut limits = ResourceQuotaLimits::default();
         limits.flash.max_disk_gib_per_vm = 20;
+        limits.flash.max_total_disk_gib = 200;
 
-        assert_eq!(
-            limits.validate().map_err(|error| error.to_string()),
-            Err(
-                "invalid resource quota: flash.max_disk_gib_per_vm must be between 1 and 10"
-                    .to_owned()
-            )
-        );
+        limits.validate()
     }
 
     #[test]

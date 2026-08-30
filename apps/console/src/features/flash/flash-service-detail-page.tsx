@@ -26,6 +26,7 @@ import { useActiveOrganization } from "@/features/organizations/organization-con
 import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { FlashPort } from "@/lib/api-types";
 import {
+  flashQuotaQueryOptions,
   flashServiceQueryOptions,
   projectsQueryOptions,
   registryImagesQueryOptions,
@@ -82,6 +83,7 @@ export function FlashServiceDetailPage() {
     ...flashServiceQueryOptions(organizationId, serviceId),
     enabled: Boolean(serviceId),
   });
+  const quota = useQuery(flashQuotaQueryOptions(organizationId));
   const projects = useQuery(projectsQueryOptions(organizationId));
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -145,10 +147,10 @@ export function FlashServiceDetailPage() {
       />
     );
   }
-  if (service.isPending || projects.isPending) {
+  if (service.isPending || projects.isPending || quota.isPending) {
     return <PageLoading label="Flashサービス詳細を読み込んでいます" />;
   }
-  if (service.isError || projects.isError) {
+  if (service.isError || projects.isError || quota.isError) {
     return (
       <ErrorState
         title="Flashサービスを取得できませんでした"
@@ -156,6 +158,7 @@ export function FlashServiceDetailPage() {
         onRetry={() => {
           void service.refetch();
           void projects.refetch();
+          void quota.refetch();
         }}
       />
     );
@@ -170,7 +173,9 @@ export function FlashServiceDetailPage() {
   const providerStatus = flashProviderStatus(item.status);
   const statusMessage =
     typeof providerStatus.message === "string" ? providerStatus.message : null;
-  const validationError = editForm ? flashFormValidationError(editForm) : null;
+  const validationError = editForm
+    ? flashFormValidationError(editForm, quota.data)
+    : null;
   const environmentKeys = Object.keys(item.spec.env);
   const runningContainers = (containers.data?.items ?? []).filter(
     (container) => container.phase === "Running" && container.ready,
@@ -434,6 +439,7 @@ export function FlashServiceDetailPage() {
                   ? "loading"
                   : "finished"
             }
+            quota={quota.data}
           >
             <FormError
               message={

@@ -14,6 +14,7 @@ import type {
   FlashExposure,
   FlashPortInput,
   FlashPortProtocol,
+  FlashQuotaLimits,
   FlashServiceSpec,
   FlashServiceSpecInput,
   RegistryImage,
@@ -68,6 +69,18 @@ export const defaultFlashServiceFormValue: FlashServiceFormValue = {
   processMode: "image",
   command: "",
   args: "",
+};
+
+export const defaultFlashQuotaLimits: FlashQuotaLimits = {
+  max_services: 100,
+  max_replicas_per_service: 100,
+  max_cpu_millis_per_vm: 4_000,
+  max_memory_mib_per_vm: 8_128,
+  max_disk_gib_per_vm: 10,
+  max_total_replicas: 100,
+  max_total_cpu_millis: 20_000,
+  max_total_memory_mib: 32_768,
+  max_total_disk_gib: 100,
 };
 
 const workspaceCommand = ["/bin/sh", "-c"];
@@ -183,11 +196,27 @@ export function parseFlashSourceCidrs(value: string): {
 
 export function flashFormValidationError(
   value: FlashServiceFormValue,
+  quota: FlashQuotaLimits = defaultFlashQuotaLimits,
 ): string | null {
   if (!value.projectId) return "プロジェクトを選択してください。";
   if (!value.name.trim()) return "サービス名を入力してください。";
   if (!value.image.trim() || /\s/.test(value.image)) {
     return "コンテナイメージを入力してください。";
+  }
+  if (value.replicas < 1 || value.replicas > quota.max_replicas_per_service) {
+    return `レプリカは1〜${quota.max_replicas_per_service.toLocaleString("ja-JP")}で入力してください。`;
+  }
+  if (value.cpuMillis < 10 || value.cpuMillis > quota.max_cpu_millis_per_vm) {
+    return `CPUは10〜${quota.max_cpu_millis_per_vm.toLocaleString("ja-JP")} millicoresで入力してください。`;
+  }
+  if (value.memoryMib < 16 || value.memoryMib > quota.max_memory_mib_per_vm) {
+    return `メモリは16〜${quota.max_memory_mib_per_vm.toLocaleString("ja-JP")} MiBで入力してください。`;
+  }
+  if (
+    value.ephemeralStorageGib < 1 ||
+    value.ephemeralStorageGib > quota.max_disk_gib_per_vm
+  ) {
+    return `ディスク上限は1〜${quota.max_disk_gib_per_vm.toLocaleString("ja-JP")} GiBで入力してください。`;
   }
   if (value.exposureType === "internal" && value.trafficMode !== "forwarded") {
     return "内部公開では転送モードを使用してください。";
@@ -294,6 +323,7 @@ export function FlashServiceForm({
   projectLocked,
   registryImages = [],
   registryImagesStatus = "finished",
+  quota = defaultFlashQuotaLimits,
   children,
 }: {
   value: FlashServiceFormValue;
@@ -303,6 +333,7 @@ export function FlashServiceForm({
   projectLocked?: boolean;
   registryImages?: RegistryImage[];
   registryImagesStatus?: "loading" | "error" | "finished";
+  quota?: FlashQuotaLimits;
   children: ReactNode;
 }) {
   const update = <Key extends keyof FlashServiceFormValue>(
@@ -407,53 +438,100 @@ export function FlashServiceForm({
               onChange={({ detail }) => update("region", detail.selectedOption.value ?? regions[0].value)}
             />
           </FormField>
-          <FormField label="レプリカ" constraintText="1〜100">
+          <FormField
+            label="レプリカ"
+            constraintText={`1〜${quota.max_replicas_per_service.toLocaleString("ja-JP")}（アカウント上限）`}
+          >
             <Input
               type="number"
               inputMode="numeric"
               step={1}
-              nativeInputAttributes={{ min: 1, max: 100 }}
+              nativeInputAttributes={{ min: 1, max: quota.max_replicas_per_service }}
               value={String(value.replicas)}
               disabled={disabled}
-              onChange={({ detail }) => update("replicas", boundedInteger(detail.value, 1, 100, value.replicas))}
+              onChange={({ detail }) =>
+                update(
+                  "replicas",
+                  boundedInteger(
+                    detail.value,
+                    1,
+                    quota.max_replicas_per_service,
+                    value.replicas,
+                  ),
+                )
+              }
             />
           </FormField>
         </ColumnLayout>
         <ColumnLayout columns={3}>
-          <FormField label="CPU" constraintText="10〜4,000 millicores">
+          <FormField
+            label="CPU"
+            constraintText={`10〜${quota.max_cpu_millis_per_vm.toLocaleString("ja-JP")} millicores`}
+          >
             <Input
               type="number"
               inputMode="numeric"
               step={100}
-              nativeInputAttributes={{ min: 10, max: 4_000 }}
+              nativeInputAttributes={{ min: 10, max: quota.max_cpu_millis_per_vm }}
               value={String(value.cpuMillis)}
               disabled={disabled}
-              onChange={({ detail }) => update("cpuMillis", boundedInteger(detail.value, 10, 4_000, value.cpuMillis))}
+              onChange={({ detail }) =>
+                update(
+                  "cpuMillis",
+                  boundedInteger(
+                    detail.value,
+                    10,
+                    quota.max_cpu_millis_per_vm,
+                    value.cpuMillis,
+                  ),
+                )
+              }
             />
           </FormField>
-          <FormField label="メモリ" constraintText="16〜8,128 MiB">
+          <FormField
+            label="メモリ"
+            constraintText={`16〜${quota.max_memory_mib_per_vm.toLocaleString("ja-JP")} MiB`}
+          >
             <Input
               type="number"
               inputMode="numeric"
               step={64}
-              nativeInputAttributes={{ min: 16, max: 8_128 }}
+              nativeInputAttributes={{ min: 16, max: quota.max_memory_mib_per_vm }}
               value={String(value.memoryMib)}
               disabled={disabled}
-              onChange={({ detail }) => update("memoryMib", boundedInteger(detail.value, 16, 8_128, value.memoryMib))}
+              onChange={({ detail }) =>
+                update(
+                  "memoryMib",
+                  boundedInteger(
+                    detail.value,
+                    16,
+                    quota.max_memory_mib_per_vm,
+                    value.memoryMib,
+                  ),
+                )
+              }
             />
           </FormField>
-          <FormField label="ディスク上限" constraintText="コンテナイメージを含む 1〜10 GiB">
+          <FormField
+            label="ディスク上限"
+            constraintText={`イメージ込み 1〜${quota.max_disk_gib_per_vm.toLocaleString("ja-JP")} GiB`}
+          >
             <Input
               type="number"
               inputMode="numeric"
               step={1}
-              nativeInputAttributes={{ min: 1, max: 10 }}
+              nativeInputAttributes={{ min: 1, max: quota.max_disk_gib_per_vm }}
               value={String(value.ephemeralStorageGib)}
               disabled={disabled}
               onChange={({ detail }) =>
                 update(
                   "ephemeralStorageGib",
-                  boundedInteger(detail.value, 1, 10, value.ephemeralStorageGib),
+                  boundedInteger(
+                    detail.value,
+                    1,
+                    quota.max_disk_gib_per_vm,
+                    value.ephemeralStorageGib,
+                  ),
                 )
               }
             />

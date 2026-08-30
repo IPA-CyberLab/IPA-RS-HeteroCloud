@@ -30,16 +30,16 @@ const limits: ResourceQuotaLimits = {
   registry: { storage_gib: 10, max_credentials: 10 },
 };
 
-it("API安全上限を超える古いハードリミットを保存前に正規化する", () => {
-  const staleLimits = structuredClone(limits);
-  staleLimits.flash.max_disk_gib_per_vm = 20;
-  staleLimits.flash.max_total_disk_gib = 5;
-  staleLimits.flow.max_rate_limit_burst = 100;
+it("Ownerが変更したVM上限を維持し、合計値との整合性だけを補正する", () => {
+  const customLimits = structuredClone(limits);
+  customLimits.flash.max_disk_gib_per_vm = 20;
+  customLimits.flash.max_total_disk_gib = 5;
+  customLimits.flow.max_rate_limit_burst = 100;
 
-  const normalized = normalizeResourceQuotaLimits(staleLimits);
+  const normalized = normalizeResourceQuotaLimits(customLimits);
 
-  expect(normalized.flash.max_disk_gib_per_vm).toBe(10);
-  expect(normalized.flash.max_total_disk_gib).toBe(10);
+  expect(normalized.flash.max_disk_gib_per_vm).toBe(20);
+  expect(normalized.flash.max_total_disk_gib).toBe(20);
   expect(normalized.flow.max_rate_limit_burst).toBe(1_000);
 });
 
@@ -148,6 +148,8 @@ describe("OwnerQuotasPage", () => {
     expect(
       screen.getByRole("heading", { name: "全アカウントの既定ハードリミット" }),
     ).toBeInTheDocument();
+    expect(screen.getByText("サービスとレプリカ")).toBeInTheDocument();
+    expect(screen.getByText("APIレート制限")).toBeInTheDocument();
 
     await user.click(
       screen.getByRole("link", { name: "Example Userの登録情報を表示" }),

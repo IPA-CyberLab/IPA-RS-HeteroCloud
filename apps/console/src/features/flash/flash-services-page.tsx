@@ -18,6 +18,7 @@ import { useActiveOrganization } from "@/features/organizations/organization-con
 import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { FlashService } from "@/lib/api-types";
 import {
+  flashQuotaQueryOptions,
   flashServicesQueryOptions,
   projectsQueryOptions,
   registryImagesQueryOptions,
@@ -40,6 +41,7 @@ export function FlashServicesPage() {
   const { activeOrganization } = useActiveOrganization();
   const organizationId = activeOrganization.organization_id;
   const services = useQuery(flashServicesQueryOptions(organizationId));
+  const quota = useQuery(flashQuotaQueryOptions(organizationId));
   const projects = useQuery(projectsQueryOptions(organizationId));
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -141,19 +143,20 @@ export function FlashServicesPage() {
   );
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!flashFormValidationError(form)) createService.mutate(form);
+    if (!flashFormValidationError(form, quota.data)) createService.mutate(form);
   };
 
-  if (services.isPending || projects.isPending) {
+  if (services.isPending || projects.isPending || quota.isPending) {
     return <PageLoading label="Flashを読み込んでいます" />;
   }
-  if (services.isError || projects.isError) {
+  if (services.isError || projects.isError || quota.isError) {
     return (
       <ErrorState
         description="Flashサービスまたはプロジェクト一覧を取得できませんでした。"
         onRetry={() => {
           void services.refetch();
           void projects.refetch();
+          void quota.refetch();
         }}
       />
     );
@@ -169,7 +172,7 @@ export function FlashServicesPage() {
     (total, service) => total + flashServiceEndpoints(service.status).length,
     0,
   );
-  const validationError = flashFormValidationError(form);
+  const validationError = flashFormValidationError(form, quota.data);
 
   return (
     <SpaceBetween size="l">
@@ -260,6 +263,7 @@ export function FlashServicesPage() {
                 ? "loading"
                 : "finished"
           }
+          quota={quota.data}
         >
           <FormError
             message={

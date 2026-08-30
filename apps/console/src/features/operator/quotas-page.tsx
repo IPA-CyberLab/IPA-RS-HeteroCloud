@@ -41,13 +41,13 @@ const QUOTA_BOUNDS = {
   },
   flash: {
     minReplicasPerService: 1,
-    maxReplicasPerService: 100,
+    maxReplicasPerService: 100_000,
     minCpuMillisPerVm: 10,
-    maxCpuMillisPerVm: 4_000,
+    maxCpuMillisPerVm: 100_000_000,
     minMemoryMibPerVm: 16,
-    maxMemoryMibPerVm: 8_128,
+    maxMemoryMibPerVm: 1_048_576,
     minDiskGibPerVm: 1,
-    maxDiskGibPerVm: 10,
+    maxDiskGibPerVm: 1_000_000,
     maxServices: 10_000,
     maxTotalReplicas: 100_000,
     maxTotalCpuMillis: 100_000_000,
@@ -232,31 +232,66 @@ function QuotaEditor({
   return (
     <SpaceBetween size="l">
       <Container header={<Header variant="h3">Flow</Header>}>
-        <ColumnLayout columns={3} variant="text-grid">
-          <NumberField label="サービス数" value={value.flow.max_services} max={QUOTA_BOUNDS.flow.maxServices} onChange={(next) => flow("max_services", next)} />
-          <NumberField label="1サービスのルーム数" value={value.flow.max_rooms_per_service} max={QUOTA_BOUNDS.flow.maxRoomsPerService} onChange={(next) => flow("max_rooms_per_service", next)} />
-          <NumberField label="合計ルーム数" value={value.flow.max_total_rooms} min={value.flow.max_rooms_per_service} max={QUOTA_BOUNDS.flow.maxTotalRooms} onChange={(next) => flow("max_total_rooms", next)} />
-          <NumberField label="1サービスの同時参加者" value={value.flow.max_participants_per_service} max={QUOTA_BOUNDS.flow.maxParticipantsPerService} onChange={(next) => flow("max_participants_per_service", next)} />
-          <NumberField label="IPあたりRPS" value={value.flow.max_rate_limit_requests_per_second} max={QUOTA_BOUNDS.flow.maxRequestsPerSecond} onChange={(next) => flow("max_rate_limit_requests_per_second", next)} />
-          <NumberField label="IPあたりバースト" value={value.flow.max_rate_limit_burst} min={value.flow.max_rate_limit_requests_per_second} max={QUOTA_BOUNDS.flow.maxBurst} onChange={(next) => flow("max_rate_limit_burst", next)} />
-          <NumberField label="開発者認証情報 / サービス" value={value.flow.max_developer_credentials_per_service} max={QUOTA_BOUNDS.flow.maxDeveloperCredentialsPerService} onChange={(next) => flow("max_developer_credentials_per_service", next)} />
-        </ColumnLayout>
+        <SpaceBetween size="m">
+          <SpaceBetween size="xs">
+            <Box variant="awsui-key-label">サービスとルーム</Box>
+            <ColumnLayout columns={3}>
+              <NumberField label="サービス数" value={value.flow.max_services} max={QUOTA_BOUNDS.flow.maxServices} onChange={(next) => flow("max_services", next)} />
+              <NumberField label="ルーム / サービス" value={value.flow.max_rooms_per_service} max={QUOTA_BOUNDS.flow.maxRoomsPerService} onChange={(next) => flow("max_rooms_per_service", next)} />
+              <NumberField label="合計ルーム" value={value.flow.max_total_rooms} min={value.flow.max_rooms_per_service} max={QUOTA_BOUNDS.flow.maxTotalRooms} onChange={(next) => flow("max_total_rooms", next)} />
+            </ColumnLayout>
+          </SpaceBetween>
+          <SpaceBetween size="xs">
+            <Box variant="awsui-key-label">接続と認証情報</Box>
+            <ColumnLayout columns={2}>
+              <NumberField label="同時参加者 / サービス" value={value.flow.max_participants_per_service} max={QUOTA_BOUNDS.flow.maxParticipantsPerService} onChange={(next) => flow("max_participants_per_service", next)} />
+              <NumberField label="開発者認証情報 / サービス" value={value.flow.max_developer_credentials_per_service} max={QUOTA_BOUNDS.flow.maxDeveloperCredentialsPerService} onChange={(next) => flow("max_developer_credentials_per_service", next)} />
+            </ColumnLayout>
+          </SpaceBetween>
+          <SpaceBetween size="xs">
+            <Box variant="awsui-key-label">APIレート制限</Box>
+            <ColumnLayout columns={2}>
+              <NumberField label="IPあたりRPS" value={value.flow.max_rate_limit_requests_per_second} max={QUOTA_BOUNDS.flow.maxRequestsPerSecond} onChange={(next) => flow("max_rate_limit_requests_per_second", next)} />
+              <NumberField label="IPあたりバースト" value={value.flow.max_rate_limit_burst} min={value.flow.max_rate_limit_requests_per_second} max={QUOTA_BOUNDS.flow.maxBurst} onChange={(next) => flow("max_rate_limit_burst", next)} />
+            </ColumnLayout>
+          </SpaceBetween>
+        </SpaceBetween>
       </Container>
       <Container header={<Header variant="h3">Flash</Header>}>
-        <ColumnLayout columns={3} variant="text-grid">
-          <NumberField label="サービス数" value={value.flash.max_services} max={QUOTA_BOUNDS.flash.maxServices} onChange={(next) => flash("max_services", next)} />
-          <NumberField label="レプリカ / サービス" value={value.flash.max_replicas_per_service} min={QUOTA_BOUNDS.flash.minReplicasPerService} max={QUOTA_BOUNDS.flash.maxReplicasPerService} onChange={(next) => flash("max_replicas_per_service", next)} />
-          <NumberField label="CPU / VM (millicores)" value={value.flash.max_cpu_millis_per_vm} min={QUOTA_BOUNDS.flash.minCpuMillisPerVm} max={QUOTA_BOUNDS.flash.maxCpuMillisPerVm} onChange={(next) => flash("max_cpu_millis_per_vm", next)} />
-          <NumberField label="メモリ / VM (MiB)" value={value.flash.max_memory_mib_per_vm} min={QUOTA_BOUNDS.flash.minMemoryMibPerVm} max={QUOTA_BOUNDS.flash.maxMemoryMibPerVm} onChange={(next) => flash("max_memory_mib_per_vm", next)} />
-          <NumberField label="ディスク / VM (GiB)" value={value.flash.max_disk_gib_per_vm} min={QUOTA_BOUNDS.flash.minDiskGibPerVm} max={QUOTA_BOUNDS.flash.maxDiskGibPerVm} onChange={(next) => flash("max_disk_gib_per_vm", next)} />
-          <NumberField label="合計レプリカ" value={value.flash.max_total_replicas} min={value.flash.max_replicas_per_service} max={QUOTA_BOUNDS.flash.maxTotalReplicas} onChange={(next) => flash("max_total_replicas", next)} />
-          <NumberField label="合計CPU (millicores)" value={value.flash.max_total_cpu_millis} min={value.flash.max_cpu_millis_per_vm} max={QUOTA_BOUNDS.flash.maxTotalCpuMillis} onChange={(next) => flash("max_total_cpu_millis", next)} />
-          <NumberField label="合計メモリ (MiB)" value={value.flash.max_total_memory_mib} min={value.flash.max_memory_mib_per_vm} max={QUOTA_BOUNDS.flash.maxTotalMemoryMib} onChange={(next) => flash("max_total_memory_mib", next)} />
-          <NumberField label="合計ディスク (GiB)" value={value.flash.max_total_disk_gib} min={value.flash.max_disk_gib_per_vm} max={QUOTA_BOUNDS.flash.maxTotalDiskGib} onChange={(next) => flash("max_total_disk_gib", next)} />
-        </ColumnLayout>
+        <SpaceBetween size="m">
+          <SpaceBetween size="xs">
+            <Box variant="awsui-key-label">サービスとレプリカ</Box>
+            <ColumnLayout columns={3}>
+              <NumberField label="サービス数" value={value.flash.max_services} max={QUOTA_BOUNDS.flash.maxServices} onChange={(next) => flash("max_services", next)} />
+              <NumberField label="レプリカ / サービス" value={value.flash.max_replicas_per_service} min={QUOTA_BOUNDS.flash.minReplicasPerService} max={QUOTA_BOUNDS.flash.maxReplicasPerService} onChange={(next) => flash("max_replicas_per_service", next)} />
+              <NumberField label="合計レプリカ" value={value.flash.max_total_replicas} min={value.flash.max_replicas_per_service} max={QUOTA_BOUNDS.flash.maxTotalReplicas} onChange={(next) => flash("max_total_replicas", next)} />
+            </ColumnLayout>
+          </SpaceBetween>
+          <SpaceBetween size="xs">
+            <Box variant="awsui-key-label">CPU</Box>
+            <ColumnLayout columns={2}>
+              <NumberField label="CPU / VM (millicores)" value={value.flash.max_cpu_millis_per_vm} min={QUOTA_BOUNDS.flash.minCpuMillisPerVm} max={QUOTA_BOUNDS.flash.maxCpuMillisPerVm} onChange={(next) => flash("max_cpu_millis_per_vm", next)} />
+              <NumberField label="合計CPU (millicores)" value={value.flash.max_total_cpu_millis} min={value.flash.max_cpu_millis_per_vm} max={QUOTA_BOUNDS.flash.maxTotalCpuMillis} onChange={(next) => flash("max_total_cpu_millis", next)} />
+            </ColumnLayout>
+          </SpaceBetween>
+          <SpaceBetween size="xs">
+            <Box variant="awsui-key-label">メモリ</Box>
+            <ColumnLayout columns={2}>
+              <NumberField label="メモリ / VM (MiB)" value={value.flash.max_memory_mib_per_vm} min={QUOTA_BOUNDS.flash.minMemoryMibPerVm} max={QUOTA_BOUNDS.flash.maxMemoryMibPerVm} onChange={(next) => flash("max_memory_mib_per_vm", next)} />
+              <NumberField label="合計メモリ (MiB)" value={value.flash.max_total_memory_mib} min={value.flash.max_memory_mib_per_vm} max={QUOTA_BOUNDS.flash.maxTotalMemoryMib} onChange={(next) => flash("max_total_memory_mib", next)} />
+            </ColumnLayout>
+          </SpaceBetween>
+          <SpaceBetween size="xs">
+            <Box variant="awsui-key-label">ディスク</Box>
+            <ColumnLayout columns={2}>
+              <NumberField label="ディスク / VM (GiB)" value={value.flash.max_disk_gib_per_vm} min={QUOTA_BOUNDS.flash.minDiskGibPerVm} max={QUOTA_BOUNDS.flash.maxDiskGibPerVm} onChange={(next) => flash("max_disk_gib_per_vm", next)} />
+              <NumberField label="合計ディスク (GiB)" value={value.flash.max_total_disk_gib} min={value.flash.max_disk_gib_per_vm} max={QUOTA_BOUNDS.flash.maxTotalDiskGib} onChange={(next) => flash("max_total_disk_gib", next)} />
+            </ColumnLayout>
+          </SpaceBetween>
+        </SpaceBetween>
       </Container>
       <Container header={<Header variant="h3">Flash Registry</Header>}>
-        <ColumnLayout columns={3} variant="text-grid">
+        <ColumnLayout columns={2}>
           <NumberField
             label="保存容量 / テナント (GiB)"
             value={value.registry.storage_gib}

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api-client";
-import type { FlashService } from "@/lib/api-types";
+import type { FlashQuotaLimits, FlashService } from "@/lib/api-types";
 import { FlashServiceDetailPage } from "./flash-service-detail-page";
 
 vi.mock("@/features/organizations/organization-context", () => ({
@@ -61,8 +61,21 @@ const service: FlashService = {
   updated_at: "2026-08-21T09:00:00Z",
 };
 
+const quota: FlashQuotaLimits = {
+  max_services: 100,
+  max_replicas_per_service: 100,
+  max_cpu_millis_per_vm: 4_000,
+  max_memory_mib_per_vm: 8_128,
+  max_disk_gib_per_vm: 10,
+  max_total_replicas: 100,
+  max_total_cpu_millis: 20_000,
+  max_total_memory_mib: 32_768,
+  max_total_disk_gib: 100,
+};
+
 describe("FlashServiceDetailPage", () => {
   beforeEach(() => {
+    vi.spyOn(api.flash, "quota").mockResolvedValue(quota);
     vi.spyOn(api.flash.services, "get").mockResolvedValue(service);
     vi.spyOn(api.flash.services, "listContainers").mockResolvedValue({
       items: [

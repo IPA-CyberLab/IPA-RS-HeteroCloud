@@ -22,8 +22,8 @@ use heterocloud_auth::{
 };
 use heterocloud_domain::{
     DEFAULT_FLOW_MAX_ROOMS, DEFAULT_FLOW_RATE_LIMIT_BURST,
-    DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, FlashSpec, FlowRateLimit, FlowSpec,
-    MAX_FLOW_RATE_LIMIT_BURST, MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, MAX_FLOW_ROOMS,
+    DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, FlashQuotaLimits, FlashSpec, FlowRateLimit,
+    FlowSpec, MAX_FLOW_RATE_LIMIT_BURST, MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, MAX_FLOW_ROOMS,
     OrganizationId, PolicyDocument, PolicyId, PrincipalId, ProjectId, ResourceQuotaLimits,
     ServiceInstance, ServiceInstanceId, ServiceState, UserStatus,
 };
@@ -152,6 +152,10 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route(
             "/organizations/{organization_id}/flash/services",
             get(list_flash_services).post(create_flash_service),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/quota",
+            get(get_flash_quota),
         )
         .route(
             "/organizations/{organization_id}/flash/services/{service_instance_id}",
@@ -1498,6 +1502,29 @@ async fn delete_realtime_service(
 #[derive(Default, Deserialize)]
 struct FlashListQuery {
     project_id: Option<Uuid>,
+}
+
+async fn get_flash_quota(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<FlashQuotaLimits>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:ListInstances",
+        &flash_collection_resource(organization_id),
+    )
+    .await?;
+    let limits = state
+        .store
+        .effective_resource_quota(OrganizationId(organization_id))
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(limits.flash))
 }
 
 async fn list_flash_services(

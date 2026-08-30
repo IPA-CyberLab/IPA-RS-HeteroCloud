@@ -12,6 +12,7 @@ import type {
   CreateRealtimeServiceRequest,
   CreateServiceAccountRequest,
   ErrorEnvelope,
+  FlashQuotaLimits,
   FlashService,
   FlashContainerList,
   IamPolicy,
@@ -552,6 +553,11 @@ export class HeteroCloudApiClient {
   };
 
   readonly flash = {
+    quota: (organizationId: string, signal?: AbortSignal) =>
+      this.request<FlashQuotaLimits>(
+        organizationPath(organizationId, "flash/quota"),
+        { signal },
+      ),
     services: {
       list: (organizationId: string, signal?: AbortSignal) =>
         this.request<CollectionResponse<FlashService>>(

@@ -1,8 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { RegistryImage } from "@/lib/api-types";
+import type { FlashQuotaLimits, RegistryImage } from "@/lib/api-types";
 import {
+  defaultFlashQuotaLimits,
   defaultFlashServiceFormValue,
   FlashServiceForm,
   flashFormValidationError,
@@ -17,7 +18,7 @@ vi.mock("@/components/shared/resource-selectors", () => ({
   ProjectSelector: () => <div>Project selector</div>,
 }));
 
-function FormHarness() {
+function FormHarness({ quota }: { quota?: FlashQuotaLimits }) {
   const [value, setValue] = useState<FlashServiceFormValue>({
     ...defaultFlashServiceFormValue,
     projectId: "project-1",
@@ -29,6 +30,7 @@ function FormHarness() {
       value={value}
       onChange={setValue}
       onSubmit={(event) => event.preventDefault()}
+      quota={quota}
     >
       <button type="submit">保存</button>
     </FlashServiceForm>
@@ -86,6 +88,43 @@ describe("FlashServiceForm", () => {
       target: { value: "4" },
     });
     expect(screen.getByRole("spinbutton", { name: "レプリカ" })).toHaveValue(4);
+  });
+
+  it("Ownerが設定したアカウント別VM上限を入力へ反映する", () => {
+    const quota = {
+      ...defaultFlashQuotaLimits,
+      max_cpu_millis_per_vm: 8_000,
+      max_memory_mib_per_vm: 16_384,
+      max_disk_gib_per_vm: 20,
+      max_total_cpu_millis: 40_000,
+      max_total_memory_mib: 65_536,
+      max_total_disk_gib: 200,
+    };
+    render(<FormHarness quota={quota} />);
+
+    expect(screen.getByRole("spinbutton", { name: "CPU" })).toHaveAttribute(
+      "max",
+      "8000",
+    );
+    expect(screen.getByRole("spinbutton", { name: "メモリ" })).toHaveAttribute(
+      "max",
+      "16384",
+    );
+    expect(
+      screen.getByRole("spinbutton", { name: "ディスク上限" }),
+    ).toHaveAttribute("max", "20");
+    expect(
+      flashFormValidationError(
+        {
+          ...defaultFlashServiceFormValue,
+          projectId: "project-1",
+          name: "large-vm",
+          image: "ghcr.io/example/large:v1",
+          ephemeralStorageGib: 20,
+        },
+        quota,
+      ),
+    ).toBeNull();
   });
 
   it("Flash Registryと直接入力からコンテナイメージを指定できる", () => {
