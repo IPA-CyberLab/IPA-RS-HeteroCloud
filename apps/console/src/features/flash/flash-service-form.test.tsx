@@ -46,6 +46,13 @@ const registryImage: RegistryImage = {
   pushed_at: "2026-08-22T12:00:00Z",
 };
 
+const untaggedRegistryImage: RegistryImage = {
+  ...registryImage,
+  reference: "registry.example.com/hc-tenant/game/server@sha256:fedcba9876543210",
+  tag: null,
+  digest: "sha256:fedcba9876543210",
+};
+
 function RegistryImageFormHarness() {
   const [value, setValue] = useState<FlashServiceFormValue>({
     ...defaultFlashServiceFormValue,
@@ -148,6 +155,12 @@ describe("FlashServiceForm", () => {
     expect(screen.getByTestId("selected-image")).toHaveTextContent(
       "ghcr.io/example/manual:v1",
     );
+  });
+
+  it("タグなしartifactをFlashの実行候補に含めない", () => {
+    expect(
+      flashRegistryImageOptions([registryImage, untaggedRegistryImage]),
+    ).toHaveLength(1);
   });
 
   it("環境変数、command、argsをAPI specへ変換する", () => {

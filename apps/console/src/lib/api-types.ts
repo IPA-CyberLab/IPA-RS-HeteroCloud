@@ -122,7 +122,7 @@ export interface RegistryStatus {
 export interface RegistryImage {
   reference: string;
   repository: string;
-  tag: string;
+  tag: string | null;
   digest: string;
   size_bytes: number;
   pushed_at: string | null;

@@ -126,13 +126,15 @@ function formatImageSize(value: number): string {
 }
 
 export function flashRegistryImageOptions(registryImages: RegistryImage[]) {
-  return registryImages.map((image) => ({
-    value: image.reference,
-    label: `${image.repository}:${image.tag}`,
-    description: image.digest,
-    labelTag: formatImageSize(image.size_bytes),
-    filteringTags: [image.reference],
-  }));
+  return registryImages
+    .filter((image) => image.tag !== null)
+    .map((image) => ({
+      value: image.reference,
+      label: `${image.repository}:${image.tag}`,
+      description: image.digest,
+      labelTag: formatImageSize(image.size_bytes),
+      filteringTags: [image.reference],
+    }));
 }
 
 export function parseFlashEnvironment(value: string): {

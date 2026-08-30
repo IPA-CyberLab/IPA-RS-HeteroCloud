@@ -170,7 +170,6 @@ impl RegistryClient {
                     .query_pairs_mut()
                     .append_pair("page", &page.to_string())
                     .append_pair("page_size", &HARBOR_PAGE_SIZE.to_string())
-                    .append_pair("q", "tags=*")
                     .append_pair("sort", "-push_time")
                     .append_pair("with_tag", "true")
                     .append_pair("with_label", "false")
@@ -190,7 +189,24 @@ impl RegistryClient {
                     {
                         continue;
                     }
-                    for tag in artifact.tags {
+                    let tags = artifact.tags.unwrap_or_default();
+                    if tags.is_empty() {
+                        let reference = format!(
+                            "{authority}/{}/{repository_name}@{}",
+                            project.name, artifact.digest
+                        );
+                        if references.insert(reference.clone()) {
+                            images.push(RegistryImage {
+                                reference,
+                                repository: repository_name.to_owned(),
+                                tag: None,
+                                digest: artifact.digest.clone(),
+                                size_bytes: artifact.size.max(0) as u64,
+                                pushed_at: artifact.push_time.clone(),
+                            });
+                        }
+                    }
+                    for tag in tags {
                         let reference = format!(
                             "{authority}/{}/{repository_name}:{}",
                             project.name, tag.name
@@ -201,7 +217,7 @@ impl RegistryClient {
                         images.push(RegistryImage {
                             reference,
                             repository: repository_name.to_owned(),
-                            tag: tag.name,
+                            tag: Some(tag.name),
                             digest: artifact.digest.clone(),
                             size_bytes: artifact.size.max(0) as u64,
                             pushed_at: artifact.push_time.clone(),
@@ -333,7 +349,7 @@ impl RegistryProject {
 pub struct RegistryImage {
     pub reference: String,
     pub repository: String,
-    pub tag: String,
+    pub tag: Option<String>,
     pub digest: String,
     pub size_bytes: u64,
     pub pushed_at: Option<String>,
@@ -365,7 +381,7 @@ struct ArtifactResponse {
     size: i64,
     push_time: Option<String>,
     #[serde(default)]
-    tags: Vec<TagResponse>,
+    tags: Option<Vec<TagResponse>>,
 }
 
 #[derive(Deserialize)]
@@ -466,7 +482,10 @@ fn registry_authority(endpoint: &Url) -> Result<String, RegistryError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{artifact_list_url, artifact_url, registry_authority, relative_repository_name};
+    use super::{
+        ArtifactResponse, artifact_list_url, artifact_url, registry_authority,
+        relative_repository_name,
+    };
     use url::Url;
 
     #[test]
@@ -508,6 +527,20 @@ mod tests {
             .as_str(),
             "http://harbor-core/api/v2.0/projects/hc-tenant/repositories/team%252Fgame/artifacts/sha256:0123456789abcdef"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn harbor_untagged_artifacts_accept_null_tags() -> Result<(), Box<dyn std::error::Error>> {
+        let artifact: ArtifactResponse = serde_json::from_value(serde_json::json!({
+            "type": "IMAGE",
+            "digest": "sha256:0123456789abcdef",
+            "size": 1024,
+            "push_time": "2026-08-30T00:00:00Z",
+            "tags": null
+        }))?;
+
+        assert!(artifact.tags.is_none());
         Ok(())
     }
 }

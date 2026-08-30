@@ -52,6 +52,12 @@ function credentialCommands(secret: RegistryCredentialSecret): string {
   ].join("\n");
 }
 
+function imageDisplayName(image: RegistryImage): string {
+  return image.tag
+    ? `${image.repository}:${image.tag}`
+    : `${image.repository}@${image.digest.slice(0, 19)}...`;
+}
+
 export function RegistryPage() {
   const { activeOrganization } = useActiveOrganization();
   const organizationId = activeOrganization.organization_id;
@@ -129,7 +135,10 @@ export function RegistryPage() {
 
   const value = registry.data;
   const usagePercent = value.storage_limit_bytes
-    ? Math.min(100, (value.storage_used_bytes / value.storage_limit_bytes) * 100)
+    ? Math.round(
+        Math.min(100, (value.storage_used_bytes / value.storage_limit_bytes) * 100) *
+          100,
+      ) / 100
     : 0;
   const activeCredentials = value.credentials.length;
   const commands = secret ? credentialCommands(secret) : "";
@@ -172,7 +181,7 @@ export function RegistryPage() {
         <Box margin={{ top: "l" }}>
           <ProgressBar
             value={usagePercent}
-            label="保存容量"
+            label="保存容量（タグなしイメージを含む）"
             description={`${formatBytes(value.storage_used_bytes)} / ${formatBytes(value.storage_limit_bytes)}`}
           />
         </Box>
@@ -188,7 +197,7 @@ export function RegistryPage() {
           <Header
             variant="h2"
             counter={`(${images.data.items.length})`}
-            description="Flashで起動できるタグ付きコンテナイメージ"
+            description="保存容量を使用する全イメージ。タグなしイメージも削除できます。"
           >
             イメージ
           </Header>
@@ -202,7 +211,12 @@ export function RegistryPage() {
           {
             id: "tag",
             header: "タグ",
-            cell: (item) => <Box variant="code">{item.tag}</Box>,
+            cell: (item) =>
+              item.tag ? (
+                <Box variant="code">{item.tag}</Box>
+              ) : (
+                <Box color="text-status-inactive">タグなし</Box>
+              ),
           },
           {
             id: "digest",
@@ -233,7 +247,7 @@ export function RegistryPage() {
               <Button
                 variant="inline-icon"
                 iconName="remove"
-                ariaLabel={`${item.repository}:${item.tag}を削除`}
+                ariaLabel={`${imageDisplayName(item)}を削除`}
                 onClick={() => {
                   deleteImage.reset();
                   setDeleteTarget(item);
@@ -347,7 +361,9 @@ export function RegistryPage() {
         <SpaceBetween size="l">
           <Alert type="warning">
             {deleteTarget
-              ? `${deleteTarget.repository}:${deleteTarget.tag} を削除します。同じDigestを参照するタグも削除され、Flashの再起動時に取得できなくなる可能性があります。`
+              ? deleteTarget.tag
+                ? `${imageDisplayName(deleteTarget)} を削除します。同じDigestを参照するタグも削除され、Flashの再起動時に取得できなくなる可能性があります。`
+                : `${imageDisplayName(deleteTarget)} を削除します。このタグなしイメージはFlashの新規作成では利用できません。`
               : ""}
           </Alert>
           <FormError

@@ -40,6 +40,14 @@ describe("RegistryPage", () => {
           size_bytes: 128 * 1024 * 1024,
           pushed_at: "2026-08-22T05:00:00Z",
         },
+        {
+          reference: `registry.example.com/hc-organization-1/old-image@sha256:${"b".repeat(64)}`,
+          repository: "old-image",
+          tag: null,
+          digest: `sha256:${"b".repeat(64)}`,
+          size_bytes: 64 * 1024 * 1024,
+          pushed_at: "2026-08-21T05:00:00Z",
+        },
       ],
     });
     vi.spyOn(api.registry, "deleteImage").mockResolvedValue({
@@ -75,6 +83,24 @@ describe("RegistryPage", () => {
       );
     });
     expect(await screen.findByText("128 MiB / 10 GiB")).toBeInTheDocument();
+  });
+
+  it("容量を使用するタグなしartifactを表示する", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RegistryPage />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("タグなし")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "old-image@sha256:bbbbbbbbbbbb...を削除",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("確認後にRegistry認証情報を削除する", async () => {
