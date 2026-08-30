@@ -58,12 +58,24 @@ export interface ResourceQuotaLimits {
 
 export interface ResourceQuotaUsage {
   flow_services: number;
+  flow_max_rooms_per_service: number;
   flow_configured_rooms: number;
+  flow_max_participants_per_service: number;
+  flow_max_rate_limit_requests_per_second: number;
+  flow_max_rate_limit_burst: number;
+  flow_developer_credentials: number;
+  flow_max_developer_credentials_per_service: number;
   flash_services: number;
+  flash_max_replicas_per_service: number;
+  flash_max_cpu_millis_per_vm: number;
+  flash_max_memory_mib_per_vm: number;
+  flash_max_disk_gib_per_vm: number;
   flash_replicas: number;
   flash_cpu_millis: number;
   flash_memory_mib: number;
   flash_disk_gib: number;
+  registry_storage_bytes: number | null;
+  registry_credentials: number;
 }
 
 export interface ResourceQuotaTenant {

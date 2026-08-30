@@ -276,6 +276,17 @@ impl RegistryClient {
         Ok(quota.used.get("storage").copied().unwrap_or(0).max(0) as u64)
     }
 
+    pub async fn organization_storage_usage(
+        &self,
+        organization_id: OrganizationId,
+    ) -> Result<u64, RegistryError> {
+        let Some(project) = self.project(&project_name(organization_id)).await? else {
+            return Ok(0);
+        };
+        let quota = self.project_quota(project.project_id).await?;
+        Ok(quota.used.get("storage").copied().unwrap_or(0).max(0) as u64)
+    }
+
     pub async fn delete_credential(&self, robot_id: i64) -> Result<(), RegistryError> {
         let url = self
             .internal_endpoint

@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     convert::Infallible,
     net::{IpAddr, SocketAddr},
     sync::Arc,
@@ -17,6 +17,7 @@ use axum::{
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use email_address::EmailAddress;
+use futures_util::{StreamExt, stream};
 use heterocloud_auth::{
     constant_time_token_eq, csrf_token, generate_token, hash_password, token_hash, verify_password,
 };
@@ -265,11 +266,47 @@ async fn owner_quota_overview(
         .resource_quota_defaults()
         .await
         .map_err(ApiError::from_store)?;
-    let tenants = state
+    let mut tenants = state
         .store
         .list_resource_quota_tenants()
         .await
         .map_err(ApiError::from_store)?;
+    if let Some(registry) = state.registry.as_ref() {
+        let organization_ids = tenants
+            .iter()
+            .map(|tenant| tenant.organization.id)
+            .collect::<Vec<_>>();
+        let storage_results = stream::iter(organization_ids)
+            .map(|organization_id| {
+                let registry = Arc::clone(registry);
+                async move {
+                    (
+                        organization_id,
+                        registry.organization_storage_usage(organization_id).await,
+                    )
+                }
+            })
+            .buffer_unordered(8)
+            .collect::<Vec<_>>()
+            .await;
+        let mut storage_by_organization = HashMap::with_capacity(storage_results.len());
+        for (organization_id, result) in storage_results {
+            match result {
+                Ok(storage_bytes) => {
+                    storage_by_organization.insert(organization_id, storage_bytes);
+                }
+                Err(error) => tracing::warn!(
+                    %organization_id,
+                    error = %error,
+                    "owner registry usage lookup failed"
+                ),
+            }
+        }
+        for tenant in &mut tenants {
+            tenant.usage.registry_storage_bytes =
+                storage_by_organization.remove(&tenant.organization.id);
+        }
+    }
     Ok(Json(json!({ "defaults": defaults, "tenants": tenants })))
 }
 

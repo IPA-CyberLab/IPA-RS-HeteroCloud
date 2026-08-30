@@ -235,35 +235,69 @@ impl Store {
         )
         .fetch_all(&self.pool)
         .await?;
+        let flow_credentials = sqlx::query_as::<_, TenantCredentialUsageRow>(
+            "SELECT c.organization_id, count(*) AS active_credentials
+             FROM flow_developer_credentials c
+             JOIN service_instances s ON s.id = c.service_instance_id
+             WHERE c.revoked_at IS NULL
+               AND c.expires_at > now()
+               AND s.provider = 'flow'
+               AND s.state <> 'deleting'
+             GROUP BY c.organization_id, c.service_instance_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let registry_credentials = sqlx::query_as::<_, TenantCredentialUsageRow>(
+            "SELECT organization_id, count(*) AS active_credentials
+             FROM registry_credentials
+             WHERE status IN ('provisioning', 'active')
+             GROUP BY organization_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut usage_by_organization = BTreeMap::<Uuid, ResourceQuotaUsage>::new();
+        for allocation in allocations {
+            let usage = usage_by_organization
+                .entry(allocation.organization_id)
+                .or_default();
+            match allocation.provider.as_str() {
+                "flow" => {
+                    let spec: FlowSpec = serde_json::from_value(allocation.spec)?;
+                    usage.add_flow_spec(&spec);
+                }
+                "flash" => {
+                    let spec: FlashSpec = serde_json::from_value(allocation.spec)?;
+                    usage.add_flash_spec(&spec);
+                }
+                _ => return Err(StoreError::Invariant("unknown quota provider")),
+            }
+        }
+        for row in flow_credentials {
+            let count = u64::try_from(row.active_credentials)
+                .map_err(|_| StoreError::Invariant("negative Flow credential count"))?;
+            let usage = usage_by_organization
+                .entry(row.organization_id)
+                .or_default();
+            usage.flow_developer_credentials =
+                usage.flow_developer_credentials.saturating_add(count);
+            usage.flow_max_developer_credentials_per_service =
+                usage.flow_max_developer_credentials_per_service.max(count);
+        }
+        for row in registry_credentials {
+            let count = u64::try_from(row.active_credentials)
+                .map_err(|_| StoreError::Invariant("negative Registry credential count"))?;
+            usage_by_organization
+                .entry(row.organization_id)
+                .or_default()
+                .registry_credentials = count;
+        }
+
         rows.into_iter()
             .map(|row| {
                 let override_limits = row.override_limits.map(parse_resource_quota).transpose()?;
                 let effective_limits = override_limits.clone().unwrap_or_else(|| defaults.clone());
-                let mut usage = ResourceQuotaUsage::default();
-                for allocation in allocations
-                    .iter()
-                    .filter(|allocation| allocation.organization_id == row.id)
-                {
-                    match allocation.provider.as_str() {
-                        "flow" => {
-                            let spec: FlowSpec = serde_json::from_value(allocation.spec.clone())?;
-                            usage.flow_services += 1;
-                            usage.flow_configured_rooms += u64::from(spec.max_rooms);
-                        }
-                        "flash" => {
-                            let spec: FlashSpec = serde_json::from_value(allocation.spec.clone())?;
-                            usage.flash_services += 1;
-                            usage.flash_replicas += u64::from(spec.replicas);
-                            usage.flash_cpu_millis +=
-                                u64::from(spec.replicas) * u64::from(spec.cpu_millis);
-                            usage.flash_memory_mib +=
-                                u64::from(spec.replicas) * u64::from(spec.memory_mib);
-                            usage.flash_disk_gib +=
-                                u64::from(spec.replicas) * u64::from(spec.ephemeral_storage_gib);
-                        }
-                        _ => return Err(StoreError::Invariant("unknown quota provider")),
-                    }
-                }
+                let usage = usage_by_organization.remove(&row.id).unwrap_or_default();
                 Ok(ResourceQuotaTenant {
                     organization: Organization {
                         id: OrganizationId(row.id),
@@ -2759,12 +2793,70 @@ pub struct OwnerAccountRecord {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct ResourceQuotaUsage {
     pub flow_services: u64,
+    pub flow_max_rooms_per_service: u64,
     pub flow_configured_rooms: u64,
+    pub flow_max_participants_per_service: u64,
+    pub flow_max_rate_limit_requests_per_second: u64,
+    pub flow_max_rate_limit_burst: u64,
+    pub flow_developer_credentials: u64,
+    pub flow_max_developer_credentials_per_service: u64,
     pub flash_services: u64,
+    pub flash_max_replicas_per_service: u64,
+    pub flash_max_cpu_millis_per_vm: u64,
+    pub flash_max_memory_mib_per_vm: u64,
+    pub flash_max_disk_gib_per_vm: u64,
     pub flash_replicas: u64,
     pub flash_cpu_millis: u64,
     pub flash_memory_mib: u64,
     pub flash_disk_gib: u64,
+    pub registry_storage_bytes: Option<u64>,
+    pub registry_credentials: u64,
+}
+
+impl ResourceQuotaUsage {
+    fn add_flow_spec(&mut self, spec: &FlowSpec) {
+        self.flow_services = self.flow_services.saturating_add(1);
+        self.flow_max_rooms_per_service = self
+            .flow_max_rooms_per_service
+            .max(u64::from(spec.max_rooms));
+        self.flow_configured_rooms = self
+            .flow_configured_rooms
+            .saturating_add(u64::from(spec.max_rooms));
+        self.flow_max_participants_per_service = self
+            .flow_max_participants_per_service
+            .max(u64::from(spec.max_participants));
+        self.flow_max_rate_limit_requests_per_second = self
+            .flow_max_rate_limit_requests_per_second
+            .max(u64::from(spec.rate_limit.requests_per_second));
+        self.flow_max_rate_limit_burst = self
+            .flow_max_rate_limit_burst
+            .max(u64::from(spec.rate_limit.burst));
+    }
+
+    fn add_flash_spec(&mut self, spec: &FlashSpec) {
+        let replicas = u64::from(spec.replicas);
+        self.flash_services = self.flash_services.saturating_add(1);
+        self.flash_max_replicas_per_service = self.flash_max_replicas_per_service.max(replicas);
+        self.flash_max_cpu_millis_per_vm = self
+            .flash_max_cpu_millis_per_vm
+            .max(u64::from(spec.cpu_millis));
+        self.flash_max_memory_mib_per_vm = self
+            .flash_max_memory_mib_per_vm
+            .max(u64::from(spec.memory_mib));
+        self.flash_max_disk_gib_per_vm = self
+            .flash_max_disk_gib_per_vm
+            .max(u64::from(spec.ephemeral_storage_gib));
+        self.flash_replicas = self.flash_replicas.saturating_add(replicas);
+        self.flash_cpu_millis = self
+            .flash_cpu_millis
+            .saturating_add(replicas.saturating_mul(u64::from(spec.cpu_millis)));
+        self.flash_memory_mib = self
+            .flash_memory_mib
+            .saturating_add(replicas.saturating_mul(u64::from(spec.memory_mib)));
+        self.flash_disk_gib = self
+            .flash_disk_gib
+            .saturating_add(replicas.saturating_mul(u64::from(spec.ephemeral_storage_gib)));
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -3247,6 +3339,12 @@ struct TenantServiceAllocationRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct TenantCredentialUsageRow {
+    organization_id: Uuid,
+    active_credentials: i64,
+}
+
+#[derive(sqlx::FromRow)]
 struct RealtimeMetricCollectionTargetRow {
     id: Uuid,
     organization_id: Uuid,
@@ -3364,4 +3462,80 @@ pub enum StoreError {
     Sql(#[from] sqlx::Error),
     #[error("stored JSON is invalid: {0}")]
     Json(#[from] serde_json::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ResourceQuotaUsage;
+    use heterocloud_domain::{FlashSpec, FlowRateLimit, FlowSpec};
+    use serde_json::json;
+
+    #[test]
+    fn resource_usage_tracks_totals_and_per_service_maxima()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut usage = ResourceQuotaUsage::default();
+        usage.add_flow_spec(&FlowSpec {
+            region: "heteronet-global".to_owned(),
+            max_participants: 30,
+            max_rooms: 10,
+            rate_limit: FlowRateLimit {
+                requests_per_second: 5,
+                burst: 10,
+            },
+            metadata: json!({}),
+        });
+        usage.add_flow_spec(&FlowSpec {
+            region: "heteronet-global".to_owned(),
+            max_participants: 25,
+            max_rooms: 20,
+            rate_limit: FlowRateLimit {
+                requests_per_second: 8,
+                burst: 16,
+            },
+            metadata: json!({}),
+        });
+        for spec in [
+            json!({
+                "region": "heteronet-global",
+                "image": "registry.example.test/game:v1",
+                "replicas": 2,
+                "cpu_millis": 500,
+                "memory_mib": 512,
+                "ephemeral_storage_gib": 3,
+                "ports": [],
+                "exposure": {"type": "public", "traffic_mode": "forwarded"},
+                "env": {}, "command": [], "args": [], "metadata": {}
+            }),
+            json!({
+                "region": "heteronet-global",
+                "image": "registry.example.test/game:v2",
+                "replicas": 3,
+                "cpu_millis": 1000,
+                "memory_mib": 256,
+                "ephemeral_storage_gib": 2,
+                "ports": [],
+                "exposure": {"type": "public", "traffic_mode": "forwarded"},
+                "env": {}, "command": [], "args": [], "metadata": {}
+            }),
+        ] {
+            usage.add_flash_spec(&serde_json::from_value::<FlashSpec>(spec)?);
+        }
+
+        assert_eq!(usage.flow_services, 2);
+        assert_eq!(usage.flow_configured_rooms, 30);
+        assert_eq!(usage.flow_max_rooms_per_service, 20);
+        assert_eq!(usage.flow_max_participants_per_service, 30);
+        assert_eq!(usage.flow_max_rate_limit_requests_per_second, 8);
+        assert_eq!(usage.flow_max_rate_limit_burst, 16);
+        assert_eq!(usage.flash_services, 2);
+        assert_eq!(usage.flash_replicas, 5);
+        assert_eq!(usage.flash_max_replicas_per_service, 3);
+        assert_eq!(usage.flash_max_cpu_millis_per_vm, 1_000);
+        assert_eq!(usage.flash_max_memory_mib_per_vm, 512);
+        assert_eq!(usage.flash_max_disk_gib_per_vm, 3);
+        assert_eq!(usage.flash_cpu_millis, 4_000);
+        assert_eq!(usage.flash_memory_mib, 1_792);
+        assert_eq!(usage.flash_disk_gib, 12);
+        Ok(())
+    }
 }

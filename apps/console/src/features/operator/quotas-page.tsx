@@ -7,6 +7,7 @@ import FormField from "@cloudscape-design/components/form-field";
 import Header from "@cloudscape-design/components/header";
 import Input from "@cloudscape-design/components/input";
 import Modal from "@cloudscape-design/components/modal";
+import ProgressBar from "@cloudscape-design/components/progress-bar";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -23,12 +24,14 @@ import type {
   OwnerAccount,
   ResourceQuotaLimits,
   ResourceQuotaTenant,
+  ResourceQuotaUsage,
   UserLoginEvent,
 } from "@/lib/api-types";
 import { formatDateTime, formatNumber } from "@/lib/utils";
 
 const quotaQueryKey = ["owner", "resource-quotas"] as const;
 const accountQueryKey = ["owner", "accounts"] as const;
+const GIB_BYTES = 1024 * 1024 * 1024;
 const QUOTA_BOUNDS = {
   flow: {
     maxServices: 10_000,
@@ -80,6 +83,99 @@ function boundedInteger(value: string, fallback: number, min: number, max: numbe
   return value.trim() !== "" && Number.isSafeInteger(parsed)
     ? clampInteger(parsed, min, max)
     : fallback;
+}
+
+function formatBytes(value: number): string {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let amount = Math.max(0, value);
+  let unit = 0;
+  while (amount >= 1024 && unit < units.length - 1) {
+    amount /= 1024;
+    unit += 1;
+  }
+  return `${amount.toLocaleString("ja-JP", { maximumFractionDigits: 2 })} ${units[unit]}`;
+}
+
+function QuotaUsageMetric({
+  label,
+  used,
+  limit,
+  formatValue = formatNumber,
+}: {
+  label: string;
+  used: number | null;
+  limit: number;
+  formatValue?: (value: number) => string;
+}) {
+  if (used === null) {
+    return (
+      <SpaceBetween size="xxs">
+        <Box variant="awsui-key-label">{label}</Box>
+        <Box color="text-status-inactive">
+          取得できません / {formatValue(limit)}
+        </Box>
+      </SpaceBetween>
+    );
+  }
+  const percentage = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+  return (
+    <ProgressBar
+      value={Math.round(percentage * 100) / 100}
+      label={label}
+      description={`${formatValue(used)} / ${formatValue(limit)}`}
+    />
+  );
+}
+
+function QuotaUsagePanel({
+  usage,
+  limits,
+}: {
+  usage: ResourceQuotaUsage;
+  limits: ResourceQuotaLimits;
+}) {
+  const millicores = (value: number) => `${formatNumber(value)} millicores`;
+  const mib = (value: number) => `${formatNumber(value)} MiB`;
+  const gib = (value: number) => `${formatNumber(value)} GiB`;
+
+  return (
+    <SpaceBetween size="m">
+      <Container header={<Header variant="h3">Flow 使用量</Header>}>
+        <ColumnLayout columns={3} variant="text-grid">
+          <QuotaUsageMetric label="サービス数" used={usage.flow_services} limit={limits.flow.max_services} />
+          <QuotaUsageMetric label="ルーム / サービス（最大）" used={usage.flow_max_rooms_per_service} limit={limits.flow.max_rooms_per_service} />
+          <QuotaUsageMetric label="合計ルーム割当" used={usage.flow_configured_rooms} limit={limits.flow.max_total_rooms} />
+          <QuotaUsageMetric label="同時参加者 / サービス（最大）" used={usage.flow_max_participants_per_service} limit={limits.flow.max_participants_per_service} />
+          <QuotaUsageMetric label="IPあたりRPS（最大）" used={usage.flow_max_rate_limit_requests_per_second} limit={limits.flow.max_rate_limit_requests_per_second} />
+          <QuotaUsageMetric label="IPあたりバースト（最大）" used={usage.flow_max_rate_limit_burst} limit={limits.flow.max_rate_limit_burst} />
+          <QuotaUsageMetric label="開発者認証情報 / サービス（最大）" used={usage.flow_max_developer_credentials_per_service} limit={limits.flow.max_developer_credentials_per_service} />
+          <div>
+            <Box variant="awsui-key-label">有効な開発者認証情報</Box>
+            <Box>{formatNumber(usage.flow_developer_credentials)}</Box>
+          </div>
+        </ColumnLayout>
+      </Container>
+      <Container header={<Header variant="h3">Flash 使用量</Header>}>
+        <ColumnLayout columns={3} variant="text-grid">
+          <QuotaUsageMetric label="サービス数" used={usage.flash_services} limit={limits.flash.max_services} />
+          <QuotaUsageMetric label="レプリカ / サービス（最大）" used={usage.flash_max_replicas_per_service} limit={limits.flash.max_replicas_per_service} />
+          <QuotaUsageMetric label="合計レプリカ" used={usage.flash_replicas} limit={limits.flash.max_total_replicas} />
+          <QuotaUsageMetric label="CPU / VM（最大）" used={usage.flash_max_cpu_millis_per_vm} limit={limits.flash.max_cpu_millis_per_vm} formatValue={millicores} />
+          <QuotaUsageMetric label="合計CPU" used={usage.flash_cpu_millis} limit={limits.flash.max_total_cpu_millis} formatValue={millicores} />
+          <QuotaUsageMetric label="メモリ / VM（最大）" used={usage.flash_max_memory_mib_per_vm} limit={limits.flash.max_memory_mib_per_vm} formatValue={mib} />
+          <QuotaUsageMetric label="合計メモリ" used={usage.flash_memory_mib} limit={limits.flash.max_total_memory_mib} formatValue={mib} />
+          <QuotaUsageMetric label="ディスク / VM（最大）" used={usage.flash_max_disk_gib_per_vm} limit={limits.flash.max_disk_gib_per_vm} formatValue={gib} />
+          <QuotaUsageMetric label="合計ディスク" used={usage.flash_disk_gib} limit={limits.flash.max_total_disk_gib} formatValue={gib} />
+        </ColumnLayout>
+      </Container>
+      <Container header={<Header variant="h3">Flash Registry 使用量</Header>}>
+        <ColumnLayout columns={2} variant="text-grid">
+          <QuotaUsageMetric label="保存容量" used={usage.registry_storage_bytes} limit={limits.registry.storage_gib * GIB_BYTES} formatValue={formatBytes} />
+          <QuotaUsageMetric label="認証情報数" used={usage.registry_credentials} limit={limits.registry.max_credentials} />
+        </ColumnLayout>
+      </Container>
+    </SpaceBetween>
+  );
 }
 
 export function normalizeResourceQuotaLimits(
@@ -479,19 +575,54 @@ export function OwnerQuotasPage() {
         id: "flow",
         header: "Flow",
         accessorFn: (tenant) => tenant.usage.flow_services,
-        cell: ({ row }) => `${formatNumber(row.original.usage.flow_services)} サービス / ${formatNumber(row.original.usage.flow_configured_rooms)} ルーム`,
+        cell: ({ row }) => (
+          <SpaceBetween size="xxs">
+            <Box>
+              {formatNumber(row.original.usage.flow_services)} / {formatNumber(row.original.effective_limits.flow.max_services)} サービス
+            </Box>
+            <Box color="text-body-secondary">
+              {formatNumber(row.original.usage.flow_configured_rooms)} / {formatNumber(row.original.effective_limits.flow.max_total_rooms)} ルーム
+            </Box>
+            <Box color="text-body-secondary">
+              認証情報 {formatNumber(row.original.usage.flow_developer_credentials)} 件
+            </Box>
+          </SpaceBetween>
+        ),
       },
       {
         id: "flash",
         header: "Flash",
         accessorFn: (tenant) => tenant.usage.flash_services,
-        cell: ({ row }) => `${formatNumber(row.original.usage.flash_services)} サービス / ${formatNumber(row.original.usage.flash_replicas)} VM / ${formatNumber(row.original.usage.flash_disk_gib)} GiB`,
+        cell: ({ row }) => (
+          <SpaceBetween size="xxs">
+            <Box>
+              {formatNumber(row.original.usage.flash_services)} / {formatNumber(row.original.effective_limits.flash.max_services)} サービス
+            </Box>
+            <Box color="text-body-secondary">
+              {formatNumber(row.original.usage.flash_replicas)} / {formatNumber(row.original.effective_limits.flash.max_total_replicas)} VM
+            </Box>
+            <Box color="text-body-secondary">
+              {formatNumber(row.original.usage.flash_cpu_millis)} millicores · {formatNumber(row.original.usage.flash_memory_mib)} MiB · {formatNumber(row.original.usage.flash_disk_gib)} GiB
+            </Box>
+          </SpaceBetween>
+        ),
       },
       {
         id: "registry",
-        header: "Flash Registry上限",
-        accessorFn: (tenant) => tenant.effective_limits.registry.storage_gib,
-        cell: ({ row }) => `${formatNumber(row.original.effective_limits.registry.storage_gib)} GiB`,
+        header: "Flash Registry",
+        accessorFn: (tenant) => tenant.usage.registry_storage_bytes ?? -1,
+        cell: ({ row }) => (
+          <SpaceBetween size="xxs">
+            <Box>
+              {row.original.usage.registry_storage_bytes === null
+                ? "容量未取得"
+                : `${formatBytes(row.original.usage.registry_storage_bytes)} / ${formatNumber(row.original.effective_limits.registry.storage_gib)} GiB`}
+            </Box>
+            <Box color="text-body-secondary">
+              認証情報 {formatNumber(row.original.usage.registry_credentials)} / {formatNumber(row.original.effective_limits.registry.max_credentials)} 件
+            </Box>
+          </SpaceBetween>
+        ),
       },
       {
         id: "actions",
@@ -754,7 +885,7 @@ export function OwnerQuotasPage() {
           setEditing(tenant);
           setTenantLimits(normalizeResourceQuotaLimits(tenant.effective_limits));
         }}
-        getRowAriaLabel={(tenant) => `${tenant.organization.name}の上限を編集`}
+        getRowAriaLabel={(tenant) => `${tenant.organization.name}の使用量と上限を表示`}
         searchPlaceholder="アカウント名またはIDで検索"
         emptyTitle="クラウドアカウントがありません"
         emptyDescription="登録済みクラウドアカウントはありません。"
@@ -762,7 +893,11 @@ export function OwnerQuotasPage() {
       <Modal
         visible={editing !== null && tenantLimits !== null}
         size="max"
-        header={editing ? `${editing.organization.name} のハードリミット` : "アカウント上限"}
+        header={
+          editing
+            ? `${editing.organization.name} のリソース使用量とハードリミット`
+            : "アカウントリソース"
+        }
         onDismiss={() => {
           setEditing(null);
           setTenantLimits(null);
@@ -789,6 +924,15 @@ export function OwnerQuotasPage() {
       >
         <SpaceBetween size="l">
           {saveTenant.isError ? <FormError message={getApiErrorMessage(saveTenant.error)} /> : null}
+          {editing && tenantLimits ? (
+            <QuotaUsagePanel usage={editing.usage} limits={tenantLimits} />
+          ) : null}
+          <Header
+            variant="h3"
+            description="このアカウントに適用する上限です。変更中の値に対する使用率を上に表示します。"
+          >
+            個別ハードリミット
+          </Header>
           {tenantLimits ? <QuotaEditor value={tenantLimits} onChange={setTenantLimits} /> : null}
         </SpaceBetween>
       </Modal>

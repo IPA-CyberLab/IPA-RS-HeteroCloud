@@ -108,12 +108,24 @@ describe("OwnerQuotasPage", () => {
           effective_limits: structuredClone(limits),
           usage: {
             flow_services: 2,
+            flow_max_rooms_per_service: 12,
             flow_configured_rooms: 20,
+            flow_max_participants_per_service: 50,
+            flow_max_rate_limit_requests_per_second: 20,
+            flow_max_rate_limit_burst: 40,
+            flow_developer_credentials: 3,
+            flow_max_developer_credentials_per_service: 2,
             flash_services: 3,
+            flash_max_replicas_per_service: 2,
+            flash_max_cpu_millis_per_vm: 1_000,
+            flash_max_memory_mib_per_vm: 2_048,
+            flash_max_disk_gib_per_vm: 5,
             flash_replicas: 5,
             flash_cpu_millis: 5_000,
             flash_memory_mib: 10_240,
             flash_disk_gib: 25,
+            registry_storage_bytes: 60 * 1024 * 1024,
+            registry_credentials: 1,
           },
         },
       ],
@@ -163,6 +175,26 @@ describe("OwnerQuotasPage", () => {
       100,
       expect.any(AbortSignal),
     );
+    await user.click(screen.getByRole("button", { name: "閉じる" }));
+
+    await user.click(
+      screen.getByRole("link", {
+        name: "Example accountの使用量と上限を表示",
+      }),
+    );
+    expect(
+      await screen.findByRole("heading", {
+        name: "Example account のリソース使用量とハードリミット",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Flow 使用量" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Flash 使用量" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Flash Registry 使用量" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("60 MiB / 10 GiB").length).toBeGreaterThan(0);
+    expect(screen.getByText("有効な開発者認証情報")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "キャンセル" }));
 
     await user.click(screen.getByRole("button", { name: "既定値を保存" }));
     await waitFor(() => {
