@@ -20,7 +20,9 @@ runtime-class-constrained Kubernetes workloads and HeteroNetwork services.
 
 ## DNS reconciliation
 
-HeteroCloud declares public DNS as an `externaldns.k8s.io` `DNSEndpoint`.
+HeteroCloud declares node-scoped public DNS as an `externaldns.k8s.io`
+`DNSEndpoint`. Cluster-scoped names come from Kubernetes Service and Gateway
+API sources so their A records track current LoadBalancer status.
 ExternalDNS owns provider communication, authentication conventions, retries,
 and TXT record conflict detection. The CLI installs a pinned controller chart,
 restricts it to the requested domain and HeteroCloud-managed CRDs, then waits
@@ -30,9 +32,9 @@ record model.
 This boundary supports native ExternalDNS providers, cloud workload identity,
 RFC2136, and provider webhooks. Migrating providers changes controller
 configuration and credentials, not HeteroCloud code or service manifests.
-The generated endpoint contains node-scoped `cloud-<node>` records and two
-multi-address RRsets: the canonical console domain and `flow.<domain>`. The
-Flow RRset contains every discovered public gateway address and replaces
+The generated endpoint contains only node-scoped `cloud-<node>` records. The
+canonical console HTTPRoute follows its parent Gateway addresses, while Flow
+and registry follow their LoadBalancer Services. The Flow RRset replaces
 separate Flow, RTC, and TURN hostnames. Internal VPN and Kubernetes addresses
 are never published by default.
 

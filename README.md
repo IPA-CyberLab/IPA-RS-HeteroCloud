@@ -60,11 +60,12 @@ and three cluster-scoped multi-address names: the canonical console domain,
 HeteroNetwork-backed Flow TURN `LoadBalancer` Service by default.
 
 For automatic DNS, `dns reconcile` installs a pinned ExternalDNS controller
-and applies a provider-neutral `DNSEndpoint`. Static console records remain in
-that CRD, while the unified Flow and registry RRsets follow the healthy ingress
-addresses reported by their annotated LoadBalancer Services. Node failure and
-recovery therefore remove and restore service addresses without rerunning the CLI. The provider is
-an adapter, so
+and applies a provider-neutral `DNSEndpoint`. Node-scoped records remain in
+that CRD. The canonical console RRset follows the addresses reported by its
+HTTPRoute parent Gateway, while the unified Flow and registry RRsets follow
+their annotated LoadBalancer Services. Node failure and recovery therefore
+remove and restore every cluster-scoped service address without rerunning the
+CLI. The provider is an adapter, so
 the same desired records work with Cloudflare, AWS, Google, RFC2136, or an
 ExternalDNS webhook without putting provider API calls in HeteroCloud.
 The command requires Helm 3, `kubectl`, and cluster permissions to manage a
@@ -91,9 +92,10 @@ heterocloud dns reconcile \
   --kubeconfig /path/to/admin.conf
 ```
 
-This creates the canonical `heterocloud.mizuame.app` console and identity
-RRset, node-specific `cloud-a/b/c` records, and dynamically reconciled Flow and
-private OCI registry RRsets containing every healthy public gateway address.
+This creates the dynamically reconciled canonical
+`heterocloud.mizuame.app` console and identity RRset, node-specific
+`cloud-a/b/c` records, and dynamic Flow and private OCI registry RRsets
+containing every healthy public gateway address.
 The unified Flow name covers HTTPS, WebSocket, LiveKit, STUN, and TURN client
 configuration; the protocol selects the service port. In this Cloudflare
 deployment only the canonical console and identity endpoint is proxied.

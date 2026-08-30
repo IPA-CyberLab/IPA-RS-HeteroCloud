@@ -142,6 +142,9 @@ pub struct Config {
     #[arg(long, env = "HETEROCLOUD_OIDC_ISSUER_URL")]
     pub oidc_issuer_url: Option<Url>,
 
+    #[arg(long, env = "HETEROCLOUD_OIDC_BACKCHANNEL_ISSUER_URL")]
+    pub oidc_backchannel_issuer_url: Option<Url>,
+
     #[arg(long, env = "HETEROCLOUD_OIDC_CLIENT_ID")]
     pub oidc_client_id: Option<String>,
 
@@ -255,12 +258,13 @@ impl Config {
         };
         let oidc_client_secret = match (
             &self.oidc_issuer_url,
+            &self.oidc_backchannel_issuer_url,
             &self.oidc_client_id,
             &self.oidc_client_secret_file,
             &self.oidc_public_callback_url,
         ) {
-            (None, None, None, None) => None,
-            (Some(_), Some(_), Some(path), Some(_)) => Some(read_secret(path).await?),
+            (None, None, None, None, None) => None,
+            (Some(_), _, Some(_), Some(path), Some(_)) => Some(read_secret(path).await?),
             _ => return Err(ConfigError::IncompleteOidc),
         };
         let registry_admin_password = match (
@@ -332,20 +336,26 @@ impl Config {
         }
         let oidc = match (
             &self.oidc_issuer_url,
+            &self.oidc_backchannel_issuer_url,
             &self.oidc_client_id,
             oidc_client_secret,
             &self.oidc_public_callback_url,
         ) {
-            (None, None, None, None) => None,
-            (Some(issuer), Some(client_id), Some(client_secret), Some(callback)) => {
-                Some(OidcConfig::new(
-                    issuer.clone(),
-                    client_id.clone(),
-                    client_secret,
-                    callback.clone(),
-                    !self.secure_cookie,
-                )?)
-            }
+            (None, None, None, None, None) => None,
+            (
+                Some(issuer),
+                backchannel_issuer,
+                Some(client_id),
+                Some(client_secret),
+                Some(callback),
+            ) => Some(OidcConfig::new(
+                issuer.clone(),
+                backchannel_issuer.clone(),
+                client_id.clone(),
+                client_secret,
+                callback.clone(),
+                !self.secure_cookie,
+            )?),
             _ => return Err(ConfigError::IncompleteOidc),
         };
         Ok(RuntimeConfig {
@@ -537,7 +547,7 @@ pub enum ConfigError {
     #[error("TLS certificate and key files must be configured together")]
     IncompleteTls,
     #[error(
-        "OIDC issuer, client ID, client secret file, and public callback URL must be configured together"
+        "OIDC issuer, optional backchannel issuer, client ID, client secret file, and public callback URL must be configured together"
     )]
     IncompleteOidc,
     #[error(transparent)]

@@ -12,6 +12,7 @@ trustedProxyNetworks:
 oidc:
   enabled: true
   issuerUrl: https://heterocloud.mizuame.app/id/realms/heterocloud
+  backchannelIssuerUrl: http://console.heteronetwork.internal:18079/realms/heterocloud
   clientId: heterocloud-web
   publicCallbackUrl: https://heterocloud.mizuame.app/api/v1/auth/oidc/callback
 
@@ -83,6 +84,9 @@ networkPolicy:
   providerCidrs:
     - 10.96.0.0/12
   providerPort: 8080
+  oidcCidrs:
+    - 10.250.0.0/24
+  oidcPort: 18079
 
 nodeSelector:
   database.heteronetwork.io/proxy-ready: "true"

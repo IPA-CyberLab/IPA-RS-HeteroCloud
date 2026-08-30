@@ -124,6 +124,9 @@ spec:
             - --owner-allowed-networks={{ join "," .Values.ownerConsole.allowedNetworks }}
             {{- if .Values.oidc.enabled }}
             - --oidc-issuer-url={{ required "oidc.issuerUrl is required" .Values.oidc.issuerUrl }}
+            {{- if .Values.oidc.backchannelIssuerUrl }}
+            - --oidc-backchannel-issuer-url={{ .Values.oidc.backchannelIssuerUrl }}
+            {{- end }}
             - --oidc-client-id={{ required "oidc.clientId is required" .Values.oidc.clientId }}
             - --oidc-client-secret-file=/var/run/secrets/oidc/client-secret
             - --oidc-public-callback-url={{ required "ownerConsole.oidcPublicCallbackUrl is required" .Values.ownerConsole.oidcPublicCallbackUrl }}

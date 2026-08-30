@@ -32,6 +32,8 @@ type HmacSha256 = Hmac<Sha256>;
 #[derive(Clone)]
 pub struct OidcConfig {
     issuer: String,
+    discovery_issuer: String,
+    discovery_allow_insecure_http: bool,
     client_id: String,
     client_secret: SecretString,
     public_callback_url: Url,
@@ -42,12 +44,19 @@ pub struct OidcConfig {
 impl OidcConfig {
     pub fn new(
         issuer: Url,
+        backchannel_issuer: Option<Url>,
         client_id: String,
         client_secret: SecretString,
         public_callback_url: Url,
         allow_insecure_http: bool,
     ) -> Result<Self, OidcConfigError> {
         let issuer = normalize_issuer(issuer, allow_insecure_http)?;
+        let (discovery_issuer, discovery_allow_insecure_http) =
+            if let Some(backchannel_issuer) = backchannel_issuer {
+                (normalize_backchannel_issuer(backchannel_issuer)?, true)
+            } else {
+                (issuer.clone(), allow_insecure_http)
+            };
         let client_id = client_id.trim().to_owned();
         if client_id.is_empty() || client_id.len() > 256 || client_id.chars().any(char::is_control)
         {
@@ -66,6 +75,8 @@ impl OidcConfig {
             .map_err(|_| OidcConfigError::HttpClient)?;
         Ok(Self {
             issuer,
+            discovery_issuer,
+            discovery_allow_insecure_http,
             client_id,
             client_secret,
             public_callback_url,
@@ -293,9 +304,11 @@ impl OidcConfig {
     }
 
     async fn discovery(&self) -> Result<ProviderMetadata, OidcError> {
-        let discovery_url =
-            Url::parse(&format!("{}/.well-known/openid-configuration", self.issuer))
-                .map_err(|_| OidcError::Internal)?;
+        let discovery_url = Url::parse(&format!(
+            "{}/.well-known/openid-configuration",
+            self.discovery_issuer
+        ))
+        .map_err(|_| OidcError::Internal)?;
         let response = self
             .client
             .get(discovery_url)
@@ -315,10 +328,14 @@ impl OidcConfig {
             )
             || !valid_provider_endpoint(
                 &metadata.token_endpoint,
-                &self.issuer,
-                self.allow_insecure_http,
+                &self.discovery_issuer,
+                self.discovery_allow_insecure_http,
             )
-            || !valid_provider_endpoint(&metadata.jwks_uri, &self.issuer, self.allow_insecure_http)
+            || !valid_provider_endpoint(
+                &metadata.jwks_uri,
+                &self.discovery_issuer,
+                self.discovery_allow_insecure_http,
+            )
         {
             return Err(OidcError::ProviderUnavailable);
         }
@@ -378,6 +395,10 @@ pub struct OidcIdentity {
 pub enum OidcConfigError {
     #[error("OIDC issuer URL must be an HTTP(S) URL without credentials, query, or fragment")]
     InvalidIssuer,
+    #[error(
+        "OIDC backchannel issuer URL must be an HTTP(S) URL without credentials, query, or fragment"
+    )]
+    InvalidBackchannelIssuer,
     #[error("OIDC client ID must be 1..256 non-control characters")]
     InvalidClientId,
     #[error("OIDC client secret must contain between 16 and 4096 bytes")]
@@ -471,6 +492,20 @@ fn normalize_issuer(issuer: Url, allow_insecure_http: bool) -> Result<String, Oi
         || issuer.as_str().len() > 2048
     {
         return Err(OidcConfigError::InvalidIssuer);
+    }
+    Ok(issuer.as_str().trim_end_matches('/').to_owned())
+}
+
+fn normalize_backchannel_issuer(issuer: Url) -> Result<String, OidcConfigError> {
+    if !matches!(issuer.scheme(), "http" | "https")
+        || !issuer.has_host()
+        || !issuer.username().is_empty()
+        || issuer.password().is_some()
+        || issuer.query().is_some()
+        || issuer.fragment().is_some()
+        || issuer.as_str().len() > 2048
+    {
+        return Err(OidcConfigError::InvalidBackchannelIssuer);
     }
     Ok(issuer.as_str().trim_end_matches('/').to_owned())
 }
@@ -694,6 +729,7 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
     #[derive(Clone)]
     struct TestProvider {
         issuer: String,
+        endpoint_origin: String,
     }
 
     #[derive(Serialize)]
@@ -716,6 +752,7 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
         let issuer = format!("http://{}", listener.local_addr()?);
         let provider = TestProvider {
             issuer: issuer.clone(),
+            endpoint_origin: issuer.clone(),
         };
         let app = Router::new()
             .route("/.well-known/openid-configuration", get(discovery))
@@ -728,6 +765,7 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
 
         let config = OidcConfig::new(
             issuer.parse()?,
+            None,
             TEST_CLIENT_ID.to_owned(),
             SecretString::from("test-client-secret-value"),
             "http://console.example.test/api/v1/auth/oidc/callback".parse()?,
@@ -874,12 +912,68 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
         Ok(())
     }
 
+    #[tokio::test]
+    async fn backchannel_discovery_keeps_browser_authorization_public() -> Result<(), Box<dyn Error>>
+    {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let endpoint_origin = format!("http://{}", listener.local_addr()?);
+        let issuer = "https://identity.example.test/realms/heterocloud".to_owned();
+        let provider = TestProvider {
+            issuer: issuer.clone(),
+            endpoint_origin: endpoint_origin.clone(),
+        };
+        let app = Router::new()
+            .route("/.well-known/openid-configuration", get(discovery))
+            .route("/token", post(token))
+            .route("/jwks", get(jwks))
+            .with_state(provider);
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let config = OidcConfig::new(
+            issuer.parse()?,
+            Some(endpoint_origin.parse()?),
+            TEST_CLIENT_ID.to_owned(),
+            SecretString::from("test-client-secret-value"),
+            "https://console.example.test/api/v1/auth/oidc/callback".parse()?,
+            false,
+        )?;
+        let cookie_key = SecretString::from("test-cookie-key-with-at-least-32-bytes");
+        let start = config
+            .begin_login(&cookie_key, true, OidcLoginIntent::Authenticate)
+            .await?;
+        assert_eq!(
+            start.authorization_url.origin(),
+            url::Url::parse(&issuer)?.origin()
+        );
+        let parameters: HashMap<String, String> =
+            start.authorization_url.query_pairs().into_owned().collect();
+        let identity = config
+            .complete_login(
+                &OidcCallbackQuery {
+                    code: Some(parameters.get("nonce").ok_or("missing nonce")?.clone()),
+                    state: Some(parameters.get("state").ok_or("missing state")?.clone()),
+                    error: None,
+                    error_description: None,
+                },
+                Some(start.transaction_cookie.value()),
+                &cookie_key,
+            )
+            .await?;
+        assert_eq!(identity.issuer, issuer);
+
+        server.abort();
+        Ok(())
+    }
+
     async fn discovery(State(provider): State<TestProvider>) -> Json<Value> {
         Json(json!({
             "issuer": provider.issuer,
             "authorization_endpoint": format!("{}/authorize", provider.issuer),
-            "token_endpoint": format!("{}/token", provider.issuer),
-            "jwks_uri": format!("{}/jwks", provider.issuer),
+            "token_endpoint": format!("{}/token", provider.endpoint_origin),
+            "jwks_uri": format!("{}/jwks", provider.endpoint_origin),
             "id_token_signing_alg_values_supported": ["RS256"]
         }))
     }

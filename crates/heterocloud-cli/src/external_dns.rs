@@ -24,7 +24,7 @@ use super::{
 const EXTERNAL_DNS_REPOSITORY_NAME: &str = "external-dns";
 const EXTERNAL_DNS_REPOSITORY_URL: &str = "https://kubernetes-sigs.github.io/external-dns/";
 const EXTERNAL_DNS_CHART: &str = "external-dns/external-dns";
-const DEFAULT_CHART_VERSION: &str = "1.20.0";
+const DEFAULT_CHART_VERSION: &str = "1.21.1";
 const MAX_CREDENTIAL_BYTES: u64 = 65_536;
 const DNS_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const CONTROLLER_KUBECONFIG_KEY: &str = "kubeconfig";
@@ -32,6 +32,10 @@ const CONTROLLER_KUBECONFIG_MOUNT_PATH: &str = "/etc/heterocloud/external-dns";
 const SERVICE_ACCOUNT_CA_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
 const SERVICE_ACCOUNT_TOKEN_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccount/token";
 const DNS_PUBLISH_LABEL: &str = "dns.heterocloud.io/publish";
+const EXTERNAL_DNS_HOSTNAME_ANNOTATION: &str = "external-dns.alpha.kubernetes.io/hostname";
+const EXTERNAL_DNS_GATEWAY_HOSTNAME_SOURCE_ANNOTATION: &str =
+    "external-dns.alpha.kubernetes.io/gateway-hostname-source";
+const EXTERNAL_DNS_TTL_ANNOTATION: &str = "external-dns.alpha.kubernetes.io/ttl";
 
 #[derive(Clone, Debug, Args)]
 pub struct ReconcileArgs {
@@ -98,6 +102,14 @@ pub struct ReconcileArgs {
     #[arg(long, default_value = "heterocloud-public")]
     pub endpoint_name: String,
 
+    /// Namespace containing the canonical console HTTPRoute.
+    #[arg(long, default_value = "heterocloud")]
+    pub http_route_namespace: String,
+
+    /// HTTPRoute whose parent Gateway publishes the canonical console addresses.
+    #[arg(long, default_value = "heterocloud-public")]
+    pub http_route_name: String,
+
     /// ExternalDNS Helm chart version.
     #[arg(long, default_value = DEFAULT_CHART_VERSION)]
     pub chart_version: String,
@@ -144,6 +156,7 @@ struct ReconcilePlan {
     helm_values: Value,
     controller_kubeconfig: Option<Value>,
     endpoint: Value,
+    http_route: Value,
 }
 
 pub fn reconcile(args: ReconcileArgs) -> Result<(), CliError> {
@@ -166,6 +179,7 @@ pub fn reconcile(args: ReconcileArgs) -> Result<(), CliError> {
     if let Some(kubeconfig) = &plan.controller_kubeconfig {
         apply_manifest(&args.source, kubeconfig, false)?;
     }
+    apply_manifest(&args.source, &plan.http_route, false)?;
     install_external_dns(&args, &plan.helm_values)?;
     apply_manifest(&args.source, &plan.endpoint, true)?;
     restart_controller(&args)?;
@@ -188,6 +202,8 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
     validate_kubernetes_name(&args.controller_release, "controller release")?;
     validate_kubernetes_name(&args.credential_secret_name, "credential Secret")?;
     validate_kubernetes_name(&args.endpoint_name, "DNSEndpoint name")?;
+    validate_kubernetes_name(&args.http_route_namespace, "HTTPRoute namespace")?;
+    validate_kubernetes_name(&args.http_route_name, "HTTPRoute name")?;
     validate_chart_version(&args.chart_version)?;
     validate_provider_args(&args.provider_args)?;
     let http_edge_properties = parse_provider_properties(&args.http_edge_properties)?;
@@ -206,15 +222,13 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
 
     let (domain, addresses) = resolve_source(&args.source)?;
     let records = build_records(&domain, &addresses, args.ttl);
-    let verification_records = if http_edge_properties.is_empty() {
-        records.clone()
-    } else {
-        records
-            .iter()
-            .filter(|record| record.name != domain)
-            .cloned()
-            .collect()
-    };
+    // The canonical record follows Gateway status, while these records follow the
+    // explicitly discovered public nodes and can be checked against that source.
+    let verification_records = records
+        .iter()
+        .filter(|record| record.name != domain)
+        .cloned()
+        .collect();
     let local_credentials = parse_local_credentials(&args.credential_files)?;
     let secret_credentials = parse_secret_credentials(&args.credential_secrets)?;
     ensure_unique_environments(&local_credentials, &secret_credentials)?;
@@ -262,7 +276,7 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
     let mut helm_values = json!({
         "fullnameOverride": args.controller_release,
         "provider": {"name": args.provider},
-        "sources": ["crd", "service"],
+        "sources": ["crd", "service", "gateway-httproute"],
         "policy": "sync",
         "registry": "txt",
         "txtOwnerId": owner,
@@ -322,10 +336,11 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
     }
     let mut grouped_targets = BTreeMap::<(String, &'static str, u32), BTreeSet<String>>::new();
     for record in records.iter().filter(|record| {
-        !matches!(
-            record.service,
-            super::FLOW_SERVICE_PREFIX | super::REGISTRY_SERVICE_PREFIX
-        )
+        record.name != domain
+            && !matches!(
+                record.service,
+                super::FLOW_SERVICE_PREFIX | super::REGISTRY_SERVICE_PREFIX
+            )
     }) {
         grouped_targets
             .entry((record.name.clone(), record.record_type, record.ttl))
@@ -335,16 +350,12 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
     let endpoints = grouped_targets
         .into_iter()
         .map(|((name, record_type, ttl), targets)| {
-            let mut endpoint = json!({
+            json!({
                 "dnsName": name,
                 "recordTTL": ttl,
                 "recordType": record_type,
                 "targets": targets
-            });
-            if !http_edge_properties.is_empty() && endpoint["dnsName"] == domain {
-                endpoint["providerSpecific"] = json!(http_edge_properties);
-            }
-            endpoint
+            })
         })
         .collect::<Vec<_>>();
     let endpoint = json!({
@@ -362,6 +373,47 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
         },
         "spec": {"endpoints": endpoints}
     });
+    let mut http_route_annotations = BTreeMap::from([
+        (EXTERNAL_DNS_HOSTNAME_ANNOTATION.to_owned(), domain.clone()),
+        (
+            EXTERNAL_DNS_GATEWAY_HOSTNAME_SOURCE_ANNOTATION.to_owned(),
+            "annotation-only".to_owned(),
+        ),
+        (EXTERNAL_DNS_TTL_ANNOTATION.to_owned(), args.ttl.to_string()),
+    ]);
+    for property in &http_edge_properties {
+        let Some(name) = property.get("name").and_then(Value::as_str) else {
+            return Err(CliError::InvalidValue {
+                kind: "HTTP edge provider property",
+                value: property.to_string(),
+            });
+        };
+        let Some(value) = property.get("value").and_then(Value::as_str) else {
+            return Err(CliError::InvalidValue {
+                kind: "HTTP edge provider property",
+                value: property.to_string(),
+            });
+        };
+        if http_route_annotations
+            .insert(name.to_owned(), value.to_owned())
+            .is_some()
+        {
+            return Err(CliError::InvalidValue {
+                kind: "reserved HTTP edge annotation",
+                value: name.to_owned(),
+            });
+        }
+    }
+    let http_route = json!({
+        "apiVersion": "gateway.networking.k8s.io/v1",
+        "kind": "HTTPRoute",
+        "metadata": {
+            "name": args.http_route_name,
+            "namespace": args.http_route_namespace,
+            "labels": {(DNS_PUBLISH_LABEL): "true"},
+            "annotations": http_route_annotations
+        }
+    });
 
     Ok(ReconcilePlan {
         domain,
@@ -371,6 +423,7 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
         helm_values,
         controller_kubeconfig,
         endpoint,
+        http_route,
     })
 }
 
@@ -823,7 +876,8 @@ fn print_dry_run(args: &ReconcileArgs, plan: &ReconcilePlan) -> Result<(), CliEr
             "values": plan.helm_values,
             "kubeconfigConfigMap": plan.controller_kubeconfig
         },
-        "dnsEndpoint": plan.endpoint
+        "dnsEndpoint": plan.endpoint,
+        "httpRoute": plan.http_route
     });
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
@@ -1180,6 +1234,8 @@ mod tests {
             controller_release: "heterocloud-dns".into(),
             credential_secret_name: "heterocloud-dns-provider".into(),
             endpoint_name: "heterocloud-public".into(),
+            http_route_namespace: "heterocloud".into(),
+            http_route_name: "heterocloud-public".into(),
             chart_version: DEFAULT_CHART_VERSION.into(),
             txt_owner_id: None,
             ttl: 60,
@@ -1207,14 +1263,14 @@ mod tests {
         let endpoints = plan.endpoint["spec"]["endpoints"]
             .as_array()
             .ok_or("endpoints must be an array")?;
-        assert_eq!(endpoints.len(), 4);
+        assert_eq!(endpoints.len(), 3);
         assert_eq!(endpoints[0]["dnsName"], "cloud-a.heterocloud.example.com");
         assert_eq!(endpoints[1]["dnsName"], "cloud-b.heterocloud.example.com");
         assert_eq!(endpoints[2]["dnsName"], "cloud-c.heterocloud.example.com");
-        assert_eq!(endpoints[3]["dnsName"], "heterocloud.example.com");
-        assert_eq!(
-            endpoints[3]["targets"],
-            json!(["163.220.236.51", "163.220.236.52", "163.220.236.53"])
+        assert!(
+            endpoints
+                .iter()
+                .all(|endpoint| endpoint["dnsName"] != "heterocloud.example.com")
         );
         assert!(
             endpoints
@@ -1226,7 +1282,10 @@ mod tests {
                 .iter()
                 .all(|endpoint| { endpoint["dnsName"] != "registry.heterocloud.example.com" })
         );
-        assert_eq!(plan.helm_values["sources"], json!(["crd", "service"]));
+        assert_eq!(
+            plan.helm_values["sources"],
+            json!(["crd", "service", "gateway-httproute"])
+        );
         assert_eq!(
             plan.helm_values["labelFilter"],
             "dns.heterocloud.io/publish=true"
@@ -1251,22 +1310,32 @@ mod tests {
             .as_array()
             .ok_or("endpoints must be an array")?;
         assert_eq!(plan.verification_records.len(), 9);
+        assert_eq!(
+            plan.http_route["metadata"]["annotations"]["external-dns.alpha.kubernetes.io/cloudflare-proxied"],
+            "true"
+        );
+        assert_eq!(
+            plan.http_route["metadata"]["annotations"][EXTERNAL_DNS_HOSTNAME_ANNOTATION],
+            "heterocloud.example.com"
+        );
+        assert_eq!(
+            plan.http_route["metadata"]["annotations"]
+                [EXTERNAL_DNS_GATEWAY_HOSTNAME_SOURCE_ANNOTATION],
+            "annotation-only"
+        );
+        assert_eq!(
+            plan.http_route["metadata"]["annotations"][EXTERNAL_DNS_TTL_ANNOTATION],
+            "60"
+        );
+        assert_eq!(
+            plan.http_route["metadata"]["labels"][DNS_PUBLISH_LABEL],
+            "true"
+        );
         assert!(
             endpoints
                 .iter()
-                .filter(|endpoint| endpoint.get("providerSpecific").is_some())
-                .all(|endpoint| { endpoint["dnsName"] == "heterocloud.example.com" })
+                .all(|endpoint| endpoint.get("providerSpecific").is_none())
         );
-        assert_eq!(
-            endpoints[3]["providerSpecific"],
-            json!([{
-                "name": "external-dns.alpha.kubernetes.io/cloudflare-proxied",
-                "value": "true"
-            }])
-        );
-        assert!(endpoints[0].get("providerSpecific").is_none());
-        assert!(endpoints[1].get("providerSpecific").is_none());
-        assert!(endpoints[2].get("providerSpecific").is_none());
         Ok(())
     }
 
