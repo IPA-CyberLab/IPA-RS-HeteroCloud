@@ -76,6 +76,14 @@ service:
   type: ClusterIP
   port: 8443
 
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+
 networkPolicy:
   enabled: true
   databaseCidrs:
