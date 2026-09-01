@@ -6,11 +6,13 @@ umask 077
 readonly server="${HETEROCLOUD_KEYCLOAK_SERVER:-http://127.0.0.1:18080}"
 readonly realm="${HETEROCLOUD_KEYCLOAK_REALM:-heterocloud}"
 readonly client_id="${HETEROCLOUD_KEYCLOAK_CLIENT_ID:-heterocloud-web}"
+readonly heteronetwork_client_id="${HETEROCLOUD_HETERONETWORK_CLIENT_ID:-ipars-web}"
 readonly public_origin="${HETEROCLOUD_PUBLIC_ORIGIN:-https://heterocloud.mizuame.app}"
 readonly identity_origin="${HETEROCLOUD_IDENTITY_ORIGIN:-${public_origin}/id}"
 readonly callback_url="${HETEROCLOUD_OIDC_CALLBACK_URL:-${public_origin}/api/v1/auth/oidc/callback}"
 readonly owner_origin="${HETEROCLOUD_OWNER_ORIGIN:-http://owner.heteronetwork.internal:21443}"
 readonly owner_callback_url="${HETEROCLOUD_OWNER_OIDC_CALLBACK_URL:-${owner_origin}/api/v1/auth/oidc/callback}"
+readonly heteronetwork_console_origin="${HETEROCLOUD_HETERONETWORK_CONSOLE_ORIGIN:-http://console.heteronetwork.internal}"
 readonly admin_password_file="${HETEROCLOUD_KEYCLOAK_ADMIN_PASSWORD_FILE:-/etc/heteronetwork/keycloak/bootstrap-admin.password}"
 readonly client_secret_file="${HETEROCLOUD_OIDC_CLIENT_SECRET_FILE:-/etc/heterocloud/oidc/client-secret}"
 readonly kcadm="${HETEROCLOUD_KCADM:-/opt/heteronetwork/keycloak/bin/kcadm.sh}"
@@ -23,6 +25,10 @@ fail() {
 [[ "$(id -u)" == 0 ]] || fail "must run as root"
 [[ "$realm" =~ ^[A-Za-z0-9._-]+$ ]] || fail "invalid realm"
 [[ "$client_id" =~ ^[A-Za-z0-9._-]+$ ]] || fail "invalid client ID"
+[[ "$heteronetwork_client_id" =~ ^[A-Za-z0-9._-]+$ ]] \
+  || fail "invalid HeteroNetwork client ID"
+[[ "$heteronetwork_client_id" != "$client_id" ]] \
+  || fail "HeteroNetwork and HeteroCloud client IDs must differ"
 [[ "$public_origin" =~ ^https://[^/]+$ ]] || fail "public origin must be an HTTPS origin"
 [[ "$identity_origin" =~ ^https://[^/]+/id$ ]] \
   || fail "identity origin must be an HTTPS origin ending in /id"
@@ -32,6 +38,8 @@ fail() {
   || fail "owner console origin must use the private HeteroNetwork DNS name"
 [[ "$owner_callback_url" == "${owner_origin}/api/v1/auth/oidc/callback" ]] \
   || fail "owner callback URL must use the private owner console origin"
+[[ "$heteronetwork_console_origin" == "http://console.heteronetwork.internal" ]] \
+  || fail "HeteroNetwork console origin must use the canonical private URL"
 [[ -x "$kcadm" ]] || fail "kcadm is unavailable"
 [[ -f "$admin_password_file" && ! -L "$admin_password_file" ]] \
   || fail "bootstrap administrator password is unavailable"
@@ -53,6 +61,8 @@ readonly config_file="$work_dir/kcadm.config"
 readonly realm_file="$work_dir/realm.json"
 readonly clients_file="$work_dir/clients.json"
 readonly client_file="$work_dir/client.json"
+readonly heteronetwork_clients_file="$work_dir/heteronetwork-clients.json"
+readonly heteronetwork_client_file="$work_dir/heteronetwork-client.json"
 
 admin_password="$(tr -d '\r\n' <"$admin_password_file")"
 [[ -n "$admin_password" ]] || fail "bootstrap administrator password is empty"
@@ -174,5 +184,60 @@ else
     -f "$client_file" >/dev/null
 fi
 
+"$kcadm" get clients \
+  --config "$config_file" \
+  -r "$realm" \
+  -q "clientId=$heteronetwork_client_id" >"$heteronetwork_clients_file"
+heteronetwork_client_count="$(jq 'length' "$heteronetwork_clients_file")"
+[[ "$heteronetwork_client_count" == 0 || "$heteronetwork_client_count" == 1 ]] \
+  || fail "Keycloak returned duplicate HeteroNetwork clients"
+heteronetwork_client_uuid=""
+if [[ "$heteronetwork_client_count" == 1 ]]; then
+  heteronetwork_client_uuid="$(jq -er '.[0].id' "$heteronetwork_clients_file")"
+fi
+
+jq -n \
+  --arg client_id "$heteronetwork_client_id" \
+  --arg console_origin "$heteronetwork_console_origin" \
+  '{
+    clientId: $client_id,
+    name: "HeteroNetwork Owner Console",
+    description: "VPN-only HeteroNetwork management console using the HeteroCloud owner identity",
+    enabled: true,
+    protocol: "openid-connect",
+    publicClient: true,
+    bearerOnly: false,
+    consentRequired: false,
+    standardFlowEnabled: true,
+    implicitFlowEnabled: false,
+    directAccessGrantsEnabled: false,
+    serviceAccountsEnabled: false,
+    frontchannelLogout: true,
+    rootUrl: $console_origin,
+    baseUrl: ($console_origin + "/ui/"),
+    redirectUris: [($console_origin + "/ui/callback")],
+    webOrigins: [$console_origin],
+    attributes: {
+      "pkce.code.challenge.method": "S256",
+      "post.logout.redirect.uris": ($console_origin + "/ui/*"),
+      "oauth2.device.authorization.grant.enabled": "true",
+      "backchannel.logout.session.required": "true",
+      "backchannel.logout.revoke.offline.tokens": "false"
+    }
+  }' >"$heteronetwork_client_file"
+
+if [[ -n "$heteronetwork_client_uuid" ]]; then
+  "$kcadm" update "clients/$heteronetwork_client_uuid" \
+    --config "$config_file" \
+    -r "$realm" \
+    -f "$heteronetwork_client_file" >/dev/null
+else
+  "$kcadm" create clients \
+    --config "$config_file" \
+    -r "$realm" \
+    -f "$heteronetwork_client_file" >/dev/null
+fi
+
 printf 'Keycloak realm `%s` and client `%s` reconciled.\n' "$realm" "$client_id"
+printf 'HeteroNetwork owner client `%s` reconciled.\n' "$heteronetwork_client_id"
 printf 'Client secret retained at %s.\n' "$client_secret_file"
