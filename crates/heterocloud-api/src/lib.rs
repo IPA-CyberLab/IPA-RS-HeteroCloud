@@ -31,7 +31,7 @@ pub fn app(state: Arc<AppState>, console_dir: Option<&Path>) -> Router {
     let router = match console_dir {
         Some(directory) => router.fallback_service(
             ServeDir::new(directory)
-                .not_found_service(ServeFile::new(directory.join("index.html"))),
+                .fallback(ServeFile::new(directory.join("index.html"))),
         ),
         None => router,
     };

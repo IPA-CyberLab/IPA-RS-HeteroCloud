@@ -25,6 +25,7 @@ export function FlashWebShell({
     if (!container) return;
 
     const terminal = new Terminal({
+      allowProposedApi: true,
       cursorBlink: true,
       convertEol: false,
       fontFamily:
