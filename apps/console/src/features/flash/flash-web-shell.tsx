@@ -1,4 +1,5 @@
 import { FitAddon } from "@xterm/addon-fit";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef } from "react";
@@ -25,8 +26,9 @@ export function FlashWebShell({
 
     const terminal = new Terminal({
       cursorBlink: true,
-      convertEol: true,
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      convertEol: false,
+      fontFamily:
+        'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Noto Sans Mono CJK JP", "Osaka-Mono", monospace',
       fontSize: 14,
       scrollback: 5_000,
       theme: {
@@ -37,12 +39,14 @@ export function FlashWebShell({
       },
     });
     const fit = new FitAddon();
+    const unicode = new Unicode11Addon();
     terminal.loadAddon(fit);
+    terminal.loadAddon(unicode);
+    terminal.unicode.activeVersion = "11";
     terminal.open(container);
     const socket = new WebSocket(url);
     socket.binaryType = "arraybuffer";
     const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
 
     const resize = () => {
       fit.fit();
@@ -70,9 +74,11 @@ export function FlashWebShell({
     });
     socket.addEventListener("message", (event) => {
       if (event.data instanceof ArrayBuffer) {
-        terminal.write(decoder.decode(event.data, { stream: true }));
+        terminal.write(new Uint8Array(event.data));
       } else if (event.data instanceof Blob) {
-        void event.data.arrayBuffer().then((buffer) => terminal.write(decoder.decode(buffer)));
+        void event.data
+          .arrayBuffer()
+          .then((buffer) => terminal.write(new Uint8Array(buffer)));
       } else if (typeof event.data === "string") {
         try {
           const value = JSON.parse(event.data) as { type?: unknown; message?: unknown };
