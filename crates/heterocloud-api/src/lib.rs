@@ -30,8 +30,7 @@ pub fn app(state: Arc<AppState>, console_dir: Option<&Path>) -> Router {
     let router = Router::new().nest("/api/v1", routes::api_router(state));
     let router = match console_dir {
         Some(directory) => router.fallback_service(
-            ServeDir::new(directory)
-                .fallback(ServeFile::new(directory.join("index.html"))),
+            ServeDir::new(directory).fallback(ServeFile::new(directory.join("index.html"))),
         ),
         None => router,
     };
