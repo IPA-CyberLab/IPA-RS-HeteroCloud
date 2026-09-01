@@ -20,6 +20,9 @@ use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use url::Url;
 
+const MAX_PROVIDER_ERROR_BODY_BYTES: usize = 8 * 1024;
+const MAX_PROVIDER_ERROR_MESSAGE_CHARS: usize = 1_024;
+
 #[derive(Debug, Parser)]
 #[command(version, about = "HeteroCloud provider outbox worker")]
 struct Config {
@@ -269,8 +272,43 @@ async fn deliver(
             .send()
             .await?
     };
+    let provider_status_code = response.status().as_u16();
     if !response.status().is_success() {
-        return Err(WorkerError::ProviderStatus(response.status().as_u16()));
+        if event.topic == "service-instance.reconcile"
+            && permanent_reconcile_rejection(provider_status_code)
+        {
+            let provider_message = bounded_provider_error_message(response).await?;
+            let message = provider_message.unwrap_or_else(|| {
+                format!(
+                    "{} provider rejected the requested configuration with HTTP {}",
+                    payload.provider, provider_status_code
+                )
+            });
+            if !store
+                .mark_service_instance_error(
+                    payload.service_instance_id,
+                    &payload.provider,
+                    payload.generation,
+                    event.id,
+                    serde_json::json!({
+                        "phase": "error",
+                        "message": message,
+                        "provider_http_status": provider_status_code,
+                    }),
+                )
+                .await?
+            {
+                return Err(WorkerError::StalePayload);
+            }
+            warn!(
+                service_instance_id = %payload.service_instance_id,
+                provider = payload.provider,
+                status = provider_status_code,
+                "provider permanently rejected service reconciliation"
+            );
+            return Ok(());
+        }
+        return Err(WorkerError::ProviderStatus(provider_status_code));
     }
     let operation: AcceptedOperation = response.json().await?;
     if event.topic == "service-instance.delete" {
@@ -305,7 +343,12 @@ async fn deliver(
         {
             return Err(WorkerError::StalePayload);
         }
-        return Err(WorkerError::ProviderReconcileFailed);
+        warn!(
+            service_instance_id = %payload.service_instance_id,
+            provider = payload.provider,
+            "provider reported a permanent service reconciliation failure"
+        );
+        return Ok(());
     }
     if !store
         .mark_service_instance_ready(
@@ -324,6 +367,41 @@ async fn deliver(
 
 fn provider_reconcile_failed(status: &Value) -> bool {
     status.get("phase").and_then(Value::as_str) == Some("error")
+}
+
+const fn permanent_reconcile_rejection(status: u16) -> bool {
+    matches!(status, 400 | 409 | 422)
+}
+
+async fn bounded_provider_error_message(
+    mut response: reqwest::Response,
+) -> Result<Option<String>, reqwest::Error> {
+    let mut body = Vec::new();
+    while body.len() < MAX_PROVIDER_ERROR_BODY_BYTES {
+        let Some(chunk) = response.chunk().await? else {
+            break;
+        };
+        let remaining = MAX_PROVIDER_ERROR_BODY_BYTES - body.len();
+        body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+    }
+    let message = serde_json::from_slice::<Value>(&body)
+        .ok()
+        .and_then(|value| {
+            value
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|message| !message.is_empty())
+                .map(|message| {
+                    message
+                        .chars()
+                        .filter(|character| !character.is_control())
+                        .take(MAX_PROVIDER_ERROR_MESSAGE_CHARS)
+                        .collect::<String>()
+                })
+        })
+        .filter(|message| !message.is_empty());
+    Ok(message)
 }
 
 struct ProviderTarget {
@@ -506,8 +584,6 @@ enum WorkerError {
     Provider(#[from] heterocloud_provider::ProviderError),
     #[error("provider returned HTTP {0}")]
     ProviderStatus(u16),
-    #[error("provider reported a service reconciliation failure")]
-    ProviderReconcileFailed,
     #[error("provider payload is stale")]
     StalePayload,
     #[error(transparent)]
@@ -540,8 +616,9 @@ mod tests {
 
     use super::{
         PrincipalContextRevocationPayload, ProviderTarget, ProviderTargets, WorkerError,
-        deliver_principal_context_revocation, principal_context_revocation_expired,
-        principal_context_revocation_url, provider_reconcile_failed,
+        deliver_principal_context_revocation, permanent_reconcile_rejection,
+        principal_context_revocation_expired, principal_context_revocation_url,
+        provider_reconcile_failed,
     };
 
     const TEST_ED25519_PRIVATE_KEY: &[u8] = b"-----BEGIN PRIVATE KEY-----\n\
@@ -654,6 +731,16 @@ MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
         ));
         assert!(!provider_reconcile_failed(&json!({"phase": "ready"})));
         assert!(!provider_reconcile_failed(&json!({})));
+    }
+
+    #[test]
+    fn permanent_provider_rejections_do_not_retry_forever() {
+        assert!(permanent_reconcile_rejection(400));
+        assert!(permanent_reconcile_rejection(409));
+        assert!(permanent_reconcile_rejection(422));
+        assert!(!permanent_reconcile_rejection(401));
+        assert!(!permanent_reconcile_rejection(429));
+        assert!(!permanent_reconcile_rejection(500));
     }
 
     #[tokio::test]
