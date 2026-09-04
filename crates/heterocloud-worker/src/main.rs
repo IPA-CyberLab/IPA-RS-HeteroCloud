@@ -669,9 +669,19 @@ MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
                     TEST_ED25519_PRIVATE_KEY,
                 )?,
             },
+            syouyu: ProviderTarget {
+                endpoint: Url::parse("http://syouyu.example.test/")?,
+                signer: ProviderSigner::from_ed25519_pem(
+                    "heterocloud",
+                    "heterocloud-syouyu",
+                    "test-key",
+                    TEST_ED25519_PRIVATE_KEY,
+                )?,
+            },
         };
         let flow = targets.target("flow")?;
         let flash = targets.target("flash")?;
+        let syouyu = targets.target("syouyu")?;
         assert_eq!(flow.endpoint.as_str(), "http://flow.example.test/");
         assert_eq!(flash.endpoint.as_str(), "http://flash.example.test/");
         let context = || ProviderContext {
@@ -689,6 +699,10 @@ MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
         assert_eq!(
             flash.signer.sign(context())?.claims.audience,
             "heterocloud-flash"
+        );
+        assert_eq!(
+            syouyu.signer.sign(context())?.claims.audience,
+            "heterocloud-syouyu"
         );
         assert!(matches!(
             targets.target("unknown"),
