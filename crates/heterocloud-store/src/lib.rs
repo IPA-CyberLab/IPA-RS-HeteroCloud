@@ -5,7 +5,7 @@ use heterocloud_domain::{
     FlashProtocol, FlashSpec, FlowSpec, IamPolicy, MAX_FLASH_SERVICE_PORT, MIN_FLASH_SERVICE_PORT,
     Organization, OrganizationId, PolicyDocument, PolicyId, Principal, PrincipalId, PrincipalKind,
     Project, ProjectId, ResourceQuotaLimits, ServiceInstance, ServiceInstanceId, ServiceState,
-    User, UserId, UserStatus,
+    SyouyuSpec, User, UserId, UserStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -231,7 +231,7 @@ impl Store {
         let allocations = sqlx::query_as::<_, TenantServiceAllocationRow>(
             "SELECT organization_id, provider, spec
              FROM service_instances
-             WHERE provider IN ('flow', 'flash') AND state <> 'deleting'",
+             WHERE provider IN ('flow', 'flash', 'syouyu') AND state <> 'deleting'",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -269,6 +269,10 @@ impl Store {
                 "flash" => {
                     let spec: FlashSpec = serde_json::from_value(allocation.spec)?;
                     usage.add_flash_spec(&spec);
+                }
+                "syouyu" => {
+                    let spec: SyouyuSpec = serde_json::from_value(allocation.spec)?;
+                    usage.add_syouyu_spec(&spec);
                 }
                 _ => return Err(StoreError::Invariant("unknown quota provider")),
             }
@@ -1954,6 +1958,13 @@ impl Store {
                 prepare_flash_spec(&mut transaction, organization_id, None, None, spec, &quota)
                     .await
             }
+            "syouyu" => {
+                lock_tenant_allocations(&mut transaction, organization_id).await?;
+                lock_syouyu_bucket_names(&mut transaction).await?;
+                let quota =
+                    resource_quota_in_transaction(&mut transaction, organization_id).await?;
+                prepare_syouyu_spec(&mut transaction, organization_id, None, spec, &quota).await
+            }
             _ => Ok(spec),
         };
         let spec = match prepared {
@@ -2011,11 +2022,14 @@ impl Store {
         spec: Value,
     ) -> Result<ServiceInstance, StoreError> {
         let mut transaction = self.pool.begin().await?;
-        if matches!(provider, "flow" | "flash") {
+        if matches!(provider, "flow" | "flash" | "syouyu") {
             lock_tenant_allocations(&mut transaction, organization_id).await?;
         }
         if provider == "flash" {
             lock_flash_allocations(&mut transaction).await?;
+        }
+        if provider == "syouyu" {
+            lock_syouyu_bucket_names(&mut transaction).await?;
         }
         let existing = sqlx::query_as::<_, ServiceRow>(
             "SELECT id, organization_id, project_id, provider, name, generation,
@@ -2055,6 +2069,11 @@ impl Store {
                     &quota,
                 )
                 .await
+            }
+            "syouyu" => {
+                let quota =
+                    resource_quota_in_transaction(&mut transaction, organization_id).await?;
+                prepare_syouyu_spec(&mut transaction, organization_id, Some(id), spec, &quota).await
             }
             _ => Ok(spec),
         };
@@ -2454,6 +2473,87 @@ async fn prepare_flow_spec(
     Ok(serde_json::to_value(requested)?)
 }
 
+async fn lock_syouyu_bucket_names(
+    transaction: &mut Transaction<'_, Postgres>,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('heterocloud-syouyu-bucket-names', 0))",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
+}
+
+async fn prepare_syouyu_spec(
+    transaction: &mut Transaction<'_, Postgres>,
+    organization_id: OrganizationId,
+    excluded_service_id: Option<ServiceInstanceId>,
+    spec: Value,
+    quota: &ResourceQuotaLimits,
+) -> Result<Value, StoreError> {
+    let requested: SyouyuSpec = serde_json::from_value(spec)?;
+    requested
+        .validate()
+        .map_err(|error| StoreError::RequestRejected(error.to_string()))?;
+    if requested.quota_bytes > quota.syouyu.max_bytes_per_bucket {
+        return Err(StoreError::RequestRejected(format!(
+            "Syouyu bucket byte quota exceeded: {} requested, limit is {}",
+            requested.quota_bytes, quota.syouyu.max_bytes_per_bucket
+        )));
+    }
+    if requested.quota_objects > quota.syouyu.max_objects_per_bucket {
+        return Err(StoreError::RequestRejected(format!(
+            "Syouyu bucket object quota exceeded: {} requested, limit is {}",
+            requested.quota_objects, quota.syouyu.max_objects_per_bucket
+        )));
+    }
+
+    let name_owner = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id
+         FROM service_instances
+         WHERE provider = 'syouyu' AND spec->>'bucket_name' = $1
+         LIMIT 1",
+    )
+    .bind(&requested.bucket_name)
+    .fetch_optional(&mut **transaction)
+    .await?;
+    if name_owner.is_some_and(|id| excluded_service_id.is_none_or(|excluded| excluded.0 != id)) {
+        return Err(StoreError::Conflict);
+    }
+
+    let rows = sqlx::query_as::<_, SyouyuAllocationRow>(
+        "SELECT id, spec
+         FROM service_instances
+         WHERE organization_id = $1 AND provider = 'syouyu' AND state <> 'deleting'",
+    )
+    .bind(organization_id.0)
+    .fetch_all(&mut **transaction)
+    .await?;
+    let mut buckets = 1_u64;
+    let mut bytes = requested.quota_bytes;
+    for row in rows {
+        if excluded_service_id.is_some_and(|id| id.0 == row.id) {
+            continue;
+        }
+        let stored: SyouyuSpec = serde_json::from_value(row.spec)?;
+        buckets = buckets.saturating_add(1);
+        bytes = bytes.saturating_add(stored.quota_bytes);
+    }
+    if buckets > u64::from(quota.syouyu.max_buckets) {
+        return Err(StoreError::RequestRejected(format!(
+            "Syouyu bucket limit exceeded: {buckets} requested, limit is {}",
+            quota.syouyu.max_buckets
+        )));
+    }
+    if bytes > quota.syouyu.max_total_bytes {
+        return Err(StoreError::RequestRejected(format!(
+            "Syouyu tenant byte quota exceeded: {bytes} requested, limit is {}",
+            quota.syouyu.max_total_bytes
+        )));
+    }
+    Ok(serde_json::to_value(requested)?)
+}
+
 async fn lock_flash_allocations(
     transaction: &mut Transaction<'_, Postgres>,
 ) -> Result<(), StoreError> {
@@ -2811,6 +2911,12 @@ pub struct ResourceQuotaUsage {
     pub flash_disk_gib: u64,
     pub registry_storage_bytes: Option<u64>,
     pub registry_credentials: u64,
+    pub syouyu_buckets: u64,
+    pub syouyu_max_bytes_per_bucket: u64,
+    pub syouyu_max_objects_per_bucket: u64,
+    pub syouyu_configured_bytes: u64,
+    pub syouyu_storage_bytes: Option<u64>,
+    pub syouyu_credentials: u64,
 }
 
 impl ResourceQuotaUsage {
@@ -2856,6 +2962,16 @@ impl ResourceQuotaUsage {
         self.flash_disk_gib = self
             .flash_disk_gib
             .saturating_add(replicas.saturating_mul(u64::from(spec.ephemeral_storage_gib)));
+    }
+
+    fn add_syouyu_spec(&mut self, spec: &SyouyuSpec) {
+        self.syouyu_buckets = self.syouyu_buckets.saturating_add(1);
+        self.syouyu_max_bytes_per_bucket = self.syouyu_max_bytes_per_bucket.max(spec.quota_bytes);
+        self.syouyu_max_objects_per_bucket =
+            self.syouyu_max_objects_per_bucket.max(spec.quota_objects);
+        self.syouyu_configured_bytes = self
+            .syouyu_configured_bytes
+            .saturating_add(spec.quota_bytes);
     }
 }
 
@@ -3318,6 +3434,12 @@ struct FlashAllocationRow {
 
 #[derive(sqlx::FromRow)]
 struct FlowAllocationRow {
+    id: Uuid,
+    spec: Value,
+}
+
+#[derive(sqlx::FromRow)]
+struct SyouyuAllocationRow {
     id: Uuid,
     spec: Value,
 }

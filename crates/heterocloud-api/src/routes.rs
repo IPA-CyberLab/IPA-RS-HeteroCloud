@@ -26,7 +26,7 @@ use heterocloud_domain::{
     DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, FlashQuotaLimits, FlashSpec, FlowRateLimit,
     FlowSpec, MAX_FLOW_RATE_LIMIT_BURST, MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, MAX_FLOW_ROOMS,
     OrganizationId, PolicyDocument, PolicyId, PrincipalId, ProjectId, ResourceQuotaLimits,
-    ServiceInstance, ServiceInstanceId, ServiceState, UserStatus,
+    ServiceInstance, ServiceInstanceId, ServiceState, SyouyuQuotaLimits, SyouyuSpec, UserStatus,
 };
 use heterocloud_iam::{AuthorizationRequest, Decision, authorize, semantics_digest};
 use heterocloud_store::{
@@ -171,6 +171,20 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route(
             "/organizations/{organization_id}/flash/services/{service_instance_id}/exec",
             get(exec_flash_container),
+        )
+        .route(
+            "/organizations/{organization_id}/syouyu/buckets",
+            get(list_syouyu_buckets).post(create_syouyu_bucket),
+        )
+        .route(
+            "/organizations/{organization_id}/syouyu/quota",
+            get(get_syouyu_quota),
+        )
+        .route(
+            "/organizations/{organization_id}/syouyu/buckets/{service_instance_id}",
+            get(get_syouyu_bucket)
+                .put(update_syouyu_bucket)
+                .delete(delete_syouyu_bucket),
         )
         .route(
             "/organizations/{organization_id}/registry",
@@ -1723,6 +1737,193 @@ async fn delete_flash_service(
     Ok((StatusCode::ACCEPTED, Json(instance)))
 }
 
+#[derive(Default, Deserialize)]
+struct SyouyuListQuery {
+    project_id: Option<Uuid>,
+}
+
+async fn get_syouyu_quota(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<SyouyuQuotaLimits>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "syouyu:ListBuckets",
+        &syouyu_collection_resource(organization_id),
+    )
+    .await?;
+    let limits = state
+        .store
+        .effective_resource_quota(OrganizationId(organization_id))
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(limits.syouyu))
+}
+
+async fn list_syouyu_buckets(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    Query(query): Query<SyouyuListQuery>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "syouyu:ListBuckets",
+        &syouyu_collection_resource(organization_id),
+    )
+    .await?;
+    let items = state
+        .store
+        .list_service_instances(
+            OrganizationId(organization_id),
+            query.project_id.map(ProjectId),
+            Some("syouyu"),
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(json!({ "items": items })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateSyouyuBucket {
+    project_id: Uuid,
+    name: String,
+    spec: SyouyuSpec,
+}
+
+async fn create_syouyu_bucket(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<CreateSyouyuBucket>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    validate_name(&request.name)?;
+    validate_syouyu_spec(&request.spec)?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "syouyu:CreateBucket",
+        &syouyu_collection_resource(organization_id),
+    )
+    .await?;
+    let instance = state
+        .store
+        .create_service_instance(
+            OrganizationId(organization_id),
+            ProjectId(request.project_id),
+            authorization.principal_id,
+            "syouyu",
+            &request.name,
+            serde_json::to_value(request.spec).map_err(|_| ApiError::Internal)?,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::ACCEPTED, Json(instance)))
+}
+
+async fn get_syouyu_bucket(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<ServiceInstance>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "syouyu:GetBucket",
+        &syouyu_bucket_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    Ok(Json(
+        syouyu_bucket(&state, organization_id, service_instance_id).await?,
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateSyouyuBucket {
+    name: String,
+    spec: SyouyuSpec,
+}
+
+async fn update_syouyu_bucket(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<UpdateSyouyuBucket>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    syouyu_bucket(&state, organization_id, service_instance_id).await?;
+    validate_name(&request.name)?;
+    validate_syouyu_spec(&request.spec)?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "syouyu:UpdateBucket",
+        &syouyu_bucket_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let instance = state
+        .store
+        .update_service_instance(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_instance_id),
+            "syouyu",
+            authorization.principal_id,
+            &request.name,
+            serde_json::to_value(request.spec).map_err(|_| ApiError::Internal)?,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::ACCEPTED, Json(instance)))
+}
+
+async fn delete_syouyu_bucket(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    syouyu_bucket(&state, organization_id, service_instance_id).await?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "syouyu:DeleteBucket",
+        &syouyu_bucket_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let instance = state
+        .store
+        .begin_delete_service_instance(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_instance_id),
+            "syouyu",
+            authorization.principal_id,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::ACCEPTED, Json(instance)))
+}
+
 async fn list_flash_containers(
     State(state): State<Arc<AppState>>,
     Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
@@ -2788,6 +2989,23 @@ async fn flash_service(
         .ok_or(ApiError::NotFound)
 }
 
+async fn syouyu_bucket(
+    state: &AppState,
+    organization_id: Uuid,
+    service_instance_id: Uuid,
+) -> Result<ServiceInstance, ApiError> {
+    state
+        .store
+        .service_instance(ServiceInstanceId(service_instance_id))
+        .await
+        .map_err(ApiError::from_store)?
+        .filter(|service| {
+            service.organization_id == OrganizationId(organization_id)
+                && service.provider == "syouyu"
+        })
+        .ok_or(ApiError::NotFound)
+}
+
 #[derive(Default, Deserialize)]
 struct AuditQuery {
     limit: Option<i64>,
@@ -3301,6 +3519,17 @@ fn flash_service_resource(organization_id: Uuid, service_instance_id: Uuid) -> S
     )
 }
 
+fn syouyu_collection_resource(organization_id: Uuid) -> String {
+    organization_resource(organization_id, "syouyu/bucket/*")
+}
+
+fn syouyu_bucket_resource(organization_id: Uuid, service_instance_id: Uuid) -> String {
+    organization_resource(
+        organization_id,
+        &format!("syouyu/bucket/{service_instance_id}"),
+    )
+}
+
 fn deserialize_stored_flow_spec(mut value: Value) -> Result<FlowSpec, ApiError> {
     let object = value.as_object_mut().ok_or(ApiError::Internal)?;
     object
@@ -3350,6 +3579,11 @@ fn validate_flow_spec(spec: &FlowSpec) -> Result<(), ApiError> {
 
 fn validate_flash_spec(spec: &FlashSpec) -> Result<(), ApiError> {
     spec.validate_request()
+        .map_err(|error| ApiError::BadRequest(error.to_string()))
+}
+
+fn validate_syouyu_spec(spec: &SyouyuSpec) -> Result<(), ApiError> {
+    spec.validate()
         .map_err(|error| ApiError::BadRequest(error.to_string()))
 }
 

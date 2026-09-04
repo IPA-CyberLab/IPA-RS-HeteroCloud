@@ -231,6 +231,91 @@ pub const MAX_FLOW_PARTICIPANTS: u32 = 100_000;
 pub const MAX_TENANT_SERVICES: u32 = 10_000;
 pub const MAX_TENANT_FLOW_ROOMS: u64 = 100_000_000;
 
+pub const MIN_SYOUYU_QUOTA_BYTES: u64 = 1_048_576;
+pub const MAX_SYOUYU_QUOTA_BYTES: u64 = 10 * 1_024 * 1_024 * 1_024 * 1_024;
+pub const MAX_SYOUYU_QUOTA_OBJECTS: u64 = 1_000_000_000;
+pub const DEFAULT_SYOUYU_BUCKET_QUOTA_BYTES: u64 = 10 * 1_024 * 1_024 * 1_024;
+pub const DEFAULT_SYOUYU_BUCKET_QUOTA_OBJECTS: u64 = 1_000_000;
+pub const DEFAULT_SYOUYU_MAX_BUCKETS: u32 = 100;
+pub const DEFAULT_SYOUYU_TOTAL_QUOTA_BYTES: u64 = 100 * 1_024 * 1_024 * 1_024;
+pub const DEFAULT_SYOUYU_MAX_CREDENTIALS_PER_BUCKET: u32 = 10;
+pub const DEFAULT_SYOUYU_MAX_TOTAL_CREDENTIALS: u32 = 1_000;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyouyuSpec {
+    pub region: String,
+    pub bucket_name: String,
+    pub quota_bytes: u64,
+    pub quota_objects: u64,
+    #[serde(default)]
+    pub metadata: Value,
+}
+
+impl SyouyuSpec {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        if self.region.is_empty()
+            || self.region.len() > 63
+            || self
+                .region
+                .bytes()
+                .any(|byte| !byte.is_ascii_lowercase() && !byte.is_ascii_digit() && byte != b'-')
+            || self.region.starts_with('-')
+            || self.region.ends_with('-')
+        {
+            return Err(invalid_syouyu_spec(
+                "region must be a lowercase DNS label of at most 63 characters",
+            ));
+        }
+        validate_s3_bucket_name(&self.bucket_name)?;
+        if !(MIN_SYOUYU_QUOTA_BYTES..=MAX_SYOUYU_QUOTA_BYTES).contains(&self.quota_bytes) {
+            return Err(invalid_syouyu_spec(format!(
+                "quota_bytes must be between {MIN_SYOUYU_QUOTA_BYTES} and {MAX_SYOUYU_QUOTA_BYTES}"
+            )));
+        }
+        if !(1..=MAX_SYOUYU_QUOTA_OBJECTS).contains(&self.quota_objects) {
+            return Err(invalid_syouyu_spec(format!(
+                "quota_objects must be between 1 and {MAX_SYOUYU_QUOTA_OBJECTS}"
+            )));
+        }
+        let metadata_bytes = serde_json::to_vec(&self.metadata)
+            .map_err(|_| invalid_syouyu_spec("metadata must be valid JSON"))?;
+        if metadata_bytes.len() > 64 * 1_024 {
+            return Err(invalid_syouyu_spec(
+                "metadata must not exceed 65536 serialized bytes",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn validate_s3_bucket_name(name: &str) -> Result<(), DomainError> {
+    if !(3..=63).contains(&name.len())
+        || !name
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        || !name
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        || name.contains("..")
+        || name.bytes().any(|byte| {
+            !byte.is_ascii_lowercase() && !byte.is_ascii_digit() && byte != b'-' && byte != b'.'
+        })
+        || name.parse::<std::net::IpAddr>().is_ok()
+    {
+        return Err(invalid_syouyu_spec(
+            "bucket_name must be a 3..63 character lowercase S3 bucket name",
+        ));
+    }
+    Ok(())
+}
+
+fn invalid_syouyu_spec(message: impl Into<String>) -> DomainError {
+    DomainError::InvalidSyouyuSpec(message.into())
+}
+
 pub const MIN_FLASH_REPLICAS: u32 = 1;
 pub const MAX_FLASH_REPLICAS: u32 = 100_000;
 pub const MIN_FLASH_CPU_MILLIS: u32 = 10;
@@ -273,6 +358,8 @@ pub struct ResourceQuotaLimits {
     pub flow: FlowQuotaLimits,
     pub flash: FlashQuotaLimits,
     pub registry: RegistryQuotaLimits,
+    #[serde(default)]
+    pub syouyu: SyouyuQuotaLimits,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -308,6 +395,30 @@ pub struct RegistryQuotaLimits {
     pub max_credentials: u32,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyouyuQuotaLimits {
+    pub max_buckets: u32,
+    pub max_bytes_per_bucket: u64,
+    pub max_objects_per_bucket: u64,
+    pub max_total_bytes: u64,
+    pub max_credentials_per_bucket: u32,
+    pub max_total_credentials: u32,
+}
+
+impl Default for SyouyuQuotaLimits {
+    fn default() -> Self {
+        Self {
+            max_buckets: DEFAULT_SYOUYU_MAX_BUCKETS,
+            max_bytes_per_bucket: DEFAULT_SYOUYU_BUCKET_QUOTA_BYTES,
+            max_objects_per_bucket: DEFAULT_SYOUYU_BUCKET_QUOTA_OBJECTS,
+            max_total_bytes: DEFAULT_SYOUYU_TOTAL_QUOTA_BYTES,
+            max_credentials_per_bucket: DEFAULT_SYOUYU_MAX_CREDENTIALS_PER_BUCKET,
+            max_total_credentials: DEFAULT_SYOUYU_MAX_TOTAL_CREDENTIALS,
+        }
+    }
+}
+
 impl Default for ResourceQuotaLimits {
     fn default() -> Self {
         Self {
@@ -335,6 +446,7 @@ impl Default for ResourceQuotaLimits {
                 storage_gib: 10,
                 max_credentials: 10,
             },
+            syouyu: SyouyuQuotaLimits::default(),
         }
     }
 }
@@ -372,6 +484,34 @@ impl ResourceQuotaLimits {
         if !(1..=10_000).contains(&flow.max_developer_credentials_per_service) {
             return Err(invalid_quota(
                 "flow.max_developer_credentials_per_service is outside the safety range",
+            ));
+        }
+
+        let syouyu = &self.syouyu;
+        if !(1..=MAX_TENANT_SERVICES).contains(&syouyu.max_buckets) {
+            return Err(invalid_quota(
+                "syouyu.max_buckets is outside the safety range",
+            ));
+        }
+        if !(MIN_SYOUYU_QUOTA_BYTES..=MAX_SYOUYU_QUOTA_BYTES).contains(&syouyu.max_bytes_per_bucket)
+            || syouyu.max_total_bytes < syouyu.max_bytes_per_bucket
+            || syouyu.max_total_bytes > MAX_SYOUYU_QUOTA_BYTES
+        {
+            return Err(invalid_quota(
+                "Syouyu byte limits are inconsistent or outside the safety range",
+            ));
+        }
+        if !(1..=MAX_SYOUYU_QUOTA_OBJECTS).contains(&syouyu.max_objects_per_bucket) {
+            return Err(invalid_quota(
+                "syouyu.max_objects_per_bucket is outside the safety range",
+            ));
+        }
+        if !(1..=10_000).contains(&syouyu.max_credentials_per_bucket)
+            || syouyu.max_total_credentials < syouyu.max_credentials_per_bucket
+            || syouyu.max_total_credentials > 1_000_000
+        {
+            return Err(invalid_quota(
+                "Syouyu credential limits are inconsistent or outside the safety range",
             ));
         }
 
@@ -759,6 +899,8 @@ pub enum DomainError {
 
     #[error("invalid Flash spec: {0}")]
     InvalidFlashSpec(String),
+    #[error("invalid Syouyu spec: {0}")]
+    InvalidSyouyuSpec(String),
     #[error("invalid policy: {0}")]
     InvalidPolicy(String),
     #[error("unsupported policy version: {0}")]
@@ -774,7 +916,7 @@ mod tests {
         DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, DomainError, FlashExposure, FlashExposureType,
         FlashPort, FlashProtocol, FlashSpec, FlashTrafficMode, FlowRateLimit, FlowSpec,
         MAX_FLASH_EPHEMERAL_STORAGE_GIB, MIN_FLASH_SERVICE_PORT, POLICY_VERSION, PolicyDocument,
-        PolicyEffect, PolicyStatement, ResourceQuotaLimits,
+        PolicyEffect, PolicyStatement, ResourceQuotaLimits, SyouyuSpec,
     };
 
     #[test]
@@ -854,6 +996,50 @@ mod tests {
             "metadata": {}
         }));
         assert!(spec.is_err());
+    }
+
+    #[test]
+    fn syouyu_bucket_contract_is_strict() -> Result<(), Box<dyn std::error::Error>> {
+        let spec = SyouyuSpec {
+            region: "heteronet-global".into(),
+            bucket_name: "game-builds-2026".into(),
+            quota_bytes: 10 * 1_024 * 1_024 * 1_024,
+            quota_objects: 1_000_000,
+            metadata: json!({}),
+        };
+        spec.validate()?;
+
+        let mut unknown = serde_json::to_value(spec)?;
+        unknown["public"] = json!(true);
+        assert!(serde_json::from_value::<SyouyuSpec>(unknown).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn syouyu_rejects_invalid_bucket_names() {
+        for name in ["ab", ".hidden", "trailing.", "UPPER", "192.0.2.1"] {
+            let spec = SyouyuSpec {
+                region: "heteronet-global".into(),
+                bucket_name: name.into(),
+                quota_bytes: 1_048_576,
+                quota_objects: 1,
+                metadata: json!({}),
+            };
+            assert!(spec.validate().is_err(), "{name} must be rejected");
+        }
+    }
+
+    #[test]
+    fn resource_quota_defaults_missing_syouyu_for_rolling_upgrades()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut value = serde_json::to_value(ResourceQuotaLimits::default())?;
+        value
+            .as_object_mut()
+            .ok_or("resource quota must be an object")?
+            .remove("syouyu");
+        let decoded = serde_json::from_value::<ResourceQuotaLimits>(value)?;
+        assert_eq!(decoded.syouyu, super::SyouyuQuotaLimits::default());
+        Ok(())
     }
 
     fn flash_spec() -> FlashSpec {
