@@ -26,6 +26,7 @@ const layoutLabels = {
 function routeTitle(pathname: string) {
   if (pathname.startsWith("/flow/services/")) return "Flowサービス詳細";
   if (pathname.startsWith("/flash/services/")) return "Flashサービス詳細";
+  if (pathname.startsWith("/syouyu/buckets/")) return "Syouyuバケット詳細";
   return routeTitles[pathname] ?? "HeteroCloud";
 }
 
@@ -42,6 +43,8 @@ function breadcrumbs(pathname: string, ownerConsole: boolean) {
     items.push({ text: "Flash", href: "/flash/services" });
   } else if (pathname.startsWith("/registry")) {
     items.push({ text: "Flash Registry", href: "/registry" });
+  } else if (pathname.startsWith("/syouyu/")) {
+    items.push({ text: "Syouyu", href: "/syouyu/buckets" });
   } else if (pathname.startsWith("/owner/")) {
     items.push({ text: "所有者管理", href: "/owner/quotas" });
   }

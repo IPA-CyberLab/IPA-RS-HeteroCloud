@@ -10,6 +10,8 @@ describe("navigationItems", () => {
 
   it("通常コンソールではテナント向けサービスを表示する", () => {
     expect(JSON.stringify(navigationItems(false))).toContain("Flow");
+    expect(JSON.stringify(navigationItems(false))).toContain("Syouyu");
+    expect(JSON.stringify(navigationItems(false))).toContain("/syouyu/buckets");
     expect(JSON.stringify(navigationItems(false))).not.toContain("全アカウント管理");
   });
 });

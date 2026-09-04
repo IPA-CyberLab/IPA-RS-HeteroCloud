@@ -67,6 +67,16 @@ const RegistryPage = lazy(() =>
     default: module.RegistryPage,
   })),
 );
+const SyouyuBucketsPage = lazy(() =>
+  import("@/features/syouyu/syouyu-buckets-page").then((module) => ({
+    default: module.SyouyuBucketsPage,
+  })),
+);
+const SyouyuBucketDetailPage = lazy(() =>
+  import("@/features/syouyu/syouyu-bucket-detail-page").then((module) => ({
+    default: module.SyouyuBucketDetailPage,
+  })),
+);
 const AuditLogsPage = lazy(() =>
   import("@/features/audit/audit-logs-page").then((module) => ({
     default: module.AuditLogsPage,
@@ -208,6 +218,22 @@ export function App() {
                 element={
                   <LazyPage>
                     <RegistryPage />
+                  </LazyPage>
+                }
+              />
+              <Route
+                path="/syouyu/buckets"
+                element={
+                  <LazyPage>
+                    <SyouyuBucketsPage />
+                  </LazyPage>
+                }
+              />
+              <Route
+                path="/syouyu/buckets/:bucketId"
+                element={
+                  <LazyPage>
+                    <SyouyuBucketDetailPage />
                   </LazyPage>
                 }
               />

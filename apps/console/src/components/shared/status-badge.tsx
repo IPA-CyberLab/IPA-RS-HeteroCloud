@@ -21,6 +21,7 @@ const labels: Record<string, string> = {
   allow: "許可",
   deny: "拒否",
   denied: "拒否",
+  revoked: "失効済み",
 };
 
 const types: Record<string, StatusIndicatorProps.Type> = {
@@ -42,6 +43,7 @@ const types: Record<string, StatusIndicatorProps.Type> = {
   failed: "error",
   denied: "error",
   deny: "error",
+  revoked: "stopped",
 };
 
 export function StatusBadge({ status }: { status: string }) {

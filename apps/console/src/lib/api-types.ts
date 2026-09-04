@@ -440,7 +440,7 @@ export interface UpdateSyouyuBucketRequest {
   spec: SyouyuBucketSpec;
 }
 
-export type SyouyuPermission = "list" | "read" | "write" | "delete";
+export type SyouyuPermission = "read" | "write";
 
 export interface SyouyuCredential {
   id: string;
@@ -448,7 +448,6 @@ export interface SyouyuCredential {
   name: string;
   access_key_id: string;
   permissions: SyouyuPermission[];
-  prefix: string | null;
   status: "active" | "revoked";
   created_at: string;
   revoked_at: string | null;
@@ -457,7 +456,6 @@ export interface SyouyuCredential {
 export interface CreateSyouyuCredentialRequest {
   name: string;
   permissions: SyouyuPermission[];
-  prefix?: string;
 }
 
 export interface SyouyuCredentialSecret {
