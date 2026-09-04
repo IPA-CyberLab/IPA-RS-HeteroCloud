@@ -185,6 +185,78 @@ export function flashServiceQueryOptions(
   });
 }
 
+export function syouyuBucketsQueryOptions(organizationId: string) {
+  return queryOptions({
+    queryKey: ["organizations", organizationId, "syouyu", "buckets"],
+    queryFn: ({ signal }) => api.syouyu.buckets.list(organizationId, signal),
+  });
+}
+
+export function syouyuQuotaQueryOptions(organizationId: string) {
+  return queryOptions({
+    queryKey: ["organizations", organizationId, "syouyu", "quota"],
+    queryFn: ({ signal }) => api.syouyu.quota(organizationId, signal),
+    staleTime: 30_000,
+  });
+}
+
+export function syouyuBucketQueryOptions(
+  organizationId: string,
+  bucketId: string,
+) {
+  return queryOptions({
+    queryKey: [
+      "organizations",
+      organizationId,
+      "syouyu",
+      "buckets",
+      bucketId,
+    ],
+    queryFn: ({ signal }) =>
+      api.syouyu.buckets.get(organizationId, bucketId, signal),
+    refetchInterval: 15_000,
+    staleTime: 5_000,
+  });
+}
+
+export function syouyuUsageQueryOptions(
+  organizationId: string,
+  bucketId: string,
+) {
+  return queryOptions({
+    queryKey: [
+      "organizations",
+      organizationId,
+      "syouyu",
+      "buckets",
+      bucketId,
+      "usage",
+    ],
+    queryFn: ({ signal }) =>
+      api.syouyu.buckets.usage(organizationId, bucketId, signal),
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
+}
+
+export function syouyuCredentialsQueryOptions(
+  organizationId: string,
+  bucketId: string,
+) {
+  return queryOptions({
+    queryKey: [
+      "organizations",
+      organizationId,
+      "syouyu",
+      "buckets",
+      bucketId,
+      "credentials",
+    ],
+    queryFn: ({ signal }) =>
+      api.syouyu.buckets.credentials.list(organizationId, bucketId, signal),
+  });
+}
+
 export function registryImagesQueryOptions(organizationId: string) {
   return queryOptions({
     queryKey: ["registry", organizationId, "images"],

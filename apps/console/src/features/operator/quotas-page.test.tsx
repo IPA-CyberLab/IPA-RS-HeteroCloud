@@ -27,6 +27,14 @@ const limits: ResourceQuotaLimits = {
     max_total_memory_mib: 32_768,
     max_total_disk_gib: 100,
   },
+  syouyu: {
+    max_buckets: 100,
+    max_bytes_per_bucket: 10 * 1024 * 1024 * 1024,
+    max_objects_per_bucket: 1_000_000,
+    max_total_bytes: 100 * 1024 * 1024 * 1024,
+    max_credentials_per_bucket: 10,
+    max_total_credentials: 1_000,
+  },
   registry: { storage_gib: 10, max_credentials: 10 },
 };
 
@@ -124,6 +132,12 @@ describe("OwnerQuotasPage", () => {
             flash_cpu_millis: 5_000,
             flash_memory_mib: 10_240,
             flash_disk_gib: 25,
+            syouyu_buckets: 4,
+            syouyu_max_bytes_per_bucket: 8 * 1024 * 1024 * 1024,
+            syouyu_max_objects_per_bucket: 800_000,
+            syouyu_configured_bytes: 32 * 1024 * 1024 * 1024,
+            syouyu_storage_bytes: 12 * 1024 * 1024 * 1024,
+            syouyu_credentials: 6,
             registry_storage_bytes: 60 * 1024 * 1024,
             registry_credentials: 1,
           },
@@ -192,6 +206,7 @@ describe("OwnerQuotasPage", () => {
     expect(
       screen.getByRole("heading", { name: "Flash Registry 使用量" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Syouyu 使用量" })).toBeInTheDocument();
     expect(screen.getAllByText("60 MiB / 10 GiB").length).toBeGreaterThan(0);
     expect(screen.getByText("有効な開発者認証情報")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "キャンセル" }));

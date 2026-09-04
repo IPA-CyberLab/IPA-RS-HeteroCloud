@@ -11,6 +11,8 @@ import type {
   CreateRealtimeDeveloperCredentialRequest,
   CreateRealtimeServiceRequest,
   CreateServiceAccountRequest,
+  CreateSyouyuBucketRequest,
+  CreateSyouyuCredentialRequest,
   ErrorEnvelope,
   FlashQuotaLimits,
   FlashService,
@@ -38,6 +40,12 @@ import type {
   RegistryImageDeleteResult,
   RegistryStatus,
   Session,
+  SyouyuBucket,
+  SyouyuCredential,
+  SyouyuCredentialSecret,
+  SyouyuQuotaLimits,
+  SyouyuUsage,
+  UpdateSyouyuBucketRequest,
   UpdateRealtimeServiceRequest,
   UpdateFlashServiceRequest,
   UserLoginEvent,
@@ -632,6 +640,104 @@ export class HeteroCloudApiClient {
         url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
         url.searchParams.set("pod", pod);
         return url.toString();
+      },
+    },
+  };
+
+  readonly syouyu = {
+    quota: (organizationId: string, signal?: AbortSignal) =>
+      this.request<SyouyuQuotaLimits>(
+        organizationPath(organizationId, "syouyu/quota"),
+        { signal },
+      ),
+    buckets: {
+      list: (organizationId: string, signal?: AbortSignal) =>
+        this.request<CollectionResponse<SyouyuBucket>>(
+          organizationPath(organizationId, "syouyu/buckets"),
+          { signal },
+        ),
+      create: (organizationId: string, input: CreateSyouyuBucketRequest) =>
+        this.request<SyouyuBucket>(
+          organizationPath(organizationId, "syouyu/buckets"),
+          { method: "POST", body: input },
+        ),
+      get: (organizationId: string, bucketId: string, signal?: AbortSignal) =>
+        this.request<SyouyuBucket>(
+          organizationPath(
+            organizationId,
+            `syouyu/buckets/${encodeURIComponent(bucketId)}`,
+          ),
+          { signal },
+        ),
+      update: (
+        organizationId: string,
+        bucketId: string,
+        input: UpdateSyouyuBucketRequest,
+      ) =>
+        this.request<SyouyuBucket>(
+          organizationPath(
+            organizationId,
+            `syouyu/buckets/${encodeURIComponent(bucketId)}`,
+          ),
+          { method: "PUT", body: input },
+        ),
+      delete: (organizationId: string, bucketId: string) =>
+        this.request<SyouyuBucket>(
+          organizationPath(
+            organizationId,
+            `syouyu/buckets/${encodeURIComponent(bucketId)}`,
+          ),
+          { method: "DELETE" },
+        ),
+      usage: (
+        organizationId: string,
+        bucketId: string,
+        signal?: AbortSignal,
+      ) =>
+        this.request<SyouyuUsage>(
+          organizationPath(
+            organizationId,
+            `syouyu/buckets/${encodeURIComponent(bucketId)}/usage`,
+          ),
+          { signal },
+        ),
+      credentials: {
+        list: (
+          organizationId: string,
+          bucketId: string,
+          signal?: AbortSignal,
+        ) =>
+          this.request<CollectionResponse<SyouyuCredential>>(
+            organizationPath(
+              organizationId,
+              `syouyu/buckets/${encodeURIComponent(bucketId)}/credentials`,
+            ),
+            { signal },
+          ),
+        create: (
+          organizationId: string,
+          bucketId: string,
+          input: CreateSyouyuCredentialRequest,
+        ) =>
+          this.request<SyouyuCredentialSecret>(
+            organizationPath(
+              organizationId,
+              `syouyu/buckets/${encodeURIComponent(bucketId)}/credentials`,
+            ),
+            { method: "POST", body: input },
+          ),
+        revoke: (
+          organizationId: string,
+          bucketId: string,
+          credentialId: string,
+        ) =>
+          this.request<void>(
+            organizationPath(
+              organizationId,
+              `syouyu/buckets/${encodeURIComponent(bucketId)}/credentials/${encodeURIComponent(credentialId)}`,
+            ),
+            { method: "DELETE" },
+          ),
       },
     },
   };

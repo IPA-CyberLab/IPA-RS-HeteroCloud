@@ -50,10 +50,20 @@ export interface RegistryQuotaLimits {
   max_credentials: number;
 }
 
+export interface SyouyuQuotaLimits {
+  max_buckets: number;
+  max_bytes_per_bucket: number;
+  max_objects_per_bucket: number;
+  max_total_bytes: number;
+  max_credentials_per_bucket: number;
+  max_total_credentials: number;
+}
+
 export interface ResourceQuotaLimits {
   flow: FlowQuotaLimits;
   flash: FlashQuotaLimits;
   registry: RegistryQuotaLimits;
+  syouyu: SyouyuQuotaLimits;
 }
 
 export interface ResourceQuotaUsage {
@@ -76,6 +86,12 @@ export interface ResourceQuotaUsage {
   flash_disk_gib: number;
   registry_storage_bytes: number | null;
   registry_credentials: number;
+  syouyu_buckets: number;
+  syouyu_max_bytes_per_bucket: number;
+  syouyu_max_objects_per_bucket: number;
+  syouyu_configured_bytes: number;
+  syouyu_storage_bytes: number | null;
+  syouyu_credentials: number;
 }
 
 export interface ResourceQuotaTenant {
@@ -375,6 +391,90 @@ export interface FlashService {
   status: FlashServiceStatus;
   created_at: string;
   updated_at: string;
+}
+
+export interface SyouyuBucketSpec {
+  region: string;
+  bucket_name: string;
+  quota_bytes: number;
+  quota_objects: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface SyouyuBucketStatus {
+  [key: string]: unknown;
+  phase?: "provisioning" | "ready" | "degraded" | "error" | "deleting";
+  observed_generation?: number;
+  operation_id?: string;
+  endpoint?: string;
+  bucket_id?: string;
+  bucket_name?: string;
+  bytes?: number;
+  objects?: number;
+  credentials?: number;
+  message?: string;
+}
+
+export interface SyouyuBucket {
+  id: string;
+  organization_id: string;
+  project_id: string;
+  provider: "syouyu";
+  name: string;
+  generation: number;
+  state: ServiceState;
+  spec: SyouyuBucketSpec;
+  status: SyouyuBucketStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateSyouyuBucketRequest {
+  project_id: string;
+  name: string;
+  spec: SyouyuBucketSpec;
+}
+
+export interface UpdateSyouyuBucketRequest {
+  name: string;
+  spec: SyouyuBucketSpec;
+}
+
+export type SyouyuPermission = "list" | "read" | "write" | "delete";
+
+export interface SyouyuCredential {
+  id: string;
+  service_instance_id: string;
+  name: string;
+  access_key_id: string;
+  permissions: SyouyuPermission[];
+  prefix: string | null;
+  status: "active" | "revoked";
+  created_at: string;
+  revoked_at: string | null;
+}
+
+export interface CreateSyouyuCredentialRequest {
+  name: string;
+  permissions: SyouyuPermission[];
+  prefix?: string;
+}
+
+export interface SyouyuCredentialSecret {
+  credential: SyouyuCredential;
+  secret_access_key: string;
+  endpoint: string;
+  region: string;
+  bucket: string;
+}
+
+export interface SyouyuUsage {
+  quota_bytes: number;
+  quota_objects: number;
+  used_bytes: number;
+  object_count: number;
+  unfinished_upload_bytes: number;
+  credential_count: number;
 }
 
 export interface FlashContainer {

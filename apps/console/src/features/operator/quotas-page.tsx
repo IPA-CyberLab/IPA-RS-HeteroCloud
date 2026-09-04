@@ -25,6 +25,7 @@ import type {
   ResourceQuotaLimits,
   ResourceQuotaTenant,
   ResourceQuotaUsage,
+  SyouyuQuotaLimits,
   UserLoginEvent,
 } from "@/lib/api-types";
 import { formatDateTime, formatNumber } from "@/lib/utils";
@@ -60,6 +61,15 @@ const QUOTA_BOUNDS = {
   registry: {
     maxStorageGib: 10_240,
     maxCredentials: 1_000,
+  },
+  syouyu: {
+    maxBuckets: 10_000,
+    minBytesPerBucket: 1024 * 1024,
+    maxBytesPerBucket: 10 * 1024 * 1024 * 1024 * 1024,
+    maxObjectsPerBucket: 1_000_000_000,
+    maxTotalBytes: 10 * 1024 * 1024 * 1024 * 1024,
+    maxCredentialsPerBucket: 10_000,
+    maxTotalCredentials: 1_000_000,
   },
 } as const;
 
@@ -174,6 +184,16 @@ function QuotaUsagePanel({
           <QuotaUsageMetric label="認証情報数" used={usage.registry_credentials} limit={limits.registry.max_credentials} />
         </ColumnLayout>
       </Container>
+      <Container header={<Header variant="h3">Syouyu 使用量</Header>}>
+        <ColumnLayout columns={3} variant="text-grid">
+          <QuotaUsageMetric label="バケット数" used={usage.syouyu_buckets} limit={limits.syouyu.max_buckets} />
+          <QuotaUsageMetric label="割当容量" used={usage.syouyu_configured_bytes} limit={limits.syouyu.max_total_bytes} formatValue={formatBytes} />
+          <QuotaUsageMetric label="実使用容量" used={usage.syouyu_storage_bytes} limit={limits.syouyu.max_total_bytes} formatValue={formatBytes} />
+          <QuotaUsageMetric label="バケット容量（最大）" used={usage.syouyu_max_bytes_per_bucket} limit={limits.syouyu.max_bytes_per_bucket} formatValue={formatBytes} />
+          <QuotaUsageMetric label="オブジェクト / バケット（最大）" used={usage.syouyu_max_objects_per_bucket} limit={limits.syouyu.max_objects_per_bucket} />
+          <QuotaUsageMetric label="認証情報数" used={usage.syouyu_credentials} limit={limits.syouyu.max_total_credentials} />
+        </ColumnLayout>
+      </Container>
     </SpaceBetween>
   );
 }
@@ -210,6 +230,16 @@ export function normalizeResourceQuotaLimits(
     value.flash.max_disk_gib_per_vm,
     QUOTA_BOUNDS.flash.minDiskGibPerVm,
     QUOTA_BOUNDS.flash.maxDiskGibPerVm,
+  );
+  const syouyuBytesPerBucket = clampInteger(
+    value.syouyu.max_bytes_per_bucket,
+    QUOTA_BOUNDS.syouyu.minBytesPerBucket,
+    QUOTA_BOUNDS.syouyu.maxBytesPerBucket,
+  );
+  const syouyuCredentialsPerBucket = clampInteger(
+    value.syouyu.max_credentials_per_bucket,
+    1,
+    QUOTA_BOUNDS.syouyu.maxCredentialsPerBucket,
   );
 
   return {
@@ -277,6 +307,30 @@ export function normalizeResourceQuotaLimits(
         QUOTA_BOUNDS.registry.maxCredentials,
       ),
     },
+    syouyu: {
+      max_buckets: clampInteger(
+        value.syouyu.max_buckets,
+        1,
+        QUOTA_BOUNDS.syouyu.maxBuckets,
+      ),
+      max_bytes_per_bucket: syouyuBytesPerBucket,
+      max_objects_per_bucket: clampInteger(
+        value.syouyu.max_objects_per_bucket,
+        1,
+        QUOTA_BOUNDS.syouyu.maxObjectsPerBucket,
+      ),
+      max_total_bytes: clampInteger(
+        value.syouyu.max_total_bytes,
+        syouyuBytesPerBucket,
+        QUOTA_BOUNDS.syouyu.maxTotalBytes,
+      ),
+      max_credentials_per_bucket: syouyuCredentialsPerBucket,
+      max_total_credentials: clampInteger(
+        value.syouyu.max_total_credentials,
+        syouyuCredentialsPerBucket,
+        QUOTA_BOUNDS.syouyu.maxTotalCredentials,
+      ),
+    },
   };
 }
 
@@ -324,6 +378,8 @@ function QuotaEditor({
     update({ ...value, flow: { ...value.flow, [key]: next } });
   const flash = <Key extends keyof FlashQuotaLimits>(key: Key, next: number) =>
     update({ ...value, flash: { ...value.flash, [key]: next } });
+  const syouyu = <Key extends keyof SyouyuQuotaLimits>(key: Key, next: number) =>
+    update({ ...value, syouyu: { ...value.syouyu, [key]: next } });
 
   return (
     <SpaceBetween size="l">
@@ -405,6 +461,26 @@ function QuotaEditor({
             }
           />
         </ColumnLayout>
+      </Container>
+      <Container header={<Header variant="h3">Syouyu Object Storage</Header>}>
+        <SpaceBetween size="m">
+          <SpaceBetween size="xs">
+            <Box variant="awsui-key-label">バケットと容量</Box>
+            <ColumnLayout columns={3}>
+              <NumberField label="バケット数" value={value.syouyu.max_buckets} max={QUOTA_BOUNDS.syouyu.maxBuckets} onChange={(next) => syouyu("max_buckets", next)} />
+              <NumberField label="容量 / バケット (bytes)" value={value.syouyu.max_bytes_per_bucket} min={QUOTA_BOUNDS.syouyu.minBytesPerBucket} max={QUOTA_BOUNDS.syouyu.maxBytesPerBucket} onChange={(next) => syouyu("max_bytes_per_bucket", next)} />
+              <NumberField label="合計容量 (bytes)" value={value.syouyu.max_total_bytes} min={value.syouyu.max_bytes_per_bucket} max={QUOTA_BOUNDS.syouyu.maxTotalBytes} onChange={(next) => syouyu("max_total_bytes", next)} />
+            </ColumnLayout>
+          </SpaceBetween>
+          <SpaceBetween size="xs">
+            <Box variant="awsui-key-label">オブジェクトと認証情報</Box>
+            <ColumnLayout columns={3}>
+              <NumberField label="オブジェクト / バケット" value={value.syouyu.max_objects_per_bucket} max={QUOTA_BOUNDS.syouyu.maxObjectsPerBucket} onChange={(next) => syouyu("max_objects_per_bucket", next)} />
+              <NumberField label="認証情報 / バケット" value={value.syouyu.max_credentials_per_bucket} max={QUOTA_BOUNDS.syouyu.maxCredentialsPerBucket} onChange={(next) => syouyu("max_credentials_per_bucket", next)} />
+              <NumberField label="合計認証情報" value={value.syouyu.max_total_credentials} min={value.syouyu.max_credentials_per_bucket} max={QUOTA_BOUNDS.syouyu.maxTotalCredentials} onChange={(next) => syouyu("max_total_credentials", next)} />
+            </ColumnLayout>
+          </SpaceBetween>
+        </SpaceBetween>
       </Container>
     </SpaceBetween>
   );
@@ -625,6 +701,24 @@ export function OwnerQuotasPage() {
         ),
       },
       {
+        id: "syouyu",
+        header: "Syouyu",
+        accessorFn: (tenant) => tenant.usage.syouyu_buckets,
+        cell: ({ row }) => (
+          <SpaceBetween size="xxs">
+            <Box>
+              {formatNumber(row.original.usage.syouyu_buckets)} / {formatNumber(row.original.effective_limits.syouyu.max_buckets)} バケット
+            </Box>
+            <Box color="text-body-secondary">
+              割当 {formatBytes(row.original.usage.syouyu_configured_bytes)} / {formatBytes(row.original.effective_limits.syouyu.max_total_bytes)}
+            </Box>
+            <Box color="text-body-secondary">
+              認証情報 {formatNumber(row.original.usage.syouyu_credentials)} / {formatNumber(row.original.effective_limits.syouyu.max_total_credentials)} 件
+            </Box>
+          </SpaceBetween>
+        ),
+      },
+      {
         id: "actions",
         header: "操作",
         enableSorting: false,
@@ -677,8 +771,17 @@ export function OwnerQuotasPage() {
       configuredRooms: totals.configuredRooms + tenant.usage.flow_configured_rooms,
       flashServices: totals.flashServices + tenant.usage.flash_services,
       flashReplicas: totals.flashReplicas + tenant.usage.flash_replicas,
+      syouyuBuckets: totals.syouyuBuckets + tenant.usage.syouyu_buckets,
+      syouyuBytes: totals.syouyuBytes + tenant.usage.syouyu_configured_bytes,
     }),
-    { flowServices: 0, configuredRooms: 0, flashServices: 0, flashReplicas: 0 },
+    {
+      flowServices: 0,
+      configuredRooms: 0,
+      flashServices: 0,
+      flashReplicas: 0,
+      syouyuBuckets: 0,
+      syouyuBytes: 0,
+    },
   );
   const customLimitCount = tenants.filter((tenant) => tenant.override_limits).length;
 
@@ -697,7 +800,7 @@ export function OwnerQuotasPage() {
         }
       />
       <Container header={<Header variant="h2">サービス全体</Header>}>
-        <ColumnLayout columns={6} variant="text-grid">
+        <ColumnLayout columns={4} variant="text-grid">
           {([
             ["登録ユーザー", registeredAccounts.length],
             ["クラウドアカウント", tenants.length],
@@ -705,6 +808,8 @@ export function OwnerQuotasPage() {
             ["設定済みルーム上限", aggregate.configuredRooms],
             ["Flashサービス", aggregate.flashServices],
             ["Flash VM", aggregate.flashReplicas],
+            ["Syouyuバケット", aggregate.syouyuBuckets],
+            ["Syouyu割当 (GiB)", Math.ceil(aggregate.syouyuBytes / GIB_BYTES)],
           ] as const).map(([label, value]) => (
             <div key={label}>
               <Box variant="awsui-key-label">{label}</Box>
