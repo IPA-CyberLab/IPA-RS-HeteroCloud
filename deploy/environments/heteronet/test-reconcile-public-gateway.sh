@@ -96,6 +96,8 @@ for gateway_id in a b c d; do
   grep -Fq 'lb_try_duration 5s' "$gateway_file"
   grep -Fq 'registry.heterocloud.mizuame.app {' "$gateway_file"
   grep -Fq 'import heterocloud_envoy /api/v2.0/health' "$gateway_file"
+  grep -Fq 's3.heterocloud.mizuame.app {' "$gateway_file"
+  grep -Fq 'X-HeteroCloud-Syouyu-ACME-Visited-' "$gateway_file"
   if grep -Fq '127.0.0.1:18079' "$gateway_file"; then
     echo "gateway $gateway_id still pins Keycloak to localhost" >&2
     exit 1
