@@ -18,7 +18,8 @@ use url::Url;
 use zeroize::Zeroizing;
 
 use super::{
-    CliError, DnsSourceArgs, build_records, check_records_with, resolve_source, system_lookup,
+    CliError, DnsSourceArgs, build_records, check_records_with, normalize_domain, resolve_source,
+    system_lookup,
 };
 
 const EXTERNAL_DNS_REPOSITORY_NAME: &str = "external-dns";
@@ -45,6 +46,10 @@ pub struct ReconcileArgs {
     /// ExternalDNS provider name, such as cloudflare, aws, google, rfc2136, or webhook.
     #[arg(long)]
     pub provider: String,
+
+    /// Authoritative DNS zone containing --domain, for example mizuame.app.
+    #[arg(long)]
+    pub managed_zone: Option<String>,
 
     /// Map a UTF-8 token file into a provider environment variable, for example CF_API_TOKEN=/secure/token.
     #[arg(long = "credential-file", value_name = "ENV=PATH")]
@@ -221,6 +226,20 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
         .transpose()?;
 
     let (domain, addresses) = resolve_source(&args.source)?;
+    let managed_zone = args
+        .managed_zone
+        .as_deref()
+        .map(normalize_domain)
+        .transpose()?;
+    if let Some(zone) = managed_zone.as_deref()
+        && domain != zone
+        && !domain.ends_with(&format!(".{zone}"))
+    {
+        return Err(CliError::InvalidValue {
+            kind: "managed DNS zone",
+            value: format!("{domain} is not contained by {zone}"),
+        });
+    }
     let records = build_records(&domain, &addresses, args.ttl);
     // The canonical record follows Gateway status, while these records follow the
     // explicitly discovered public nodes and can be checked against that source.
@@ -281,7 +300,6 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
         "registry": "txt",
         "txtOwnerId": owner,
         "txtPrefix": "_heterocloud-",
-        "domainFilters": [domain],
         "labelFilter": format!("{DNS_PUBLISH_LABEL}=true"),
         "managedRecordTypes": ["A"],
         "interval": "5s",
@@ -309,6 +327,9 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
             "limits": {"memory": "192Mi"}
         }
     });
+    if let Some(zone) = managed_zone {
+        helm_values["domainFilters"] = json!([zone]);
+    }
     if !node_selector.is_empty() {
         helm_values["nodeSelector"] = json!(node_selector);
     }
@@ -1221,6 +1242,7 @@ mod tests {
                 service: "heterocloud-flow-turn".into(),
             },
             provider: provider.into(),
+            managed_zone: None,
             credential_files: Vec::new(),
             credential_secrets: Vec::new(),
             provider_args: Vec::new(),
@@ -1423,6 +1445,20 @@ mod tests {
         assert!(plan.helm_values.get("extraVolumes").is_none());
         assert!(plan.helm_values.get("extraVolumeMounts").is_none());
         assert!(plan.controller_kubeconfig.is_none());
+        assert!(plan.helm_values.get("domainFilters").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn managed_zone_filters_the_authoritative_parent_zone() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut args = base_args("cloudflare");
+        args.managed_zone = Some("Example.COM.".into());
+        let plan = build_plan(&args)?;
+        assert_eq!(plan.helm_values["domainFilters"], json!(["example.com"]));
+
+        args.managed_zone = Some("unrelated.example".into());
+        assert!(build_plan(&args).is_err());
         Ok(())
     }
 

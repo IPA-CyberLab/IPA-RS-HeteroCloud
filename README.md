@@ -55,15 +55,16 @@ separate [data-plane access contract](contracts/flow-access/v1/README.md).
 ## Public DNS onboarding
 
 The `heterocloud` CLI publishes node-scoped `cloud-<node>` management names
-and three cluster-scoped multi-address names: the canonical console domain,
-`flow.<domain>`, and `registry.<domain>`. It discovers the public IPv4 addresses from the
+and four cluster-scoped multi-address names: the canonical console domain,
+`flow.<domain>`, `registry.<domain>`, and `s3.<domain>`. It discovers the public IPv4 addresses from the
 HeteroNetwork-backed Flow TURN `LoadBalancer` Service by default.
 
 For automatic DNS, `dns reconcile` installs a pinned ExternalDNS controller
 and applies a provider-neutral `DNSEndpoint`. Node-scoped records remain in
 that CRD. The canonical console RRset follows the addresses reported by its
 HTTPRoute parent Gateway, while the unified Flow and registry RRsets follow
-their annotated LoadBalancer Services. Node failure and recovery therefore
+their annotated LoadBalancer Services. Syouyu's path-style S3 endpoint also
+follows the public Gateway. Node failure and recovery therefore
 remove and restore every cluster-scoped service address without rerunning the
 CLI. The provider is an adapter, so
 the same desired records work with Cloudflare, AWS, Google, RFC2136, or an
@@ -84,6 +85,7 @@ unset CF_API_TOKEN
 
 heterocloud dns reconcile \
   --domain heterocloud.mizuame.app \
+  --managed-zone mizuame.app \
   --provider cloudflare \
   --credential-file \
     CF_API_TOKEN="$HOME/.config/heterocloud/cloudflare-token" \
@@ -99,11 +101,13 @@ containing every healthy public gateway address.
 The unified Flow name covers HTTPS, WebSocket, LiveKit, STUN, and TURN client
 configuration; the protocol selects the service port. In this Cloudflare
 deployment only the canonical console and identity endpoint is proxied.
-`flow`, `registry`, and node-specific records remain DNS-only because Cloudflare's HTTP
+`flow`, `registry`, `s3`, and node-specific records remain DNS-only because Cloudflare's HTTP
 proxy cannot carry the complete RTC and TURN protocol surface. Other
 providers can use their equivalent `--http-edge-property` without changing
 the desired record set. ExternalDNS uses a TXT ownership registry and is
-restricted to the requested domain and HeteroCloud-labelled resources.
+restricted to HeteroCloud-labelled resources. `--managed-zone` optionally
+limits provider discovery to the authoritative parent zone; omit it when the
+provider account or workload identity is already scoped to exactly one zone.
 
 Provider authentication may instead use workload identity or a Secret that
 already exists in the controller namespace:
@@ -111,12 +115,14 @@ already exists in the controller namespace:
 ```sh
 heterocloud dns reconcile \
   --domain heterocloud.example.com \
+  --managed-zone example.com \
   --provider aws \
   --provider-values /secure/external-dns-aws-values.yaml \
   --kubeconfig /path/to/admin.conf
 
 heterocloud dns reconcile \
   --domain heterocloud.example.com \
+  --managed-zone example.com \
   --provider webhook \
   --credential-secret DNS_API_TOKEN=provider-credentials:api-token \
   --provider-values /secure/external-dns-webhook-values.yaml \
@@ -145,6 +151,7 @@ never point ExternalDNS at one control-plane node:
 ```sh
 heterocloud dns reconcile \
   --domain heterocloud.example.com \
+  --managed-zone example.com \
   --provider cloudflare \
   --credential-secret CF_API_TOKEN=cloudflare-credentials:api-token \
   --controller-node-selector node-role.kubernetes.io/control-plane= \
