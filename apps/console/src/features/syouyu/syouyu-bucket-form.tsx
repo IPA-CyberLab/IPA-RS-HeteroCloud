@@ -1,7 +1,7 @@
+import Box from "@cloudscape-design/components/box";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
 import FormField from "@cloudscape-design/components/form-field";
 import Input from "@cloudscape-design/components/input";
-import Select from "@cloudscape-design/components/select";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import type { FormEvent, ReactNode } from "react";
 import { ProjectSelector } from "@/components/shared/resource-selectors";
@@ -13,11 +13,6 @@ import {
   GIBIBYTE,
   type SyouyuBucketFormValue,
 } from "./syouyu-utils";
-
-const regions = [
-  { value: "heteronet-global", label: "HeteroNet Global" },
-  { value: "heteronet-jp", label: "HeteroNet Japan" },
-];
 
 function integer(value: string): number {
   const parsed = Number(value);
@@ -73,17 +68,7 @@ export function SyouyuBucketForm({
         </FormField>
         <ColumnLayout columns={3}>
           <FormField label="リージョン">
-            <Select
-              ariaLabel="リージョン"
-              selectedOption={
-                regions.find((region) => region.value === value.region) ?? regions[0]
-              }
-              options={regions}
-              disabled={disabled}
-              onChange={({ detail }) =>
-                update("region", detail.selectedOption.value ?? regions[0].value)
-              }
-            />
+            <Box variant="code">heteronet-global</Box>
           </FormField>
           <FormField
             label="容量上限 (GiB)"

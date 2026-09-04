@@ -11,6 +11,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub const POLICY_VERSION: &str = "2026-07-31";
+pub const SYOUYU_REGION: &str = "heteronet-global";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(transparent)]
@@ -254,17 +255,9 @@ pub struct SyouyuSpec {
 
 impl SyouyuSpec {
     pub fn validate(&self) -> Result<(), DomainError> {
-        if self.region.is_empty()
-            || self.region.len() > 63
-            || self
-                .region
-                .bytes()
-                .any(|byte| !byte.is_ascii_lowercase() && !byte.is_ascii_digit() && byte != b'-')
-            || self.region.starts_with('-')
-            || self.region.ends_with('-')
-        {
+        if self.region != SYOUYU_REGION {
             return Err(invalid_syouyu_spec(
-                "region must be a lowercase DNS label of at most 63 characters",
+                "region must be heteronet-global for the current Syouyu deployment",
             ));
         }
         validate_s3_bucket_name(&self.bucket_name)?;
@@ -1027,6 +1020,18 @@ mod tests {
             };
             assert!(spec.validate().is_err(), "{name} must be rejected");
         }
+    }
+
+    #[test]
+    fn syouyu_rejects_regions_without_a_storage_cluster() {
+        let spec = SyouyuSpec {
+            region: "heteronet-jp".into(),
+            bucket_name: "game-builds-2026".into(),
+            quota_bytes: 1_048_576,
+            quota_objects: 1,
+            metadata: json!({}),
+        };
+        assert!(spec.validate().is_err());
     }
 
     #[test]

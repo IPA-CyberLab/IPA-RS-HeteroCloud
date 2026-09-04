@@ -14,6 +14,7 @@ use url::Url;
 use crate::{
     flow_access::{FlowAccessError, FlowAccessSigner},
     oidc::{OidcConfig, OidcConfigError},
+    syouyu_provider::{SyouyuPrincipalSigner, SyouyuProviderError},
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -66,6 +67,30 @@ pub struct Config {
         default_value = "http://heterocloud-flash-api.heterocloud-flash.svc.cluster.local:8080/"
     )]
     pub flash_internal_endpoint: Url,
+
+    #[arg(
+        long,
+        env = "HETEROCLOUD_SYOUYU_INTERNAL_ENDPOINT",
+        default_value = "http://heterocloud-syouyu-api.heterocloud-syouyu.svc.cluster.local:8080/"
+    )]
+    pub syouyu_internal_endpoint: Url,
+
+    #[arg(long, env = "HETEROCLOUD_SYOUYU_ACCESS_SECRET_FILE")]
+    pub syouyu_access_secret_file: PathBuf,
+
+    #[arg(
+        long,
+        env = "HETEROCLOUD_SYOUYU_ACCESS_ISSUER",
+        default_value = "heterocloud"
+    )]
+    pub syouyu_access_issuer: String,
+
+    #[arg(
+        long,
+        env = "HETEROCLOUD_SYOUYU_ACCESS_AUDIENCE",
+        default_value = "heterocloud-syouyu-data"
+    )]
+    pub syouyu_access_audience: String,
 
     #[arg(long, env = "HETEROCLOUD_PROVIDER_SIGNING_KEY_FILE")]
     pub provider_signing_key_file: PathBuf,
@@ -246,11 +271,18 @@ impl Config {
             return Err(ConfigError::WeakCsrfKey);
         }
         let flow_access_secret = read_secret(&self.flow_access_secret_file).await?;
+        let syouyu_access_secret = read_secret(&self.syouyu_access_secret_file).await?;
         let provider_signing_key = read_secret(&self.provider_signing_key_file).await?;
         FlowAccessSigner::new(
             self.flow_access_issuer.clone(),
             self.flow_access_audience.clone(),
             flow_access_secret.clone(),
+        )?;
+        SyouyuPrincipalSigner::new(
+            self.syouyu_access_issuer.clone(),
+            self.syouyu_access_audience.clone(),
+            syouyu_access_secret.clone(),
+            Duration::from_secs(60),
         )?;
         let bootstrap_password = match &self.bootstrap_password_file {
             Some(path) => Some(read_secret(path).await?),
@@ -295,6 +327,7 @@ impl Config {
         validate_flow_public_endpoints(&self.flow_public_endpoints, self.secure_cookie)?;
         validate_flow_internal_endpoint(&self.flow_internal_endpoint)?;
         validate_flash_internal_endpoint(&self.flash_internal_endpoint)?;
+        validate_syouyu_internal_endpoint(&self.syouyu_internal_endpoint)?;
         validate_registry_config(
             self.registry_internal_endpoint.as_ref(),
             self.registry_public_endpoint.as_ref(),
@@ -304,6 +337,7 @@ impl Config {
             database_url,
             csrf_key,
             flow_access_secret,
+            syouyu_access_secret,
             provider_signing_key,
             bootstrap_password,
             oidc_client_secret,
@@ -321,6 +355,7 @@ impl Config {
         validate_flow_public_endpoints(&self.flow_public_endpoints, self.secure_cookie)?;
         validate_flow_internal_endpoint(&self.flow_internal_endpoint)?;
         validate_flash_internal_endpoint(&self.flash_internal_endpoint)?;
+        validate_syouyu_internal_endpoint(&self.syouyu_internal_endpoint)?;
         let mut allowed_origins = vec![self.public_origin.origin().ascii_serialization()];
         for origin in &self.additional_origins {
             let serialized = origin.origin().ascii_serialization();
@@ -385,6 +420,7 @@ pub struct LoadedSecrets {
     pub database_url: SecretString,
     pub csrf_key: SecretString,
     pub flow_access_secret: SecretString,
+    pub syouyu_access_secret: SecretString,
     pub provider_signing_key: SecretString,
     pub bootstrap_password: Option<SecretString>,
     pub oidc_client_secret: Option<SecretString>,
@@ -481,6 +517,20 @@ fn validate_flash_internal_endpoint(endpoint: &Url) -> Result<(), ConfigError> {
     Ok(())
 }
 
+fn validate_syouyu_internal_endpoint(endpoint: &Url) -> Result<(), ConfigError> {
+    if !matches!(endpoint.scheme(), "http" | "https")
+        || !endpoint.has_host()
+        || !endpoint.username().is_empty()
+        || endpoint.password().is_some()
+        || endpoint.query().is_some()
+        || endpoint.fragment().is_some()
+        || !matches!(endpoint.path(), "" | "/")
+    {
+        return Err(ConfigError::InvalidSyouyuInternalEndpoint);
+    }
+    Ok(())
+}
+
 fn validate_owner_config(origin: Option<&Url>, email: Option<&str>) -> Result<(), ConfigError> {
     if origin.is_some() != email.is_some() {
         return Err(ConfigError::IncompleteOwner);
@@ -554,12 +604,16 @@ pub enum ConfigError {
     FlowAccess(#[from] FlowAccessError),
     #[error(transparent)]
     Oidc(#[from] OidcConfigError),
+    #[error(transparent)]
+    SyouyuProvider(#[from] SyouyuProviderError),
     #[error("Flow public endpoints must be absolute HTTP(S) URLs")]
     InvalidFlowPublicEndpoint,
     #[error("Flow internal endpoint must be an absolute HTTP(S) base URL")]
     InvalidFlowInternalEndpoint,
     #[error("Flash internal endpoint must be an absolute HTTP(S) base URL")]
     InvalidFlashInternalEndpoint,
+    #[error("Syouyu internal endpoint must be an absolute HTTP(S) base URL")]
+    InvalidSyouyuInternalEndpoint,
     #[error("between one and sixteen Flow public endpoints are required")]
     MissingFlowPublicEndpoints,
     #[error("secret file is empty: {0}")]

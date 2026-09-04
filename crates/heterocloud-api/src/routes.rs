@@ -39,6 +39,7 @@ use heterocloud_store::{
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use time::Duration as CookieDuration;
 use tokio::sync::Semaphore;
 use url::Url;
@@ -57,6 +58,11 @@ use crate::{
         clear_transaction_cookie,
     },
     registry::RegistryClient,
+    syouyu_provider::{
+        IssuedSyouyuProviderCredential, SyouyuCredentialLimits, SyouyuProviderContext,
+        SyouyuProviderCredential, SyouyuProviderError, SyouyuProviderPermissions,
+        SyouyuProviderProxy, SyouyuProviderRejection,
+    },
 };
 
 const SESSION_COOKIE: &str = "hc_session";
@@ -86,6 +92,7 @@ pub struct AppState {
     pub config: RuntimeConfig,
     pub flow_client: reqwest::Client,
     pub flash_provider: Option<Arc<FlashProviderProxy>>,
+    pub syouyu_provider: Option<Arc<SyouyuProviderProxy>>,
     pub registry: Option<Arc<RegistryClient>>,
     pub registration_limiter: Arc<Semaphore>,
 }
@@ -185,6 +192,20 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             get(get_syouyu_bucket)
                 .put(update_syouyu_bucket)
                 .delete(delete_syouyu_bucket),
+        )
+        .route(
+            "/organizations/{organization_id}/syouyu/buckets/{service_instance_id}/usage",
+            get(get_syouyu_bucket_usage),
+        )
+        .route(
+            "/organizations/{organization_id}/syouyu/buckets/{service_instance_id}/credentials",
+            get(list_syouyu_credentials)
+                .post(create_syouyu_credential)
+                .layer(DefaultBodyLimit::max(SYOUYU_CREDENTIAL_BODY_LIMIT_BYTES)),
+        )
+        .route(
+            "/organizations/{organization_id}/syouyu/buckets/{service_instance_id}/credentials/{credential_id}",
+            axum::routing::delete(revoke_syouyu_credential),
         )
         .route(
             "/organizations/{organization_id}/registry",
@@ -1924,6 +1945,430 @@ async fn delete_syouyu_bucket(
     Ok((StatusCode::ACCEPTED, Json(instance)))
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SyouyuCredentialPermission {
+    Read,
+    Write,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateSyouyuCredential {
+    name: String,
+    permissions: BTreeSet<SyouyuCredentialPermission>,
+}
+
+#[derive(Serialize)]
+struct SyouyuCredentialResponse {
+    id: Uuid,
+    service_instance_id: Uuid,
+    name: String,
+    access_key_id: String,
+    permissions: Vec<SyouyuCredentialPermission>,
+    status: String,
+    created_at: DateTime<Utc>,
+    revoked_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize)]
+struct SyouyuCredentialSecretResponse<'a> {
+    credential: SyouyuCredentialResponse,
+    secret_access_key: &'a str,
+    endpoint: String,
+    region: String,
+    bucket: String,
+}
+
+#[derive(Serialize)]
+struct SyouyuUsageResponse {
+    quota_bytes: u64,
+    quota_objects: u64,
+    used_bytes: u64,
+    object_count: u64,
+    unfinished_upload_bytes: u64,
+    credential_count: u64,
+}
+
+struct AuthorizedSyouyuProvider {
+    provider: Arc<SyouyuProviderProxy>,
+    instance: ServiceInstance,
+    spec: SyouyuSpec,
+    credential_limits: SyouyuCredentialLimits,
+    principal_id: PrincipalId,
+}
+
+impl AuthorizedSyouyuProvider {
+    fn context(&self, permission: &str) -> SyouyuProviderContext {
+        SyouyuProviderContext {
+            principal_id: self.principal_id,
+            organization_id: self.instance.organization_id,
+            project_id: self.instance.project_id,
+            service_instance_id: self.instance.id,
+            permissions: BTreeSet::from([permission.to_owned()]),
+            credential_limits: self.credential_limits,
+        }
+    }
+}
+
+async fn get_syouyu_bucket_usage(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Response, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    let target = authorized_syouyu_provider(
+        &state,
+        &actor,
+        organization_id,
+        service_instance_id,
+        "syouyu:GetBucketUsage",
+        &syouyu_bucket_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let usage_context = target.context("syouyu.usage.read");
+    let overview_context = target.context("syouyu.overview.read");
+    let (usage, overview) = tokio::try_join!(
+        target.provider.usage(&usage_context),
+        target.provider.service_overview(&overview_context),
+    )
+    .map_err(map_syouyu_provider_error)?;
+    if usage.service_instance_id != service_instance_id
+        || overview.service_instance_id != service_instance_id
+        || usage.quota_bytes != target.spec.quota_bytes
+        || usage.quota_objects != target.spec.quota_objects
+        || overview.region != target.spec.region
+        || overview.bucket_name != target.spec.bucket_name
+    {
+        tracing::warn!(service_instance_id = %service_instance_id, "Syouyu returned a mismatched service scope");
+        return Err(ApiError::SyouyuProviderUnavailable);
+    }
+    Ok(no_store_response(Json(SyouyuUsageResponse {
+        quota_bytes: usage.quota_bytes,
+        quota_objects: usage.quota_objects,
+        used_bytes: usage.bytes_used,
+        object_count: usage.objects_used,
+        unfinished_upload_bytes: usage.unfinished_upload_bytes,
+        credential_count: overview.active_credentials,
+    })))
+}
+
+async fn list_syouyu_credentials(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Response, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    let target = authorized_syouyu_provider(
+        &state,
+        &actor,
+        organization_id,
+        service_instance_id,
+        "syouyu:ListCredentials",
+        &syouyu_credential_collection_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let credentials = target
+        .provider
+        .list_credentials(&target.context("syouyu.credential.read"))
+        .await
+        .map_err(map_syouyu_provider_error)?
+        .into_iter()
+        .map(|credential| syouyu_credential_response(service_instance_id, credential))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(no_store_response(Json(json!({ "items": credentials }))))
+}
+
+async fn create_syouyu_credential(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<CreateSyouyuCredential>,
+) -> Result<Response, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let idempotency_key = required_syouyu_idempotency_key(&headers)?;
+    validate_syouyu_credential_name(&request.name)?;
+    let permissions = syouyu_provider_permissions(&request.permissions)?;
+    let target = authorized_syouyu_provider(
+        &state,
+        &actor,
+        organization_id,
+        service_instance_id,
+        "syouyu:CreateCredential",
+        &syouyu_credential_collection_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let issued = target
+        .provider
+        .create_credential(
+            &target.context("syouyu.credential.create"),
+            idempotency_key,
+            &request.name,
+            permissions,
+        )
+        .await
+        .map_err(map_syouyu_provider_error)?;
+    let IssuedSyouyuProviderCredential {
+        credential,
+        secret_access_key,
+        bucket_name,
+        endpoint,
+    } = issued;
+    let credential_id = credential.id;
+    let credential = syouyu_credential_response(service_instance_id, credential);
+    if bucket_name != target.spec.bucket_name
+        || !valid_syouyu_endpoint(&endpoint)
+        || credential.is_err()
+    {
+        tracing::warn!(service_instance_id = %service_instance_id, "Syouyu returned invalid credential scope metadata");
+        compensate_syouyu_credential(&target, credential_id, idempotency_key).await;
+        return Err(ApiError::SyouyuProviderUnavailable);
+    }
+    let credential = credential.map_err(|_| ApiError::SyouyuProviderUnavailable)?;
+    let response = (
+        StatusCode::CREATED,
+        Json(SyouyuCredentialSecretResponse {
+            credential,
+            secret_access_key: secret_access_key.expose_secret(),
+            endpoint,
+            region: target.spec.region,
+            bucket: bucket_name,
+        }),
+    )
+        .into_response();
+    Ok(no_store_response(response))
+}
+
+async fn revoke_syouyu_credential(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id, credential_id)): Path<(Uuid, Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Response, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let idempotency_key = required_syouyu_idempotency_key(&headers)?;
+    let target = authorized_syouyu_provider(
+        &state,
+        &actor,
+        organization_id,
+        service_instance_id,
+        "syouyu:RevokeCredential",
+        &syouyu_credential_resource(organization_id, service_instance_id, credential_id),
+    )
+    .await?;
+    target
+        .provider
+        .revoke_credential(
+            &target.context("syouyu.credential.revoke"),
+            credential_id,
+            idempotency_key,
+        )
+        .await
+        .map_err(map_syouyu_provider_error)?;
+    Ok(no_store_response(StatusCode::NO_CONTENT))
+}
+
+async fn authorized_syouyu_provider(
+    state: &AppState,
+    actor: &AuthenticatedActor,
+    organization_id: Uuid,
+    service_instance_id: Uuid,
+    action: &str,
+    resource: &str,
+) -> Result<AuthorizedSyouyuProvider, ApiError> {
+    let authorization = authorize_actor(
+        state,
+        actor,
+        OrganizationId(organization_id),
+        action,
+        resource,
+    )
+    .await?;
+    let instance = syouyu_bucket(state, organization_id, service_instance_id).await?;
+    if instance.state != ServiceState::Ready {
+        return Err(ApiError::SyouyuBucketNotReady);
+    }
+    let spec = serde_json::from_value::<SyouyuSpec>(instance.spec.clone())
+        .map_err(|_| ApiError::Internal)?;
+    validate_syouyu_spec(&spec)?;
+    let limits = state
+        .store
+        .effective_resource_quota(OrganizationId(organization_id))
+        .await
+        .map_err(ApiError::from_store)?;
+    let provider = state
+        .syouyu_provider
+        .as_ref()
+        .cloned()
+        .ok_or(ApiError::SyouyuProviderUnavailable)?;
+    Ok(AuthorizedSyouyuProvider {
+        provider,
+        instance,
+        spec,
+        credential_limits: SyouyuCredentialLimits {
+            max_credentials_per_bucket: limits.syouyu.max_credentials_per_bucket,
+            max_total_credentials: limits.syouyu.max_total_credentials,
+        },
+        principal_id: authorization.principal_id,
+    })
+}
+
+fn syouyu_provider_permissions(
+    permissions: &BTreeSet<SyouyuCredentialPermission>,
+) -> Result<SyouyuProviderPermissions, ApiError> {
+    if permissions.is_empty() {
+        return Err(ApiError::BadRequest(
+            "permissions must include read, write, or both".into(),
+        ));
+    }
+    Ok(SyouyuProviderPermissions {
+        read: permissions.contains(&SyouyuCredentialPermission::Read),
+        write: permissions.contains(&SyouyuCredentialPermission::Write),
+    })
+}
+
+fn syouyu_credential_response(
+    service_instance_id: Uuid,
+    credential: SyouyuProviderCredential,
+) -> Result<SyouyuCredentialResponse, ApiError> {
+    let mut permissions = Vec::with_capacity(2);
+    if credential.permissions.read {
+        permissions.push(SyouyuCredentialPermission::Read);
+    }
+    if credential.permissions.write {
+        permissions.push(SyouyuCredentialPermission::Write);
+    }
+    if permissions.is_empty() || !matches!(credential.status.as_str(), "active" | "revoked") {
+        return Err(ApiError::SyouyuProviderUnavailable);
+    }
+    Ok(SyouyuCredentialResponse {
+        id: credential.id,
+        service_instance_id,
+        name: credential.name,
+        access_key_id: credential.access_key_id,
+        permissions,
+        status: credential.status,
+        created_at: credential.created_at,
+        revoked_at: credential.revoked_at,
+    })
+}
+
+fn required_syouyu_idempotency_key(headers: &HeaderMap) -> Result<Uuid, ApiError> {
+    let raw = headers
+        .get("idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| ApiError::BadRequest("Idempotency-Key must be a canonical UUID".into()))?;
+    let key = Uuid::parse_str(raw)
+        .map_err(|_| ApiError::BadRequest("Idempotency-Key must be a canonical UUID".into()))?;
+    if key.is_nil() || key.to_string() != raw {
+        return Err(ApiError::BadRequest(
+            "Idempotency-Key must be a canonical UUID".into(),
+        ));
+    }
+    Ok(key)
+}
+
+async fn compensate_syouyu_credential(
+    target: &AuthorizedSyouyuProvider,
+    credential_id: Uuid,
+    create_idempotency_key: Uuid,
+) {
+    if let Err(error) = target
+        .provider
+        .revoke_credential(
+            &target.context("syouyu.credential.revoke"),
+            credential_id,
+            syouyu_compensation_idempotency_key(create_idempotency_key),
+        )
+        .await
+    {
+        tracing::error!(
+            error = %error,
+            service_instance_id = %target.instance.id.0,
+            credential_id = %credential_id,
+            "failed to compensate invalid Syouyu credential response"
+        );
+    }
+}
+
+fn syouyu_compensation_idempotency_key(create_idempotency_key: Uuid) -> Uuid {
+    let digest = Sha256::digest(
+        [
+            b"heterocloud-syouyu-create-compensation:".as_slice(),
+            create_idempotency_key.as_bytes(),
+        ]
+        .concat(),
+    );
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
+}
+
+fn validate_syouyu_credential_name(name: &str) -> Result<(), ApiError> {
+    if name.trim() != name || name.is_empty() || name.len() > 120 || name.contains('\0') {
+        return Err(ApiError::BadRequest(
+            "name must contain between 1 and 120 bytes without surrounding whitespace".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn valid_syouyu_endpoint(endpoint: &str) -> bool {
+    Url::parse(endpoint).is_ok_and(|endpoint| {
+        matches!(endpoint.scheme(), "http" | "https")
+            && endpoint.has_host()
+            && endpoint.username().is_empty()
+            && endpoint.password().is_none()
+            && endpoint.query().is_none()
+            && endpoint.fragment().is_none()
+            && matches!(endpoint.path(), "" | "/")
+    })
+}
+
+fn map_syouyu_provider_error(error: SyouyuProviderError) -> ApiError {
+    let mapped = match &error {
+        SyouyuProviderError::Rejected(SyouyuProviderRejection::InvalidRequest) => {
+            ApiError::BadRequest("The Syouyu request is invalid.".into())
+        }
+        SyouyuProviderError::Rejected(SyouyuProviderRejection::NotFound) => ApiError::NotFound,
+        SyouyuProviderError::Rejected(SyouyuProviderRejection::Conflict) => ApiError::Conflict,
+        SyouyuProviderError::Rejected(SyouyuProviderRejection::RateLimited) => {
+            ApiError::TooManyRequests
+        }
+        SyouyuProviderError::Rejected(
+            SyouyuProviderRejection::Authentication | SyouyuProviderRejection::Unavailable,
+        )
+        | SyouyuProviderError::InvalidConfiguration(_)
+        | SyouyuProviderError::InvalidContext
+        | SyouyuProviderError::InvalidSystemTime
+        | SyouyuProviderError::InvalidResponse
+        | SyouyuProviderError::Http(_)
+        | SyouyuProviderError::Json(_)
+        | SyouyuProviderError::Url(_) => ApiError::SyouyuProviderUnavailable,
+    };
+    if matches!(mapped, ApiError::SyouyuProviderUnavailable) {
+        tracing::warn!(error = %error, "Syouyu provider request failed");
+    }
+    mapped
+}
+
+fn no_store_response(response: impl IntoResponse) -> Response {
+    let mut response = response.into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    response
+        .headers_mut()
+        .insert(header::PRAGMA, header::HeaderValue::from_static("no-cache"));
+    response
+}
+
 async fn list_flash_containers(
     State(state): State<Arc<AppState>>,
     Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
@@ -3530,6 +3975,27 @@ fn syouyu_bucket_resource(organization_id: Uuid, service_instance_id: Uuid) -> S
     )
 }
 
+fn syouyu_credential_collection_resource(
+    organization_id: Uuid,
+    service_instance_id: Uuid,
+) -> String {
+    organization_resource(
+        organization_id,
+        &format!("syouyu/bucket/{service_instance_id}/credential/*"),
+    )
+}
+
+fn syouyu_credential_resource(
+    organization_id: Uuid,
+    service_instance_id: Uuid,
+    credential_id: Uuid,
+) -> String {
+    organization_resource(
+        organization_id,
+        &format!("syouyu/bucket/{service_instance_id}/credential/{credential_id}"),
+    )
+}
+
 fn deserialize_stored_flow_spec(mut value: Value) -> Result<FlowSpec, ApiError> {
     let object = value.as_object_mut().ok_or(ApiError::Internal)?;
     object
@@ -3602,6 +4068,7 @@ const fn default_invitation_ttl_hours() -> i64 {
 
 const INVITATION_MAX_TTL_HOURS: i64 = 24;
 const FLOW_CREDENTIAL_BODY_LIMIT_BYTES: usize = 16 * 1024;
+const SYOUYU_CREDENTIAL_BODY_LIMIT_BYTES: usize = 8 * 1024;
 const FLOW_ACCESS_DEFAULT_TTL_SECONDS: u64 = 300;
 const FLOW_ACCESS_MIN_TTL_SECONDS: u64 = 30;
 const FLOW_ACCESS_MAX_TTL_SECONDS: u64 = 300;
@@ -3654,6 +4121,7 @@ mod tests {
     use uuid::Uuid;
 
     use crate::error::ApiError;
+    use crate::syouyu_provider::{SyouyuProviderCredential, SyouyuProviderPermissions};
 
     use super::{
         CSRF_HEADER, CreateDeveloperAccessCredential, CreateInvitation,
@@ -3663,7 +4131,8 @@ mod tests {
         SESSION_COOKIE, deserialize_stored_flow_spec, flash_collection_resource,
         flash_service_resource, flow_permission_iam_action, owner_network_boundary_allows,
         parse_api_key_prefix, parse_flow_developer_credential_prefix, request_source_ip,
-        valid_kubernetes_name, validate_developer_credential_expiry,
+        required_syouyu_idempotency_key, syouyu_compensation_idempotency_key,
+        syouyu_credential_response, valid_kubernetes_name, validate_developer_credential_expiry,
         validate_developer_credential_name, validate_flash_spec, validate_flow_access_target,
         validate_flow_access_ttl, validate_flow_permissions, validate_flow_spec,
         validate_invitation_ttl, validate_list_limit, validate_slug,
@@ -3831,6 +4300,58 @@ mod tests {
             metadata: Default::default(),
         };
         assert!(validate_flash_spec(&spec).is_ok());
+    }
+
+    #[test]
+    fn syouyu_credential_contract_is_prefix_free_and_uses_only_read_write()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let service_id = Uuid::from_u128(40);
+        let credential = syouyu_credential_response(
+            service_id,
+            SyouyuProviderCredential {
+                id: Uuid::from_u128(41),
+                name: "application backend".into(),
+                access_key_id: "GK-test".into(),
+                permissions: SyouyuProviderPermissions {
+                    read: true,
+                    write: true,
+                },
+                status: "active".into(),
+                created_at: Utc::now(),
+                revoked_at: None,
+            },
+        )?;
+        let value = serde_json::to_value(credential)?;
+        assert_eq!(value["permissions"], json!(["read", "write"]));
+        assert_eq!(value["service_instance_id"], service_id.to_string());
+        assert!(value.get("prefix").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn syouyu_mutation_idempotency_key_must_be_canonical_and_compensation_is_stable()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let canonical = "01890abc-def0-7abc-8def-0123456789ab";
+        let expected = Uuid::parse_str(canonical)?;
+        let mut headers = HeaderMap::new();
+        headers.insert("idempotency-key", HeaderValue::from_str(canonical)?);
+        assert_eq!(required_syouyu_idempotency_key(&headers)?, expected);
+        let first = syouyu_compensation_idempotency_key(expected);
+        let second = syouyu_compensation_idempotency_key(expected);
+        assert_eq!(first, second);
+        assert_ne!(first, expected);
+
+        for invalid in [
+            "01890ABC-DEF0-7ABC-8DEF-0123456789AB",
+            "01890abcdef07abc8def0123456789ab",
+            "00000000-0000-0000-0000-000000000000",
+        ] {
+            headers.insert("idempotency-key", HeaderValue::from_str(invalid)?);
+            assert!(required_syouyu_idempotency_key(&headers).is_err());
+        }
+        headers.remove("idempotency-key");
+        assert!(required_syouyu_idempotency_key(&headers).is_err());
+        Ok(())
     }
 
     #[test]

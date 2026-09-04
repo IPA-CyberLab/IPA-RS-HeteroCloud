@@ -467,6 +467,7 @@ async fn test_state() -> Result<
             .tls_certs_only(Vec::<reqwest::tls::Certificate>::new())
             .build()?,
         flash_provider: None,
+        syouyu_provider: None,
         registry: None,
         registration_limiter: Arc::new(Semaphore::new(2)),
     });

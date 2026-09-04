@@ -174,10 +174,15 @@ describe("SyouyuBucketDetailPage", () => {
     await user.click(screen.getByRole("button", { name: "発行" }));
 
     expect(await screen.findByText("one-time-secret-value")).toBeInTheDocument();
-    expect(create).toHaveBeenCalledWith("organization-1", "bucket-1", {
-      name: "ue5-client",
-      permissions: ["read", "write"],
-    });
+    expect(create).toHaveBeenCalledWith(
+      "organization-1",
+      "bucket-1",
+      {
+        name: "ue5-client",
+        permissions: ["read", "write"],
+      },
+      expect.any(String),
+    );
     await user.click(screen.getByRole("button", { name: "閉じる" }));
     await waitFor(() =>
       expect(screen.queryByText("one-time-secret-value")).not.toBeInTheDocument(),
@@ -206,8 +211,28 @@ describe("SyouyuBucketDetailPage", () => {
         "organization-1",
         "bucket-1",
         "credential-1",
+        expect.any(String),
       ),
     );
+  });
+
+  it("発行応答を失った再試行では同じ冪等キーを使う", async () => {
+    const user = userEvent.setup();
+    const create = vi
+      .spyOn(api.syouyu.buckets.credentials, "create")
+      .mockRejectedValueOnce(new Error("connection lost"))
+      .mockResolvedValueOnce(secret);
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "認証情報を発行" }));
+    await user.type(screen.getByRole("textbox", { name: "名前" }), "retry-client");
+    await user.click(screen.getByRole("button", { name: "発行" }));
+    await screen.findByText("予期しないエラーが発生しました。");
+    await user.click(screen.getByRole("button", { name: "発行" }));
+    expect(await screen.findByText("one-time-secret-value")).toBeInTheDocument();
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls[1]?.[3]).toBe(create.mock.calls[0]?.[3]);
   });
 
   it("バケット名の入力確認後に空バケットを削除する", async () => {

@@ -38,6 +38,11 @@ flashExec:
   audience: heterocloud-flash
   providerKeyId: heterocloud-provider-1
 
+syouyu:
+  internalEndpoint: http://heterocloud-syouyu-api.heterocloud-syouyu.svc.cluster.local:8080/
+  accessIssuer: heterocloud
+  accessAudience: heterocloud-syouyu-data
+
 worker:
   replicaCount: 3
   flowEndpoint: http://heterocloud-flow-api.heterocloud-flow.svc.cluster.local:8080/
@@ -59,6 +64,8 @@ secrets:
   tlsSecretName: heterocloud-tls
   flowAccessSecretName: heterocloud-flow-access
   flowAccessSecretKey: hmac-secret
+  syouyuAccessSecretName: heterocloud-syouyu-access
+  syouyuAccessSecretKey: hmac-secret
   oidcSecretName: heterocloud-oidc
   oidcClientSecretKey: client-secret
   providerSigningSecretName: heterocloud-provider-signing

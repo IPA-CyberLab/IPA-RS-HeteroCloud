@@ -74,6 +74,10 @@ spec:
             - --flow-public-endpoints={{ join "," (required "flowPublicEndpoints is required" .Values.flowPublicEndpoints) }}
             - --flow-internal-endpoint={{ required "flowInternalEndpoint is required" .Values.flowInternalEndpoint }}
             - --flash-internal-endpoint={{ required "flashExec.endpoint is required" .Values.flashExec.endpoint }}
+            - --syouyu-internal-endpoint={{ required "syouyu.internalEndpoint is required" .Values.syouyu.internalEndpoint }}
+            - --syouyu-access-secret-file=/var/run/secrets/syouyu-access/hmac-secret
+            - --syouyu-access-issuer={{ required "syouyu.accessIssuer is required" .Values.syouyu.accessIssuer }}
+            - --syouyu-access-audience={{ required "syouyu.accessAudience is required" .Values.syouyu.accessAudience }}
             {{- if .Values.registry.enabled }}
             - --registry-internal-endpoint={{ required "registry.internalEndpoint is required" .Values.registry.internalEndpoint }}
             - --registry-public-endpoint={{ required "registry.publicEndpoint is required" .Values.registry.publicEndpoint }}
@@ -153,6 +157,9 @@ spec:
             - name: flow-access
               mountPath: /var/run/secrets/flow-access
               readOnly: true
+            - name: syouyu-access
+              mountPath: /var/run/secrets/syouyu-access
+              readOnly: true
             - name: provider
               mountPath: /var/run/secrets/provider
               readOnly: true
@@ -192,6 +199,13 @@ spec:
             defaultMode: 0400
             items:
               - key: {{ .Values.secrets.flowAccessSecretKey }}
+                path: hmac-secret
+        - name: syouyu-access
+          secret:
+            secretName: {{ required "secrets.syouyuAccessSecretName is required" .Values.secrets.syouyuAccessSecretName }}
+            defaultMode: 0400
+            items:
+              - key: {{ required "secrets.syouyuAccessSecretKey is required" .Values.secrets.syouyuAccessSecretKey }}
                 path: hmac-secret
         - name: provider
           secret:

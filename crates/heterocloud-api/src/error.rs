@@ -21,10 +21,14 @@ pub enum ApiError {
     IdentityProviderUnavailable,
     #[error("Flash provider is unavailable")]
     FlashProviderUnavailable,
+    #[error("Syouyu provider is unavailable")]
+    SyouyuProviderUnavailable,
     #[error("resource not found")]
     NotFound,
     #[error("service instance is not ready")]
     ServiceInstanceNotReady,
+    #[error("Syouyu bucket is not ready")]
+    SyouyuBucketNotReady,
     #[error("realtime provider is unavailable")]
     RealtimeProviderUnavailable,
     #[error("Flash Registry is unavailable")]
@@ -92,6 +96,11 @@ impl IntoResponse for ApiError {
                 "flash_provider_unavailable",
                 "The Flash provider is temporarily unavailable.",
             ),
+            Self::SyouyuProviderUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "syouyu_provider_unavailable",
+                "The Syouyu provider is temporarily unavailable.",
+            ),
             Self::NotFound => (
                 StatusCode::NOT_FOUND,
                 "not_found",
@@ -101,6 +110,11 @@ impl IntoResponse for ApiError {
                 StatusCode::CONFLICT,
                 "service_instance_not_ready",
                 "The Flow service instance is not ready for access contexts.",
+            ),
+            Self::SyouyuBucketNotReady => (
+                StatusCode::CONFLICT,
+                "syouyu_bucket_not_ready",
+                "The Syouyu bucket is not ready for data access.",
             ),
             Self::RealtimeProviderUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,

@@ -84,6 +84,9 @@ export function SyouyuCredentialsSection({
   );
   const credentials = useQuery(credentialsOptions);
   const [createOpen, setCreateOpen] = useState(false);
+  const [createIdempotencyKey, setCreateIdempotencyKey] = useState<string | null>(
+    null,
+  );
   const [name, setName] = useState("");
   const [permissions, setPermissions] = useState<SyouyuPermission[]>(
     syouyuPermissions.map((permission) => permission.value),
@@ -93,35 +96,50 @@ export function SyouyuCredentialsSection({
     null,
   );
   const [revokeTarget, setRevokeTarget] = useState<SyouyuCredential | null>(null);
+  const [revokeIdempotencyKey, setRevokeIdempotencyKey] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     setSecret(null);
     setCopied(null);
+    setCreateIdempotencyKey(null);
+    setRevokeTarget(null);
+    setRevokeIdempotencyKey(null);
   }, [organizationId, bucketId]);
 
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: credentialsOptions.queryKey });
   const createCredential = useMutation({
-    mutationFn: () =>
-      api.syouyu.buckets.credentials.create(organizationId, bucketId, {
-        name: name.trim(),
-        permissions,
-      }),
+    mutationFn: () => {
+      if (!createIdempotencyKey) throw new Error("missing idempotency key");
+      return api.syouyu.buckets.credentials.create(
+        organizationId,
+        bucketId,
+        { name: name.trim(), permissions },
+        createIdempotencyKey,
+      );
+    },
     onSuccess: async (value) => {
       setCreateOpen(false);
+      setCreateIdempotencyKey(null);
       setSecret(value);
       await refresh();
     },
   });
   const revokeCredential = useMutation({
-    mutationFn: (credentialId: string) =>
-      api.syouyu.buckets.credentials.revoke(
+    mutationFn: (credentialId: string) => {
+      if (!revokeIdempotencyKey) throw new Error("missing idempotency key");
+      return api.syouyu.buckets.credentials.revoke(
         organizationId,
         bucketId,
         credentialId,
-      ),
+        revokeIdempotencyKey,
+      );
+    },
     onSuccess: async () => {
       setRevokeTarget(null);
+      setRevokeIdempotencyKey(null);
       await refresh();
     },
   });
@@ -145,6 +163,23 @@ export function SyouyuCredentialsSection({
     setSecret(null);
     setCopied(null);
     createCredential.reset();
+  };
+  const closeCreate = () => {
+    setCreateOpen(false);
+    setCreateIdempotencyKey(null);
+    createCredential.reset();
+  };
+  const closeRevoke = () => {
+    setRevokeTarget(null);
+    setRevokeIdempotencyKey(null);
+    revokeCredential.reset();
+  };
+  const changeCreateInput = (change: () => void) => {
+    if (createCredential.isError) {
+      createCredential.reset();
+      setCreateIdempotencyKey(crypto.randomUUID());
+    }
+    change();
   };
 
   return (
@@ -180,6 +215,7 @@ export function SyouyuCredentialsSection({
                       syouyuPermissions.map((permission) => permission.value),
                     );
                     createCredential.reset();
+                    setCreateIdempotencyKey(crypto.randomUUID());
                     setCreateOpen(true);
                   }}
                 >
@@ -228,6 +264,7 @@ export function SyouyuCredentialsSection({
                 disabled={item.status !== "active"}
                 onClick={() => {
                   revokeCredential.reset();
+                  setRevokeIdempotencyKey(crypto.randomUUID());
                   setRevokeTarget(item);
                 }}
               />
@@ -253,13 +290,13 @@ export function SyouyuCredentialsSection({
 
       <Modal
         visible={createOpen}
-        onDismiss={() => setCreateOpen(false)}
+        onDismiss={closeCreate}
         size="large"
         header="アクセス認証情報を発行"
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button onClick={() => setCreateOpen(false)}>キャンセル</Button>
+              <Button onClick={closeCreate}>キャンセル</Button>
               <Button
                 variant="primary"
                 iconName="key"
@@ -280,7 +317,9 @@ export function SyouyuCredentialsSection({
               autoComplete="off"
               placeholder="production-backend"
               disabled={createCredential.isPending}
-              onChange={({ detail }) => setName(detail.value.slice(0, 120))}
+              onChange={({ detail }) =>
+                changeCreateInput(() => setName(detail.value.slice(0, 120)))
+              }
             />
           </FormField>
           <FormField
@@ -295,9 +334,11 @@ export function SyouyuCredentialsSection({
               placeholder="権限を選択"
               disabled={createCredential.isPending}
               onChange={({ detail }) =>
-                setPermissions(
-                  detail.selectedOptions.flatMap((option) =>
-                    option.value ? [option.value as SyouyuPermission] : [],
+                changeCreateInput(() =>
+                  setPermissions(
+                    detail.selectedOptions.flatMap((option) =>
+                      option.value ? [option.value as SyouyuPermission] : [],
+                    ),
                   ),
                 )
               }
@@ -393,12 +434,12 @@ export function SyouyuCredentialsSection({
 
       <Modal
         visible={revokeTarget !== null}
-        onDismiss={() => setRevokeTarget(null)}
+        onDismiss={closeRevoke}
         header="アクセス認証情報を失効"
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button onClick={() => setRevokeTarget(null)}>キャンセル</Button>
+              <Button onClick={closeRevoke}>キャンセル</Button>
               <Button
                 variant="primary"
                 iconName="remove"

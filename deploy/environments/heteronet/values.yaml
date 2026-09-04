@@ -55,9 +55,16 @@ flowPublicEndpoints:
   - https://flow.heterocloud.mizuame.app
 flowInternalEndpoint: http://heterocloud-flow-api.heterocloud-flow.svc.cluster.local:8080/
 
+syouyu:
+  internalEndpoint: http://heterocloud-syouyu-api.heterocloud-syouyu.svc.cluster.local:8080/
+  accessIssuer: heterocloud
+  accessAudience: heterocloud-syouyu-data
+
 secrets:
   flowAccessSecretName: heterocloud-flow-access
   flowAccessSecretKey: hmac-secret
+  syouyuAccessSecretName: heterocloud-syouyu-access
+  syouyuAccessSecretKey: hmac-secret
 
 image:
   repository: ghcr.io/ipa-cyberlab/ipa-rs-heterocloud
@@ -67,6 +74,7 @@ worker:
   replicaCount: 4
   flowEndpoint: http://heterocloud-flow-api.heterocloud-flow.svc.cluster.local:8080/
   flashEndpoint: http://heterocloud-flash-api.heterocloud-flash.svc.cluster.local:8080/
+  syouyuEndpoint: http://heterocloud-syouyu-api.heterocloud-syouyu.svc.cluster.local:8080/
   providerIssuer: heterocloud
   flowAudience: heterocloud-flow
   flashAudience: heterocloud-flash

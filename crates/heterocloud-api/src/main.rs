@@ -4,6 +4,7 @@ use clap::Parser;
 use heterocloud_api::{
     app, config::Config, flash_provider::FlashProviderProxy,
     metrics::spawn_realtime_metrics_collector, registry::RegistryClient, routes::AppState,
+    syouyu_provider::SyouyuProviderProxy,
 };
 use heterocloud_auth::hash_password;
 use heterocloud_provider::ProviderSigner;
@@ -66,6 +67,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         flash_provider_signer,
         provider_client.clone(),
     );
+    let syouyu_provider = SyouyuProviderProxy::new(
+        config.syouyu_internal_endpoint.clone(),
+        config.syouyu_access_issuer.clone(),
+        config.syouyu_access_audience.clone(),
+        secrets.syouyu_access_secret,
+        provider_client.clone(),
+    )?;
     let registry = match (
         config.registry_internal_endpoint.clone(),
         config.registry_public_endpoint.clone(),
@@ -91,6 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config: runtime,
         flow_client: provider_client,
         flash_provider: Some(Arc::new(flash_provider)),
+        syouyu_provider: Some(Arc::new(syouyu_provider)),
         registry,
         registration_limiter: Arc::new(Semaphore::new(4)),
     });

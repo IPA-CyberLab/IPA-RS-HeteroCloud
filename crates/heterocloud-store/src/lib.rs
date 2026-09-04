@@ -2533,6 +2533,12 @@ async fn prepare_syouyu_spec(
     let mut bytes = requested.quota_bytes;
     for row in rows {
         if excluded_service_id.is_some_and(|id| id.0 == row.id) {
+            let stored: SyouyuSpec = serde_json::from_value(row.spec)?;
+            if requested.bucket_name != stored.bucket_name || requested.region != stored.region {
+                return Err(StoreError::RequestRejected(
+                    "Syouyu bucket_name and region cannot be changed after creation".into(),
+                ));
+            }
             continue;
         }
         let stored: SyouyuSpec = serde_json::from_value(row.spec)?;

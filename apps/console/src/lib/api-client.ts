@@ -718,25 +718,34 @@ export class HeteroCloudApiClient {
           organizationId: string,
           bucketId: string,
           input: CreateSyouyuCredentialRequest,
+          idempotencyKey: string,
         ) =>
           this.request<SyouyuCredentialSecret>(
             organizationPath(
               organizationId,
               `syouyu/buckets/${encodeURIComponent(bucketId)}/credentials`,
             ),
-            { method: "POST", body: input },
+            {
+              method: "POST",
+              body: input,
+              headers: { "Idempotency-Key": idempotencyKey },
+            },
           ),
         revoke: (
           organizationId: string,
           bucketId: string,
           credentialId: string,
+          idempotencyKey: string,
         ) =>
           this.request<void>(
             organizationPath(
               organizationId,
               `syouyu/buckets/${encodeURIComponent(bucketId)}/credentials/${encodeURIComponent(credentialId)}`,
             ),
-            { method: "DELETE" },
+            {
+              method: "DELETE",
+              headers: { "Idempotency-Key": idempotencyKey },
+            },
           ),
       },
     },

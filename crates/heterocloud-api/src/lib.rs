@@ -6,6 +6,7 @@ pub mod metrics;
 pub mod oidc;
 pub mod registry;
 pub mod routes;
+pub mod syouyu_provider;
 
 use std::{path::Path, sync::Arc};
 
