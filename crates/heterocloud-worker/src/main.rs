@@ -38,6 +38,9 @@ struct Config {
     #[arg(long, env = "HETEROCLOUD_FLASH_ENDPOINT")]
     flash_endpoint: Url,
 
+    #[arg(long, env = "HETEROCLOUD_SYOUYU_ENDPOINT")]
+    syouyu_endpoint: Url,
+
     #[arg(
         long,
         env = "HETEROCLOUD_PROVIDER_ISSUER",
@@ -58,6 +61,13 @@ struct Config {
         default_value = "heterocloud-flash"
     )]
     flash_audience: String,
+
+    #[arg(
+        long,
+        env = "HETEROCLOUD_SYOUYU_AUDIENCE",
+        default_value = "heterocloud-syouyu"
+    )]
+    syouyu_audience: String,
 
     #[arg(
         long,
@@ -113,6 +123,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &signing_key,
             )?,
         },
+        syouyu: ProviderTarget {
+            endpoint: config.syouyu_endpoint.clone(),
+            signer: ProviderSigner::from_ed25519_pem(
+                &config.issuer,
+                &config.syouyu_audience,
+                &config.key_id,
+                &signing_key,
+            )?,
+        },
     };
     let store = Store::connect(
         database_url.expose_secret(),
@@ -128,6 +147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!(
         flow_endpoint = %config.flow_endpoint,
         flash_endpoint = %config.flash_endpoint,
+        syouyu_endpoint = %config.syouyu_endpoint,
         "provider worker is ready"
     );
 
@@ -412,6 +432,7 @@ struct ProviderTarget {
 struct ProviderTargets {
     flow: ProviderTarget,
     flash: ProviderTarget,
+    syouyu: ProviderTarget,
 }
 
 impl ProviderTargets {
@@ -419,6 +440,7 @@ impl ProviderTargets {
         match provider {
             "flow" => Ok(&self.flow),
             "flash" => Ok(&self.flash),
+            "syouyu" => Ok(&self.syouyu),
             other => Err(WorkerError::UnsupportedProvider(other.to_owned())),
         }
     }
