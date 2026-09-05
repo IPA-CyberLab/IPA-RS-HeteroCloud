@@ -237,8 +237,8 @@ pub const MAX_SYOUYU_QUOTA_BYTES: u64 = 10 * 1_024 * 1_024 * 1_024 * 1_024;
 pub const MAX_SYOUYU_QUOTA_OBJECTS: u64 = 1_000_000_000;
 pub const DEFAULT_SYOUYU_BUCKET_QUOTA_BYTES: u64 = 10 * 1_024 * 1_024 * 1_024;
 pub const DEFAULT_SYOUYU_BUCKET_QUOTA_OBJECTS: u64 = 1_000_000;
-pub const DEFAULT_SYOUYU_MAX_BUCKETS: u32 = 100;
-pub const DEFAULT_SYOUYU_TOTAL_QUOTA_BYTES: u64 = 100 * 1_024 * 1_024 * 1_024;
+pub const DEFAULT_SYOUYU_MAX_BUCKETS: u32 = 10;
+pub const DEFAULT_SYOUYU_TOTAL_QUOTA_BYTES: u64 = 30 * 1_024 * 1_024 * 1_024;
 pub const DEFAULT_SYOUYU_MAX_CREDENTIALS_PER_BUCKET: u32 = 10;
 pub const DEFAULT_SYOUYU_MAX_TOTAL_CREDENTIALS: u32 = 1_000;
 
@@ -1045,6 +1045,15 @@ mod tests {
         let decoded = serde_json::from_value::<ResourceQuotaLimits>(value)?;
         assert_eq!(decoded.syouyu, super::SyouyuQuotaLimits::default());
         Ok(())
+    }
+
+    #[test]
+    fn syouyu_resource_quota_defaults_limit_each_tenant() {
+        let limits = super::SyouyuQuotaLimits::default();
+
+        assert_eq!(limits.max_buckets, 10);
+        assert_eq!(limits.max_bytes_per_bucket, 10 * 1_024 * 1_024 * 1_024);
+        assert_eq!(limits.max_total_bytes, 30 * 1_024 * 1_024 * 1_024);
     }
 
     fn flash_spec() -> FlashSpec {
