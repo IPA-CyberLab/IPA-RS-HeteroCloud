@@ -4,7 +4,7 @@ use std::{
 };
 
 use clap::Parser;
-use heterocloud_domain::{OrganizationId, PrincipalId, ProjectId, ServiceInstanceId};
+use heterocloud_domain::{OrganizationId, PrincipalId, ProjectId, ServiceInstanceId, SyouyuSpec};
 use heterocloud_provider::{
     AcceptedOperation, PRINCIPAL_CONTEXT_REVOCATION_GRACE_SECONDS, PRINCIPAL_CONTEXT_REVOKE_ACTION,
     PrincipalContextId, PrincipalContextRevocationRequest, ProviderContext, ProviderSigner,
@@ -12,7 +12,7 @@ use heterocloud_provider::{
 };
 use heterocloud_store::{OutboxEvent, Store};
 use secrecy::{ExposeSecret, SecretString};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 use tokio::{fs, signal, time};
@@ -283,11 +283,12 @@ async fn deliver(
     let response = if event.topic == "service-instance.delete" {
         request.send().await?
     } else {
+        let spec = provider_reconcile_spec(&payload.provider, instance.spec)?;
         request
             .json(&ReconcileRequest {
                 generation: instance.generation,
                 name: instance.name,
-                spec: instance.spec,
+                spec,
             })
             .send()
             .await?
@@ -383,6 +384,28 @@ async fn deliver(
         return Err(WorkerError::StalePayload);
     }
     Ok(())
+}
+
+#[derive(Serialize)]
+struct SyouyuProviderSpec {
+    region: String,
+    bucket_name: String,
+    quota_bytes: u64,
+    quota_objects: u64,
+}
+
+fn provider_reconcile_spec(provider: &str, spec: Value) -> Result<Value, WorkerError> {
+    if provider != "syouyu" {
+        return Ok(spec);
+    }
+    let spec: SyouyuSpec = serde_json::from_value(spec)?;
+    serde_json::to_value(SyouyuProviderSpec {
+        region: spec.region,
+        bucket_name: spec.bucket_name,
+        quota_bytes: spec.quota_bytes,
+        quota_objects: spec.quota_objects,
+    })
+    .map_err(WorkerError::from)
 }
 
 fn provider_reconcile_failed(status: &Value) -> bool {
@@ -640,7 +663,7 @@ mod tests {
         PrincipalContextRevocationPayload, ProviderTarget, ProviderTargets, WorkerError,
         deliver_principal_context_revocation, permanent_reconcile_rejection,
         principal_context_revocation_expired, principal_context_revocation_url,
-        provider_reconcile_failed,
+        provider_reconcile_failed, provider_reconcile_spec,
     };
 
     const TEST_ED25519_PRIVATE_KEY: &[u8] = b"-----BEGIN PRIVATE KEY-----\n\
@@ -777,6 +800,35 @@ MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
         assert!(!permanent_reconcile_rejection(401));
         assert!(!permanent_reconcile_rejection(429));
         assert!(!permanent_reconcile_rejection(500));
+    }
+
+    #[test]
+    fn syouyu_provider_payload_excludes_management_metadata()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let converted = provider_reconcile_spec(
+            "syouyu",
+            json!({
+                "region": "heteronet-global",
+                "bucket_name": "escape-persistent",
+                "quota_bytes": 10_737_418_240_u64,
+                "quota_objects": 1_000_000,
+                "metadata": {"flash_service": "escape"},
+            }),
+        )?;
+        assert_eq!(
+            converted,
+            json!({
+                "region": "heteronet-global",
+                "bucket_name": "escape-persistent",
+                "quota_bytes": 10_737_418_240_u64,
+                "quota_objects": 1_000_000,
+            })
+        );
+        assert_eq!(
+            provider_reconcile_spec("flash", json!({"metadata": {"key": "value"}}))?,
+            json!({"metadata": {"key": "value"}})
+        );
+        Ok(())
     }
 
     #[tokio::test]
