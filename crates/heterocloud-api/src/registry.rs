@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use futures_util::{StreamExt, stream};
 use heterocloud_domain::{OrganizationId, ResourceQuotaLimits};
 use reqwest::{Client, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
@@ -11,6 +12,7 @@ const GIB_BYTES: u64 = 1024 * 1024 * 1024;
 const HARBOR_PAGE_SIZE: usize = 100;
 const MAX_REGISTRY_IMAGES: usize = 500;
 const MAX_REGISTRY_REPOSITORIES: usize = 100;
+const REGISTRY_REPOSITORY_CONCURRENCY: usize = 8;
 
 pub struct RegistryClient {
     internal_endpoint: Url,
@@ -137,9 +139,24 @@ impl RegistryClient {
         &self,
         project: &RegistryProject,
     ) -> Result<Vec<RegistryImage>, RegistryError> {
+        self.list_project_images(&project.name).await
+    }
+
+    pub async fn list_organization_images(
+        &self,
+        organization_id: OrganizationId,
+    ) -> Result<Vec<RegistryImage>, RegistryError> {
+        self.list_project_images(&project_name(organization_id))
+            .await
+    }
+
+    async fn list_project_images(
+        &self,
+        project_name: &str,
+    ) -> Result<Vec<RegistryImage>, RegistryError> {
         let mut repositories_url = self
             .internal_endpoint
-            .join(&format!("api/v2.0/projects/{}/repositories", project.name))?;
+            .join(&format!("api/v2.0/projects/{project_name}/repositories"))?;
         repositories_url
             .query_pairs_mut()
             .append_pair("page", "1")
@@ -153,91 +170,30 @@ impl RegistryClient {
             return Err(RegistryError::Status(response.status().as_u16()));
         }
         let repositories: Vec<RepositoryResponse> = response.json().await?;
-        let authority = project.authority()?;
-        let mut references = BTreeSet::new();
+        let authority = registry_authority(&self.public_endpoint)?;
+        let repository_results = stream::iter(
+            repositories
+                .into_iter()
+                .filter(|repository| repository.artifact_count.unwrap_or(1) > 0)
+                .take(MAX_REGISTRY_REPOSITORIES),
+        )
+        .map(|repository| {
+            let authority = &authority;
+            async move {
+                let repository_name = relative_repository_name(project_name, &repository.name);
+                if repository_name.is_empty() {
+                    return Ok(Vec::new());
+                }
+                self.list_repository_images(project_name, repository_name, authority)
+                    .await
+            }
+        })
+        .buffer_unordered(REGISTRY_REPOSITORY_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
         let mut images = Vec::new();
-
-        for repository in repositories.into_iter().take(MAX_REGISTRY_REPOSITORIES) {
-            let repository_name = relative_repository_name(&project.name, &repository.name);
-            if repository_name.is_empty() {
-                continue;
-            }
-            let mut page = 1;
-            while images.len() < MAX_REGISTRY_IMAGES {
-                let mut artifacts_url =
-                    artifact_list_url(&self.internal_endpoint, &project.name, repository_name)?;
-                artifacts_url
-                    .query_pairs_mut()
-                    .append_pair("page", &page.to_string())
-                    .append_pair("page_size", &HARBOR_PAGE_SIZE.to_string())
-                    .append_pair("sort", "-push_time")
-                    .append_pair("with_tag", "true")
-                    .append_pair("with_label", "false")
-                    .append_pair("with_scan_overview", "false")
-                    .append_pair("with_sbom_overview", "false");
-                let response = self.request(self.client.get(artifacts_url)).send().await?;
-                if !response.status().is_success() {
-                    return Err(RegistryError::Status(response.status().as_u16()));
-                }
-                let artifacts: Vec<ArtifactResponse> = response.json().await?;
-                let artifact_count = artifacts.len();
-                for artifact in artifacts {
-                    if artifact
-                        .kind
-                        .as_deref()
-                        .is_some_and(|kind| !kind.eq_ignore_ascii_case("image"))
-                    {
-                        continue;
-                    }
-                    let tags = artifact.tags.unwrap_or_default();
-                    if tags.is_empty() {
-                        let reference = format!(
-                            "{authority}/{}/{repository_name}@{}",
-                            project.name, artifact.digest
-                        );
-                        if references.insert(reference.clone()) {
-                            images.push(RegistryImage {
-                                reference,
-                                repository: repository_name.to_owned(),
-                                tag: None,
-                                digest: artifact.digest.clone(),
-                                size_bytes: artifact.size.max(0) as u64,
-                                pushed_at: artifact.push_time.clone(),
-                            });
-                        }
-                    }
-                    for tag in tags {
-                        let reference = format!(
-                            "{authority}/{}/{repository_name}:{}",
-                            project.name, tag.name
-                        );
-                        if !references.insert(reference.clone()) {
-                            continue;
-                        }
-                        images.push(RegistryImage {
-                            reference,
-                            repository: repository_name.to_owned(),
-                            tag: Some(tag.name),
-                            digest: artifact.digest.clone(),
-                            size_bytes: artifact.size.max(0) as u64,
-                            pushed_at: artifact.push_time.clone(),
-                        });
-                        if images.len() >= MAX_REGISTRY_IMAGES {
-                            break;
-                        }
-                    }
-                    if images.len() >= MAX_REGISTRY_IMAGES {
-                        break;
-                    }
-                }
-                if artifact_count < HARBOR_PAGE_SIZE {
-                    break;
-                }
-                page += 1;
-            }
-            if images.len() >= MAX_REGISTRY_IMAGES {
-                break;
-            }
+        for result in repository_results {
+            images.extend(result?);
         }
 
         images.sort_by(|left, right| {
@@ -246,6 +202,85 @@ impl RegistryClient {
                 .cmp(&left.pushed_at)
                 .then_with(|| left.reference.cmp(&right.reference))
         });
+        let mut references = BTreeSet::new();
+        images.retain(|image| references.insert(image.reference.clone()));
+        images.truncate(MAX_REGISTRY_IMAGES);
+        Ok(images)
+    }
+
+    async fn list_repository_images(
+        &self,
+        project_name: &str,
+        repository_name: &str,
+        authority: &str,
+    ) -> Result<Vec<RegistryImage>, RegistryError> {
+        let mut images = Vec::new();
+        let mut page = 1;
+        while images.len() < MAX_REGISTRY_IMAGES {
+            let mut artifacts_url =
+                artifact_list_url(&self.internal_endpoint, project_name, repository_name)?;
+            artifacts_url
+                .query_pairs_mut()
+                .append_pair("page", &page.to_string())
+                .append_pair("page_size", &HARBOR_PAGE_SIZE.to_string())
+                .append_pair("sort", "-push_time")
+                .append_pair("with_tag", "true")
+                .append_pair("with_label", "false")
+                .append_pair("with_scan_overview", "false")
+                .append_pair("with_sbom_overview", "false");
+            let response = self.request(self.client.get(artifacts_url)).send().await?;
+            if !response.status().is_success() {
+                return Err(RegistryError::Status(response.status().as_u16()));
+            }
+            let artifacts: Vec<ArtifactResponse> = response.json().await?;
+            let artifact_count = artifacts.len();
+            for artifact in artifacts {
+                if artifact
+                    .kind
+                    .as_deref()
+                    .is_some_and(|kind| !kind.eq_ignore_ascii_case("image"))
+                {
+                    continue;
+                }
+                let tags = artifact.tags.unwrap_or_default();
+                if tags.is_empty() {
+                    images.push(RegistryImage {
+                        reference: format!(
+                            "{authority}/{project_name}/{repository_name}@{}",
+                            artifact.digest
+                        ),
+                        repository: repository_name.to_owned(),
+                        tag: None,
+                        digest: artifact.digest.clone(),
+                        size_bytes: artifact.size.max(0) as u64,
+                        pushed_at: artifact.push_time.clone(),
+                    });
+                }
+                for tag in tags {
+                    images.push(RegistryImage {
+                        reference: format!(
+                            "{authority}/{project_name}/{repository_name}:{}",
+                            tag.name
+                        ),
+                        repository: repository_name.to_owned(),
+                        tag: Some(tag.name),
+                        digest: artifact.digest.clone(),
+                        size_bytes: artifact.size.max(0) as u64,
+                        pushed_at: artifact.push_time.clone(),
+                    });
+                    if images.len() >= MAX_REGISTRY_IMAGES {
+                        break;
+                    }
+                }
+                if images.len() >= MAX_REGISTRY_IMAGES {
+                    break;
+                }
+            }
+            if artifact_count < HARBOR_PAGE_SIZE {
+                break;
+            }
+            page += 1;
+        }
         Ok(images)
     }
 
@@ -382,6 +417,7 @@ struct ProjectResponse {
 #[derive(Deserialize)]
 struct RepositoryResponse {
     name: String,
+    artifact_count: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -438,6 +474,12 @@ pub enum RegistryError {
     Http(#[from] reqwest::Error),
     #[error(transparent)]
     Url(#[from] url::ParseError),
+}
+
+impl RegistryError {
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::Status(404))
+    }
 }
 
 fn relative_repository_name<'a>(project_name: &str, repository_name: &'a str) -> &'a str {

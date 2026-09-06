@@ -540,26 +540,36 @@ async fn list_registry_images(
         &organization_resource(organization_id, "registry/*"),
     )
     .await?;
-    let limits = state
-        .store
-        .effective_resource_quota(OrganizationId(organization_id))
-        .await
-        .map_err(ApiError::from_store)?;
     let registry = state
         .registry
         .as_deref()
         .ok_or(ApiError::RegistryProviderUnavailable)?;
-    let project = registry
-        .ensure_project(OrganizationId(organization_id), &limits)
-        .await
-        .map_err(|error| {
-            tracing::warn!(%organization_id, error = %error, "registry project reconciliation failed");
-            ApiError::RegistryProviderUnavailable
-        })?;
-    let images = registry.list_images(&project).await.map_err(|error| {
-        tracing::warn!(%organization_id, error = %error, "registry image listing failed");
-        ApiError::RegistryProviderUnavailable
-    })?;
+    let organization = OrganizationId(organization_id);
+    let images = match registry.list_organization_images(organization).await {
+        Ok(images) => images,
+        Err(error) if error.is_not_found() => {
+            let limits = state
+                .store
+                .effective_resource_quota(organization)
+                .await
+                .map_err(ApiError::from_store)?;
+            let project = registry
+                .ensure_project(organization, &limits)
+                .await
+                .map_err(|error| {
+                    tracing::warn!(%organization_id, error = %error, "registry project reconciliation failed");
+                    ApiError::RegistryProviderUnavailable
+                })?;
+            registry.list_images(&project).await.map_err(|error| {
+                tracing::warn!(%organization_id, error = %error, "registry image listing failed");
+                ApiError::RegistryProviderUnavailable
+            })?
+        }
+        Err(error) => {
+            tracing::warn!(%organization_id, error = %error, "registry image listing failed");
+            return Err(ApiError::RegistryProviderUnavailable);
+        }
+    };
     Ok(Json(json!({ "items": images })))
 }
 
