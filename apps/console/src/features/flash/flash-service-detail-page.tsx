@@ -196,6 +196,17 @@ export function FlashServiceDetailPage() {
   };
   const allowedSources = item.spec.exposure.allowed_source_cidrs ?? [];
   const deniedSources = item.spec.exposure.denied_source_cidrs ?? [];
+  const egress = item.spec.egress ?? {
+    mode: "internet" as const,
+    allow_same_organization: false,
+    allowed_destination_cidrs: [],
+    denied_destination_cidrs: [],
+  };
+  const egressLabel = {
+    disabled: "無効",
+    restricted: "許可リスト",
+    internet: "公開インターネット",
+  }[egress.mode];
 
   return (
     <SpaceBetween size="l">
@@ -261,6 +272,51 @@ export function FlashServiceDetailPage() {
       <Container header={<Header variant="h2">エンドポイント</Header>}>
         <FlashEndpoints endpoints={endpoints} />
       </Container>
+      <Container header={<Header variant="h2">ネットワークアクセス</Header>}>
+        <KeyValuePairs
+          columns={3}
+          items={[
+            { label: "接続", value: flashExposureLabel(item.spec.exposure) },
+            {
+              label: "受信許可元IP / CIDR",
+              value: allowedSources.length ? (
+                <Box variant="code">{allowedSources.join(", ")}</Box>
+              ) : (
+                "すべて"
+              ),
+            },
+            {
+              label: "受信拒否元IP / CIDR",
+              value: deniedSources.length ? (
+                <Box variant="code">{deniedSources.join(", ")}</Box>
+              ) : (
+                "-"
+              ),
+            },
+            { label: "外部ネットワーク", value: egressLabel },
+            {
+              label: "同一組織のFlashサービス",
+              value: egress.allow_same_organization ? "許可" : "拒否",
+            },
+            {
+              label: "送信許可先IP / CIDR",
+              value: egress.allowed_destination_cidrs.length ? (
+                <Box variant="code">{egress.allowed_destination_cidrs.join(", ")}</Box>
+              ) : (
+                "-"
+              ),
+            },
+            {
+              label: "送信拒否先IP / CIDR",
+              value: egress.denied_destination_cidrs.length ? (
+                <Box variant="code">{egress.denied_destination_cidrs.join(", ")}</Box>
+              ) : (
+                "-"
+              ),
+            },
+          ]}
+        />
+      </Container>
       <ColumnLayout columns={2}>
         <Container header={<Header variant="h2">サービス設定</Header>}>
           <KeyValuePairs
@@ -272,23 +328,6 @@ export function FlashServiceDetailPage() {
               { label: "CPU", value: `${formatNumber(item.spec.cpu_millis)} millicores` },
               { label: "メモリ", value: `${formatNumber(item.spec.memory_mib)} MiB` },
               { label: "ディスク上限（イメージ込み）", value: `${formatNumber(item.spec.ephemeral_storage_gib)} GiB` },
-              { label: "接続", value: flashExposureLabel(item.spec.exposure) },
-              {
-                label: "許可IP / CIDR",
-                value: allowedSources.length ? (
-                  <Box variant="code">{allowedSources.join(", ")}</Box>
-                ) : (
-                  "すべて"
-                ),
-              },
-              {
-                label: "拒否IP / CIDR",
-                value: deniedSources.length ? (
-                  <Box variant="code">{deniedSources.join(", ")}</Box>
-                ) : (
-                  "-"
-                ),
-              },
               { label: "更新日時", value: formatDateTime(item.updated_at) },
             ]}
           />

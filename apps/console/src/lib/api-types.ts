@@ -339,6 +339,15 @@ export interface FlashExposure {
   denied_source_cidrs?: string[];
 }
 
+export type FlashEgressMode = "disabled" | "restricted" | "internet";
+
+export interface FlashEgress {
+  mode: FlashEgressMode;
+  allow_same_organization: boolean;
+  allowed_destination_cidrs: string[];
+  denied_destination_cidrs: string[];
+}
+
 export interface FlashServiceSpec {
   region: string;
   image: string;
@@ -348,6 +357,7 @@ export interface FlashServiceSpec {
   ephemeral_storage_gib: number;
   ports: FlashPort[];
   exposure: FlashExposure;
+  egress?: FlashEgress;
   env: Record<string, string>;
   command: string[];
   args: string[];

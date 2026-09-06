@@ -7,11 +7,13 @@ import SegmentedControl from "@cloudscape-design/components/segmented-control";
 import Select from "@cloudscape-design/components/select";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Textarea from "@cloudscape-design/components/textarea";
+import Toggle from "@cloudscape-design/components/toggle";
 import ipaddr from "ipaddr.js";
 import type { FormEvent, ReactNode } from "react";
 import { ProjectSelector } from "@/components/shared/resource-selectors";
 import type {
   FlashExposure,
+  FlashEgressMode,
   FlashPortInput,
   FlashPortProtocol,
   FlashQuotaLimits,
@@ -38,6 +40,10 @@ export interface FlashServiceFormValue {
   trafficMode: FlashExposure["traffic_mode"];
   allowedSourceCidrs: string;
   deniedSourceCidrs: string;
+  egressMode: FlashEgressMode;
+  allowSameOrganization: boolean;
+  allowedDestinationCidrs: string;
+  deniedDestinationCidrs: string;
   environment: string;
   processMode: FlashProcessMode;
   command: string;
@@ -65,6 +71,10 @@ export const defaultFlashServiceFormValue: FlashServiceFormValue = {
   trafficMode: "forwarded",
   allowedSourceCidrs: "",
   deniedSourceCidrs: "",
+  egressMode: "internet",
+  allowSameOrganization: false,
+  allowedDestinationCidrs: "",
+  deniedDestinationCidrs: "",
   environment: "",
   processMode: "image",
   command: "",
@@ -95,6 +105,24 @@ const regions = [
 const protocols = [
   { value: "udp", label: "UDP" },
   { value: "tcp", label: "TCP" },
+];
+const protectedDestinationCidrs = [
+  "::/128",
+  "::1/128",
+  "0.0.0.0/8",
+  "10.0.0.0/8",
+  "100.64.0.0/10",
+  "127.0.0.0/8",
+  "169.254.0.0/16",
+  "172.16.0.0/12",
+  "192.0.0.0/24",
+  "192.88.99.0/24",
+  "192.168.0.0/16",
+  "198.18.0.0/15",
+  "224.0.0.0/3",
+  "fc00::/7",
+  "fe80::/10",
+  "ff00::/8",
 ];
 
 function boundedInteger(value: string, min: number, max: number, fallback: number) {
@@ -196,6 +224,48 @@ export function parseFlashSourceCidrs(value: string): {
   return { cidrs, error: null };
 }
 
+function parsedNetwork(value: string) {
+  const [address, prefix] = value.includes("/")
+    ? ipaddr.parseCIDR(value)
+    : (() => {
+        const address = ipaddr.parse(value);
+        return [address, address.kind() === "ipv4" ? 32 : 128] as const;
+      })();
+  return { kind: address.kind(), bytes: address.toByteArray(), prefix };
+}
+
+function networksOverlap(left: string, right: string): boolean {
+  const first = parsedNetwork(left);
+  const second = parsedNetwork(right);
+  if (first.kind !== second.kind) return false;
+  let remaining = Math.min(first.prefix, second.prefix);
+  for (let index = 0; remaining > 0; index += 1) {
+    const bits = Math.min(8, remaining);
+    const mask = (0xff << (8 - bits)) & 0xff;
+    if ((first.bytes[index] & mask) !== (second.bytes[index] & mask)) return false;
+    remaining -= bits;
+  }
+  return true;
+}
+
+export function parseFlashDestinationCidrs(
+  value: string,
+  rejectProtected = false,
+): { cidrs: string[]; error: string | null } {
+  const parsed = parseFlashSourceCidrs(value);
+  if (parsed.error || !rejectProtected) return parsed;
+  const protectedDestination = parsed.cidrs.find((cidr) =>
+    protectedDestinationCidrs.some((protectedCidr) => networksOverlap(cidr, protectedCidr)),
+  );
+  if (protectedDestination) {
+    return {
+      cidrs: [],
+      error: `${protectedDestination} は保護された内部ネットワークと重複しています。`,
+    };
+  }
+  return parsed;
+}
+
 export function flashFormValidationError(
   value: FlashServiceFormValue,
   quota: FlashQuotaLimits = defaultFlashQuotaLimits,
@@ -235,6 +305,16 @@ export function flashFormValidationError(
   if (allowedSources.error) return `許可IP: ${allowedSources.error}`;
   const deniedSources = parseFlashSourceCidrs(value.deniedSourceCidrs);
   if (deniedSources.error) return `拒否IP: ${deniedSources.error}`;
+  const allowedDestinations = parseFlashDestinationCidrs(
+    value.allowedDestinationCidrs,
+    true,
+  );
+  if (allowedDestinations.error) return `送信許可先: ${allowedDestinations.error}`;
+  if (value.egressMode !== "restricted" && allowedDestinations.cidrs.length) {
+    return "送信許可先CIDRは許可リストモードでのみ設定できます。";
+  }
+  const deniedDestinations = parseFlashDestinationCidrs(value.deniedDestinationCidrs);
+  if (deniedDestinations.error) return `送信拒否先: ${deniedDestinations.error}`;
   return parseFlashEnvironment(value.environment).error;
 }
 
@@ -263,6 +343,17 @@ export function flashSpecFromForm(
       allowed_source_cidrs: parseFlashSourceCidrs(value.allowedSourceCidrs).cidrs,
       denied_source_cidrs: parseFlashSourceCidrs(value.deniedSourceCidrs).cidrs,
     },
+    egress: {
+      mode: value.egressMode,
+      allow_same_organization: value.allowSameOrganization,
+      allowed_destination_cidrs: parseFlashDestinationCidrs(
+        value.allowedDestinationCidrs,
+        true,
+      ).cidrs,
+      denied_destination_cidrs: parseFlashDestinationCidrs(
+        value.deniedDestinationCidrs,
+      ).cidrs,
+    },
     env: parseFlashEnvironment(value.environment).env,
     command,
     args,
@@ -278,6 +369,12 @@ export function flashFormFromService(
   },
   registryImages: RegistryImage[] = [],
 ): FlashServiceFormValue {
+  const egress = service.spec.egress ?? {
+    mode: "internet" as const,
+    allow_same_organization: false,
+    allowed_destination_cidrs: [],
+    denied_destination_cidrs: [],
+  };
   const processMode: FlashProcessMode =
     service.spec.command.length === 0 && service.spec.args.length === 0
       ? "image"
@@ -308,6 +405,10 @@ export function flashFormFromService(
     trafficMode: service.spec.exposure.traffic_mode,
     allowedSourceCidrs: (service.spec.exposure.allowed_source_cidrs ?? []).join("\n"),
     deniedSourceCidrs: (service.spec.exposure.denied_source_cidrs ?? []).join("\n"),
+    egressMode: egress.mode,
+    allowSameOrganization: egress.allow_same_organization,
+    allowedDestinationCidrs: egress.allowed_destination_cidrs.join("\n"),
+    deniedDestinationCidrs: egress.denied_destination_cidrs.join("\n"),
     environment: Object.entries(service.spec.env)
       .map(([key, envValue]) => `${key}=${envValue}`)
       .join("\n"),
@@ -355,6 +456,13 @@ export function FlashServiceForm({
   const environmentError = parseFlashEnvironment(value.environment).error;
   const allowedSourceError = parseFlashSourceCidrs(value.allowedSourceCidrs).error;
   const deniedSourceError = parseFlashSourceCidrs(value.deniedSourceCidrs).error;
+  const allowedDestinationError = parseFlashDestinationCidrs(
+    value.allowedDestinationCidrs,
+    true,
+  ).error;
+  const deniedDestinationError = parseFlashDestinationCidrs(
+    value.deniedDestinationCidrs,
+  ).error;
   const registryImageOptions = flashRegistryImageOptions(registryImages);
   const selectedRegistryImage =
     registryImageOptions.find((option) => option.value === value.image) ?? null;
@@ -651,7 +759,7 @@ export function FlashServiceForm({
         </SpaceBetween>
         <ColumnLayout columns={2}>
           <FormField
-            label="許可IP / CIDR"
+            label="受信許可元IP / CIDR"
             constraintText="空欄の場合はすべて許可。1行につき1件"
             errorText={allowedSourceError ?? undefined}
           >
@@ -664,7 +772,7 @@ export function FlashServiceForm({
             />
           </FormField>
           <FormField
-            label="拒否IP / CIDR"
+            label="受信拒否元IP / CIDR"
             constraintText="許可IPより優先。1行につき1件"
             errorText={deniedSourceError ?? undefined}
           >
@@ -677,6 +785,71 @@ export function FlashServiceForm({
             />
           </FormField>
         </ColumnLayout>
+        <SpaceBetween size="m">
+          <Header variant="h3">送信アクセス</Header>
+          <ColumnLayout columns={2}>
+            <FormField label="外部ネットワーク">
+              <SegmentedControl
+                selectedId={value.egressMode}
+                options={[
+                  { id: "disabled", text: "無効", disabled },
+                  { id: "restricted", text: "許可リスト", disabled },
+                  { id: "internet", text: "公開インターネット", disabled },
+                ]}
+                label="外部ネットワーク"
+                onChange={({ detail }) => {
+                  if (disabled) return;
+                  const egressMode = detail.selectedId as FlashEgressMode;
+                  onChange({
+                    ...value,
+                    egressMode,
+                    allowedDestinationCidrs:
+                      egressMode === "restricted" ? value.allowedDestinationCidrs : "",
+                    deniedDestinationCidrs:
+                      egressMode === "disabled" ? "" : value.deniedDestinationCidrs,
+                  });
+                }}
+              />
+            </FormField>
+            <FormField label="同一組織のFlashサービス">
+              <Toggle
+                checked={value.allowSameOrganization}
+                disabled={disabled}
+                onChange={({ detail }) => update("allowSameOrganization", detail.checked)}
+              >
+                通信を許可
+              </Toggle>
+            </FormField>
+          </ColumnLayout>
+          <ColumnLayout columns={2}>
+            <FormField
+              label="送信許可先IP / CIDR"
+              constraintText="許可リストモードで使用。内部ネットワークは指定不可"
+              errorText={allowedDestinationError ?? undefined}
+            >
+              <Textarea
+                value={value.allowedDestinationCidrs}
+                disabled={disabled || value.egressMode !== "restricted"}
+                placeholder={"8.8.8.8/32\n2606:4700:4700::1111/128"}
+                rows={4}
+                onChange={({ detail }) => update("allowedDestinationCidrs", detail.value)}
+              />
+            </FormField>
+            <FormField
+              label="送信拒否先IP / CIDR"
+              constraintText="公開インターネット・許可リストから除外"
+              errorText={deniedDestinationError ?? undefined}
+            >
+              <Textarea
+                value={value.deniedDestinationCidrs}
+                disabled={disabled || value.egressMode === "disabled"}
+                placeholder={"203.0.113.0/24\n2001:db8::/32"}
+                rows={4}
+                onChange={({ detail }) => update("deniedDestinationCidrs", detail.value)}
+              />
+            </FormField>
+          </ColumnLayout>
+        </SpaceBetween>
         <FormField
           label="環境変数"
           description="1行につき KEY=value"

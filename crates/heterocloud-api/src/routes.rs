@@ -4121,9 +4121,9 @@ mod tests {
     use axum::http::{HeaderMap, HeaderValue};
     use chrono::Utc;
     use heterocloud_domain::{
-        FlashExposure, FlashExposureType, FlashPort, FlashProtocol, FlashSpec, FlashTrafficMode,
-        FlowRateLimit, FlowSpec, MAX_FLOW_ROOMS, OrganizationId, ProjectId, ServiceInstance,
-        ServiceInstanceId, ServiceState,
+        FlashEgress, FlashExposure, FlashExposureType, FlashPort, FlashProtocol, FlashSpec,
+        FlashTrafficMode, FlowRateLimit, FlowSpec, MAX_FLOW_ROOMS, OrganizationId, ProjectId,
+        ServiceInstance, ServiceInstanceId, ServiceState,
     };
     use ipnet::IpNet;
     use serde_json::{Value, json};
@@ -4304,6 +4304,7 @@ mod tests {
                 allowed_source_cidrs: Vec::new(),
                 denied_source_cidrs: Vec::new(),
             },
+            egress: FlashEgress::default(),
             env: Default::default(),
             command: Vec::new(),
             args: Vec::new(),

@@ -334,6 +334,7 @@ pub const MIN_FLASH_SERVICE_PORT: u16 = 30_000;
 pub const MAX_FLASH_SERVICE_PORT: u16 = 32_767;
 pub const MAX_FLASH_PORTS: usize = 16;
 pub const MAX_FLASH_SOURCE_CIDRS: usize = 64;
+pub const MAX_FLASH_DESTINATION_CIDRS: usize = 64;
 pub const MAX_FLASH_REGION_LENGTH: usize = 63;
 pub const MAX_FLASH_IMAGE_LENGTH: usize = 512;
 pub const MAX_FLASH_PORT_NAME_LENGTH: usize = 63;
@@ -629,6 +630,39 @@ pub struct FlashExposure {
     pub denied_source_cidrs: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FlashEgressMode {
+    Disabled,
+    Restricted,
+    #[default]
+    Internet,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlashEgress {
+    #[serde(default)]
+    pub mode: FlashEgressMode,
+    #[serde(default)]
+    pub allow_same_organization: bool,
+    #[serde(default)]
+    pub allowed_destination_cidrs: Vec<String>,
+    #[serde(default)]
+    pub denied_destination_cidrs: Vec<String>,
+}
+
+impl Default for FlashEgress {
+    fn default() -> Self {
+        Self {
+            mode: FlashEgressMode::Internet,
+            allow_same_organization: false,
+            allowed_destination_cidrs: Vec::new(),
+            denied_destination_cidrs: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlashSpec {
@@ -641,6 +675,8 @@ pub struct FlashSpec {
     pub ephemeral_storage_gib: u32,
     pub ports: Vec<FlashPort>,
     pub exposure: FlashExposure,
+    #[serde(default)]
+    pub egress: FlashEgress,
     pub env: BTreeMap<String, String>,
     pub command: Vec<String>,
     pub args: Vec<String>,
@@ -746,6 +782,7 @@ impl FlashSpec {
         }
         validate_flash_source_cidrs("allowed_source_cidrs", &self.exposure.allowed_source_cidrs)?;
         validate_flash_source_cidrs("denied_source_cidrs", &self.exposure.denied_source_cidrs)?;
+        validate_flash_egress(&self.egress)?;
         if self.env.len() > MAX_FLASH_ENV_VARS {
             return Err(invalid_flash_spec(format!(
                 "env must contain at most {MAX_FLASH_ENV_VARS} entries"
@@ -777,9 +814,67 @@ impl FlashSpec {
 }
 
 fn validate_flash_source_cidrs(field: &str, values: &[String]) -> Result<(), DomainError> {
-    if values.len() > MAX_FLASH_SOURCE_CIDRS {
+    parse_flash_cidrs(field, values, MAX_FLASH_SOURCE_CIDRS).map(|_| ())
+}
+
+fn validate_flash_egress(egress: &FlashEgress) -> Result<(), DomainError> {
+    let allowed = parse_flash_cidrs(
+        "allowed_destination_cidrs",
+        &egress.allowed_destination_cidrs,
+        MAX_FLASH_DESTINATION_CIDRS,
+    )?;
+    parse_flash_cidrs(
+        "denied_destination_cidrs",
+        &egress.denied_destination_cidrs,
+        MAX_FLASH_DESTINATION_CIDRS,
+    )?;
+    if egress.mode != FlashEgressMode::Restricted && !allowed.is_empty() {
+        return Err(invalid_flash_spec(
+            "allowed_destination_cidrs requires restricted egress mode",
+        ));
+    }
+    let protected = [
+        "::/128",
+        "::1/128",
+        "0.0.0.0/8",
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.0.0.0/24",
+        "192.88.99.0/24",
+        "192.168.0.0/16",
+        "198.18.0.0/15",
+        "224.0.0.0/3",
+        "fc00::/7",
+        "fe80::/10",
+        "ff00::/8",
+    ]
+    .into_iter()
+    .map(str::parse::<IpNet>)
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|_| invalid_flash_spec("protected destination CIDR configuration is invalid"))?;
+    if let Some(network) = allowed.iter().find(|network| {
+        protected
+            .iter()
+            .any(|protected| network.contains(protected) || protected.contains(*network))
+    }) {
         return Err(invalid_flash_spec(format!(
-            "{field} must contain at most {MAX_FLASH_SOURCE_CIDRS} entries"
+            "allowed destination {network} overlaps a protected private or infrastructure network"
+        )));
+    }
+    Ok(())
+}
+
+fn parse_flash_cidrs(
+    field: &str,
+    values: &[String],
+    maximum: usize,
+) -> Result<Vec<IpNet>, DomainError> {
+    if values.len() > maximum {
+        return Err(invalid_flash_spec(format!(
+            "{field} must contain at most {maximum} entries"
         )));
     }
     let mut normalized = BTreeSet::new();
@@ -804,7 +899,7 @@ fn validate_flash_source_cidrs(field: &str, values: &[String]) -> Result<(), Dom
             )));
         }
     }
-    Ok(())
+    Ok(normalized.into_iter().collect())
 }
 
 const fn default_flash_ephemeral_storage_gib() -> u32 {
@@ -906,10 +1001,11 @@ mod tests {
 
     use super::{
         DEFAULT_FLOW_MAX_ROOMS, DEFAULT_FLOW_RATE_LIMIT_BURST,
-        DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, DomainError, FlashExposure, FlashExposureType,
-        FlashPort, FlashProtocol, FlashSpec, FlashTrafficMode, FlowRateLimit, FlowSpec,
-        MAX_FLASH_EPHEMERAL_STORAGE_GIB, MIN_FLASH_SERVICE_PORT, POLICY_VERSION, PolicyDocument,
-        PolicyEffect, PolicyStatement, ResourceQuotaLimits, SyouyuSpec,
+        DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, DomainError, FlashEgress, FlashEgressMode,
+        FlashExposure, FlashExposureType, FlashPort, FlashProtocol, FlashSpec, FlashTrafficMode,
+        FlowRateLimit, FlowSpec, MAX_FLASH_EPHEMERAL_STORAGE_GIB, MIN_FLASH_SERVICE_PORT,
+        POLICY_VERSION, PolicyDocument, PolicyEffect, PolicyStatement, ResourceQuotaLimits,
+        SyouyuSpec,
     };
 
     #[test]
@@ -1076,6 +1172,7 @@ mod tests {
                 allowed_source_cidrs: vec!["192.0.2.10".into(), "2001:db8::/48".into()],
                 denied_source_cidrs: vec!["192.0.2.128/25".into()],
             },
+            egress: FlashEgress::default(),
             env: [("LOG_LEVEL".into(), "info".into())].into_iter().collect(),
             command: vec!["/app/server".into()],
             args: vec!["--port=7777".into()],
@@ -1100,6 +1197,8 @@ mod tests {
             json!(["192.0.2.128/25"])
         );
         assert_eq!(value["ephemeral_storage_gib"], json!(10));
+        assert_eq!(value["egress"]["mode"], json!("internet"));
+        assert_eq!(value["egress"]["allow_same_organization"], json!(false));
 
         let mut unknown = value;
         unknown["runtime_class"] = json!("runc");
@@ -1123,10 +1222,16 @@ mod tests {
             .as_object_mut()
             .ok_or("Flash exposure must be an object")?
             .remove("denied_source_cidrs");
+        value
+            .as_object_mut()
+            .ok_or("Flash spec must be an object")?
+            .remove("egress");
         let defaulted = serde_json::from_value::<FlashSpec>(value)?;
         assert_eq!(defaulted.ephemeral_storage_gib, 10);
         assert!(defaulted.exposure.allowed_source_cidrs.is_empty());
         assert!(defaulted.exposure.denied_source_cidrs.is_empty());
+        assert_eq!(defaulted.egress.mode, FlashEgressMode::Internet);
+        assert!(!defaulted.egress.allow_same_organization);
 
         let mut owner_authorized = flash_spec();
         owner_authorized.ephemeral_storage_gib = 20;
@@ -1200,6 +1305,11 @@ mod tests {
 
         let mut spec = flash_spec();
         spec.exposure.denied_source_cidrs = vec!["192.0.2.1".into(), "192.0.2.1/32".into()];
+        assert!(spec.validate().is_err());
+
+        let mut spec = flash_spec();
+        spec.egress.mode = FlashEgressMode::Restricted;
+        spec.egress.allowed_destination_cidrs = vec!["10.250.0.0/16".into()];
         assert!(spec.validate().is_err());
         Ok(())
     }

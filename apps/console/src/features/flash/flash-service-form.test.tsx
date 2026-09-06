@@ -9,6 +9,7 @@ import {
   flashFormValidationError,
   flashRegistryImageOptions,
   flashSpecFromForm,
+  parseFlashDestinationCidrs,
   parseFlashEnvironment,
   parseFlashSourceCidrs,
   type FlashServiceFormValue,
@@ -175,6 +176,10 @@ describe("FlashServiceForm", () => {
       args: "--listen\n0.0.0.0:7777",
       allowedSourceCidrs: "203.0.113.10\n2001:db8::/48",
       deniedSourceCidrs: "198.51.100.0/24",
+      egressMode: "restricted",
+      allowSameOrganization: true,
+      allowedDestinationCidrs: "8.8.8.8/32\n2606:4700:4700::1111/128",
+      deniedDestinationCidrs: "8.8.8.9/32",
     };
 
     expect(flashFormValidationError(value)).toBeNull();
@@ -187,6 +192,12 @@ describe("FlashServiceForm", () => {
         traffic_mode: "forwarded",
         allowed_source_cidrs: ["203.0.113.10", "2001:db8::/48"],
         denied_source_cidrs: ["198.51.100.0/24"],
+      },
+      egress: {
+        mode: "restricted",
+        allow_same_organization: true,
+        allowed_destination_cidrs: ["8.8.8.8/32", "2606:4700:4700::1111/128"],
+        denied_destination_cidrs: ["8.8.8.9/32"],
       },
       ports: [
         {
@@ -243,6 +254,9 @@ describe("FlashServiceForm", () => {
     expect(parseFlashSourceCidrs("203.0.113.1\ninvalid").error).toContain(
       "有効なIPv4 / IPv6",
     );
+    expect(parseFlashDestinationCidrs("10.250.0.1/32", true).error).toContain(
+      "保護された内部ネットワーク",
+    );
 
     const value: FlashServiceFormValue = {
       ...defaultFlashServiceFormValue,
@@ -255,6 +269,22 @@ describe("FlashServiceForm", () => {
       ],
     };
     expect(flashFormValidationError(value)).toContain("ポート名 udp");
+  });
+
+  it("送信アクセスは公開インターネットを既定にして内部通信を拒否する", () => {
+    const spec = flashSpecFromForm({
+      ...defaultFlashServiceFormValue,
+      projectId: "project-1",
+      name: "isolated-worker",
+      image: "ubuntu:24.04",
+    });
+
+    expect(spec.egress).toEqual({
+      mode: "internet",
+      allow_same_organization: false,
+      allowed_destination_cidrs: [],
+      denied_destination_cidrs: [],
+    });
   });
 
   it("内部公開を転送モードへ固定する", () => {
