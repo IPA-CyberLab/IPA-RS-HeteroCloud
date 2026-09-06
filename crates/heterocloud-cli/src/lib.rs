@@ -1,8 +1,8 @@
 use std::{
     collections::BTreeSet,
-    io,
+    fs, io,
     net::{IpAddr, Ipv4Addr, ToSocketAddrs},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
 };
 
@@ -11,21 +11,84 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 mod external_dns;
+mod services;
 
 pub use external_dns::ReconcileArgs;
+pub use services::{ApiOutputFormat, ServiceArgs};
 
 const NODE_SCOPED_SERVICE_PREFIXES: [&str; 1] = ["cloud"];
 const FLOW_SERVICE_PREFIX: &str = "flow";
 const REGISTRY_SERVICE_PREFIX: &str = "registry";
 const MAX_BASE_DOMAIN_LENGTH: usize = 230;
 
-#[derive(Debug, Parser)]
+#[derive(Parser)]
 #[command(
     name = "heterocloud",
     version,
     about = "Operate HeteroCloud managed services"
 )]
 pub struct Cli {
+    /// HeteroCloud console origin.
+    #[arg(
+        long,
+        global = true,
+        env = "HETEROCLOUD_ENDPOINT",
+        default_value = "https://heterocloud.mizuame.app"
+    )]
+    pub endpoint: String,
+
+    /// Service-account API key. Prefer HETEROCLOUD_API_KEY or --api-key-file.
+    #[arg(
+        long,
+        global = true,
+        env = "HETEROCLOUD_API_KEY",
+        hide_env_values = true,
+        conflicts_with = "api_key_file"
+    )]
+    pub api_key: Option<String>,
+
+    /// Read the service-account API key from a mode 0600 or 0400 file.
+    #[arg(
+        long,
+        global = true,
+        env = "HETEROCLOUD_API_KEY_FILE",
+        value_name = "PATH",
+        conflicts_with = "api_key"
+    )]
+    pub api_key_file: Option<PathBuf>,
+
+    /// Organization managed by the API key.
+    #[arg(
+        long,
+        global = true,
+        env = "HETEROCLOUD_ORGANIZATION_ID",
+        value_name = "UUID"
+    )]
+    pub organization_id: Option<uuid::Uuid>,
+
+    /// Maximum seconds to wait for an asynchronous service operation.
+    #[arg(
+        long,
+        global = true,
+        env = "HETEROCLOUD_WAIT_TIMEOUT_SECONDS",
+        default_value_t = 600,
+        value_parser = clap::value_parser!(u64).range(1..=7_200)
+    )]
+    pub wait_timeout_seconds: u64,
+
+    /// Permit a plain HTTP API endpoint. Intended only for a private lab.
+    #[arg(long, global = true, env = "HETEROCLOUD_ALLOW_INSECURE_HTTP")]
+    pub allow_insecure_http: bool,
+
+    /// Output format for service commands.
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        default_value_t = ApiOutputFormat::Json
+    )]
+    pub output: ApiOutputFormat,
+
     #[command(subcommand)]
     pub command: TopLevelCommand,
 }
@@ -34,6 +97,12 @@ pub struct Cli {
 pub enum TopLevelCommand {
     /// Generate or verify public DNS records.
     Dns(DnsArgs),
+    /// Manage Flow realtime services.
+    Flow(ServiceArgs),
+    /// Manage Flash gVisor container services.
+    Flash(ServiceArgs),
+    /// Manage Syouyu S3-compatible buckets.
+    Syouyu(ServiceArgs),
 }
 
 #[derive(Debug, Args)]
@@ -182,6 +251,44 @@ pub enum CliError {
     },
     #[error("DNS did not converge within {seconds} seconds ({failures} record(s) still invalid)")]
     DnsConvergenceTimeout { seconds: u64, failures: usize },
+    #[error("service commands require HETEROCLOUD_API_KEY or --api-key-file")]
+    MissingApiKey,
+    #[error("service commands require HETEROCLOUD_ORGANIZATION_ID or --organization-id")]
+    MissingOrganization,
+    #[error("invalid API endpoint: {0}")]
+    InvalidApiEndpoint(String),
+    #[error("API key must start with hc_ and contain no whitespace or control characters")]
+    InvalidApiKey,
+    #[error("failed to read API key file {path}: {source}")]
+    ApiKeyFile {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("API key file {0} must be a regular file and not a symbolic link")]
+    UnsafeApiKeyFile(PathBuf),
+    #[error("API key file {path} has unsafe mode {mode:o}; use chmod 600 or chmod 400")]
+    UnsafeApiKeyMode { path: PathBuf, mode: u32 },
+    #[error("failed to read input {path}: {source}")]
+    InputFile {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("invalid service manifest: {0}")]
+    InvalidManifest(String),
+    #[error("HeteroCloud API request failed: {0}")]
+    ApiTransport(#[source] reqwest::Error),
+    #[error("HeteroCloud API returned HTTP {status} ({code}): {message}")]
+    ApiResponse {
+        status: u16,
+        code: String,
+        message: String,
+    },
+    #[error("service {id} entered the error state: {detail}")]
+    ServiceFailed { id: uuid::Uuid, detail: String },
+    #[error("operation on service {id} did not converge within {seconds} seconds")]
+    ServiceTimeout { id: uuid::Uuid, seconds: u64 },
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,14 +313,110 @@ struct KubernetesLoadBalancerIngress {
     ip: Option<String>,
 }
 
-pub fn execute(cli: Cli) -> Result<(), CliError> {
+pub async fn execute(cli: Cli) -> Result<(), CliError> {
+    let endpoint = cli.endpoint.clone();
+    let api_key = cli.api_key.clone();
+    let api_key_file = cli.api_key_file.clone();
+    let organization_id = cli.organization_id;
+    let wait_timeout_seconds = cli.wait_timeout_seconds;
+    let allow_insecure_http = cli.allow_insecure_http;
+    let output = cli.output;
     match cli.command {
         TopLevelCommand::Dns(args) => match args.command {
             DnsCommand::Records(args) => print_records(args),
             DnsCommand::Verify(args) => verify_records(args),
             DnsCommand::Reconcile(args) => external_dns::reconcile(*args),
         },
+        TopLevelCommand::Flow(args) => {
+            services::execute(
+                services::ServiceKind::Flow,
+                args,
+                services::ApiSettings {
+                    endpoint,
+                    api_key: load_api_key(api_key, api_key_file.as_deref())?,
+                    organization_id: organization_id.ok_or(CliError::MissingOrganization)?,
+                    wait_timeout_seconds,
+                    allow_insecure_http,
+                    output,
+                },
+            )
+            .await
+        }
+        TopLevelCommand::Flash(args) => {
+            services::execute(
+                services::ServiceKind::Flash,
+                args,
+                services::ApiSettings {
+                    endpoint,
+                    api_key: load_api_key(api_key, api_key_file.as_deref())?,
+                    organization_id: organization_id.ok_or(CliError::MissingOrganization)?,
+                    wait_timeout_seconds,
+                    allow_insecure_http,
+                    output,
+                },
+            )
+            .await
+        }
+        TopLevelCommand::Syouyu(args) => {
+            services::execute(
+                services::ServiceKind::Syouyu,
+                args,
+                services::ApiSettings {
+                    endpoint,
+                    api_key: load_api_key(api_key, api_key_file.as_deref())?,
+                    organization_id: organization_id.ok_or(CliError::MissingOrganization)?,
+                    wait_timeout_seconds,
+                    allow_insecure_http,
+                    output,
+                },
+            )
+            .await
+        }
     }
+}
+
+fn load_api_key(value: Option<String>, path: Option<&Path>) -> Result<String, CliError> {
+    let value = match (value, path) {
+        (Some(value), None) => value,
+        (None, Some(path)) => read_api_key_file(path)?,
+        (None, None) => return Err(CliError::MissingApiKey),
+        (Some(_), Some(_)) => return Err(CliError::InvalidApiKey),
+    };
+    if !value.starts_with("hc_")
+        || value.len() > 4_096
+        || value.chars().any(char::is_whitespace)
+        || value.chars().any(char::is_control)
+    {
+        return Err(CliError::InvalidApiKey);
+    }
+    Ok(value)
+}
+
+fn read_api_key_file(path: &Path) -> Result<String, CliError> {
+    let metadata = fs::symlink_metadata(path).map_err(|source| CliError::ApiKeyFile {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(CliError::UnsafeApiKeyFile(path.to_path_buf()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 || mode & 0o400 == 0 {
+            return Err(CliError::UnsafeApiKeyMode {
+                path: path.to_path_buf(),
+                mode,
+            });
+        }
+    }
+    fs::read_to_string(path)
+        .map(|value| value.trim_end_matches(['\r', '\n']).to_owned())
+        .map_err(|source| CliError::ApiKeyFile {
+            path: path.to_path_buf(),
+            source,
+        })
 }
 
 fn print_records(args: RecordsArgs) -> Result<(), CliError> {

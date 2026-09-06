@@ -52,6 +52,41 @@ See [Architecture](docs/ARCHITECTURE.md), [Security](docs/SECURITY.md), and
 the [provider contract](contracts/provider/v1/README.md). Flow clients use the
 separate [data-plane access contract](contracts/flow-access/v1/README.md).
 
+## Service CLI
+
+The `heterocloud` binary manages Flow services, Flash containers, and Syouyu
+buckets through the same IAM-authorized API used by the console. Create a
+service-account principal and API key in the IAM console, bind only the
+required `realtime:*`, `flash:*`, or `syouyu:*` actions, and keep the secret out
+of shell history and source control:
+
+```sh
+install -m 0700 -d "$HOME/.config/heterocloud"
+umask 077
+read -r -s HETEROCLOUD_API_KEY
+printf '%s' "$HETEROCLOUD_API_KEY" \
+  > "$HOME/.config/heterocloud/api-key"
+unset HETEROCLOUD_API_KEY
+
+export HETEROCLOUD_ORGANIZATION_ID=0198a118-073f-79e4-9ca4-0c1c2501c031
+export HETEROCLOUD_API_KEY_FILE="$HOME/.config/heterocloud/api-key"
+
+heterocloud flow create --file examples/cli/flow.json
+heterocloud flash list --output table
+heterocloud syouyu get 0198a118-073f-79e4-9ca4-0c1c2501c031
+```
+
+Create and update commands accept `-` for stdin and wait until the service is
+ready. Delete requires `--yes` and waits until the resource is absent. Use
+`--no-wait` for automation that monitors the returned state separately. The
+API origin must use HTTPS unless `--allow-insecure-http` is explicitly enabled
+for a private lab. JSON manifests for each service are under
+[`examples/cli`](examples/cli).
+
+Terraform users can manage the same resources with the separate
+[`IPA-CyberLab/terraform-provider-heterocloud`](https://github.com/IPA-CyberLab/terraform-provider-heterocloud)
+provider.
+
 ## Public DNS onboarding
 
 The `heterocloud` CLI publishes node-scoped `cloud-<node>` management names

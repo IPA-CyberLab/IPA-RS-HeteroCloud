@@ -1097,10 +1097,14 @@ name = "heterocloud-cli"
 version = "0.1.60"
 dependencies = [
  "clap",
+ "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
  "url",
+ "uuid",
  "zeroize",
 ]
 

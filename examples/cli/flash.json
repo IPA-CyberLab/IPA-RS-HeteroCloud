@@ -1,0 +1,36 @@
+{
+  "project_id": "0198a118-073f-79e4-9ca4-0c1c2501c031",
+  "name": "game-server",
+  "spec": {
+    "region": "heteronet-global",
+    "image": "registry.heterocloud.mizuame.app/example/game-server:latest",
+    "replicas": 2,
+    "cpu_millis": 1000,
+    "memory_mib": 2048,
+    "ephemeral_storage_gib": 10,
+    "ports": [
+      {
+        "name": "game-udp",
+        "protocol": "udp",
+        "container_port": 7777,
+        "service_port": 0
+      }
+    ],
+    "exposure": {
+      "type": "public",
+      "traffic_mode": "forwarded",
+      "allowed_source_cidrs": [],
+      "denied_source_cidrs": []
+    },
+    "egress": {
+      "mode": "disabled",
+      "allow_same_organization": false,
+      "allowed_destination_cidrs": [],
+      "denied_destination_cidrs": []
+    },
+    "env": {},
+    "command": [],
+    "args": [],
+    "metadata": {}
+  }
+}
