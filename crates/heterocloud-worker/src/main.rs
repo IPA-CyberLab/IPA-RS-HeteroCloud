@@ -4,7 +4,9 @@ use std::{
 };
 
 use clap::Parser;
-use heterocloud_domain::{OrganizationId, PrincipalId, ProjectId, ServiceInstanceId, SyouyuSpec};
+use heterocloud_domain::{
+    OrganizationId, PrincipalId, ProjectId, ServiceInstance, ServiceInstanceId, SyouyuSpec,
+};
 use heterocloud_provider::{
     AcceptedOperation, PRINCIPAL_CONTEXT_REVOCATION_GRACE_SECONDS, PRINCIPAL_CONTEXT_REVOKE_ACTION,
     PrincipalContextId, PrincipalContextRevocationRequest, ProviderContext, ProviderSigner,
@@ -246,11 +248,7 @@ async fn deliver(
         None if event.topic == "service-instance.delete" => return Ok(()),
         None => return Err(WorkerError::MissingInstance),
     };
-    if instance.generation != payload.generation
-        || instance.organization_id != payload.organization_id
-        || instance.project_id != payload.project_id
-        || instance.provider != payload.provider
-    {
+    if !service_instance_matches_payload(&instance, &payload) {
         return Err(WorkerError::StalePayload);
     }
     let signed = target.signer.sign(ProviderContext {
@@ -280,7 +278,7 @@ async fn deliver(
         )
         .bearer_auth(signed.token)
         .header("idempotency-key", signed.claims.jwt_id.to_string());
-    let response = if event.topic == "service-instance.delete" {
+    let mut response = if event.topic == "service-instance.delete" {
         request.send().await?
     } else {
         let spec = provider_reconcile_spec(&payload.provider, instance.spec)?;
@@ -294,6 +292,35 @@ async fn deliver(
             .await?
     };
     let provider_status_code = response.status().as_u16();
+    let already_absent = provider_delete_already_absent(&event.topic, &mut response).await?;
+    if event.topic == "service-instance.delete"
+        && (response.status().is_success() || already_absent)
+    {
+        let operation_id = if already_absent {
+            None
+        } else {
+            let operation: AcceptedOperation = response.json().await?;
+            Some(operation.operation_id)
+        };
+        if !store
+            .complete_delete_service_instance(
+                payload.service_instance_id,
+                &payload.provider,
+                payload.generation,
+            )
+            .await?
+        {
+            return Err(WorkerError::StalePayload);
+        }
+        info!(
+            service_instance_id = %payload.service_instance_id,
+            provider = payload.provider,
+            operation_id = ?operation_id,
+            already_absent,
+            "service instance deleted"
+        );
+        return Ok(());
+    }
     if !response.status().is_success() {
         if event.topic == "service-instance.reconcile"
             && permanent_reconcile_rejection(provider_status_code)
@@ -332,25 +359,6 @@ async fn deliver(
         return Err(WorkerError::ProviderStatus(provider_status_code));
     }
     let operation: AcceptedOperation = response.json().await?;
-    if event.topic == "service-instance.delete" {
-        if !store
-            .complete_delete_service_instance(
-                payload.service_instance_id,
-                &payload.provider,
-                payload.generation,
-            )
-            .await?
-        {
-            return Err(WorkerError::StalePayload);
-        }
-        info!(
-            service_instance_id = %payload.service_instance_id,
-            provider = payload.provider,
-            operation_id = %operation.operation_id,
-            "service instance deleted"
-        );
-        return Ok(());
-    }
     if provider_reconcile_failed(&operation.status) {
         if !store
             .mark_service_instance_error(
@@ -412,8 +420,60 @@ fn provider_reconcile_failed(status: &Value) -> bool {
     status.get("phase").and_then(Value::as_str) == Some("error")
 }
 
+fn service_instance_matches_payload(
+    instance: &ServiceInstance,
+    payload: &ReconcilePayload,
+) -> bool {
+    instance.generation == payload.generation
+        && instance.organization_id == payload.organization_id
+        && instance.project_id == payload.project_id
+        && instance.provider == payload.provider
+}
+
 const fn permanent_reconcile_rejection(status: u16) -> bool {
     matches!(status, 400 | 409 | 422)
+}
+
+#[derive(Deserialize)]
+struct ProviderErrorEnvelope {
+    error: ProviderErrorBody,
+}
+
+#[derive(Deserialize)]
+struct ProviderErrorBody {
+    code: String,
+    message: String,
+}
+
+async fn provider_delete_already_absent(
+    topic: &str,
+    response: &mut reqwest::Response,
+) -> Result<bool, reqwest::Error> {
+    if topic != "service-instance.delete"
+        || response.status() != reqwest::StatusCode::NOT_FOUND
+        || !response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(';').next())
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"))
+    {
+        return Ok(false);
+    }
+
+    // A truncated prefix must never authorize local deletion; require the complete envelope.
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if chunk.len() > MAX_PROVIDER_ERROR_BODY_BYTES - body.len() {
+            return Ok(false);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(
+        serde_json::from_slice::<ProviderErrorEnvelope>(&body).is_ok_and(|envelope| {
+            envelope.error.code == "not_found" && !envelope.error.message.trim().is_empty()
+        }),
+    )
 }
 
 async fn bounded_provider_error_message(
@@ -651,6 +711,8 @@ enum WorkerError {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+
     use heterocloud_domain::{OrganizationId, PrincipalId, ProjectId, ServiceInstanceId};
     use heterocloud_provider::{
         PRINCIPAL_CONTEXT_REVOKE_ACTION, PrincipalContextId, ProviderContext, ProviderSigner,
@@ -660,10 +722,12 @@ mod tests {
     use url::Url;
 
     use super::{
-        PrincipalContextRevocationPayload, ProviderTarget, ProviderTargets, WorkerError,
+        MAX_PROVIDER_ERROR_BODY_BYTES, PrincipalContextRevocationPayload, ProviderTarget,
+        ProviderTargets, ReconcilePayload, ServiceInstance, WorkerError,
         deliver_principal_context_revocation, permanent_reconcile_rejection,
         principal_context_revocation_expired, principal_context_revocation_url,
-        provider_reconcile_failed, provider_reconcile_spec,
+        provider_delete_already_absent, provider_reconcile_failed, provider_reconcile_spec,
+        service_instance_matches_payload,
     };
 
     const TEST_ED25519_PRIVATE_KEY: &[u8] = b"-----BEGIN PRIVATE KEY-----\n\
@@ -798,8 +862,215 @@ MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
         assert!(permanent_reconcile_rejection(409));
         assert!(permanent_reconcile_rejection(422));
         assert!(!permanent_reconcile_rejection(401));
+        assert!(!permanent_reconcile_rejection(404));
         assert!(!permanent_reconcile_rejection(429));
         assert!(!permanent_reconcile_rejection(500));
+    }
+
+    async fn provider_error_response(
+        status: u16,
+        content_type: Option<&str>,
+        body: &[u8],
+        declared_length: Option<usize>,
+    ) -> Result<reqwest::Response, Box<dyn std::error::Error>> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .tls_certs_only(Vec::<reqwest::tls::Certificate>::new())
+            .timeout(std::time::Duration::from_secs(3))
+            .build()?;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let mut wire = format!(
+            "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n",
+            declared_length.unwrap_or(body.len())
+        );
+        if let Some(content_type) = content_type {
+            wire.push_str(&format!("Content-Type: {content_type}\r\n"));
+        }
+        wire.push_str("\r\n");
+        let mut wire = wire.into_bytes();
+        wire.extend_from_slice(body);
+        let server = std::thread::spawn(move || -> std::io::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(3)))?;
+            stream.set_write_timeout(Some(std::time::Duration::from_secs(3)))?;
+            let mut request = [0; 4096];
+            let mut length = 0;
+            loop {
+                let count = stream.read(&mut request[length..])?;
+                if count == 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "incomplete fixture request headers",
+                    ));
+                }
+                length += count;
+                if request[..length]
+                    .windows(4)
+                    .any(|bytes| bytes == b"\r\n\r\n")
+                {
+                    break;
+                }
+                if length == request.len() {
+                    return Err(std::io::Error::other("fixture request headers too large"));
+                }
+            }
+            stream.write_all(&wire)
+        });
+        let response = client
+            .delete(format!(
+                "http://{address}/internal/v1/service-instances/test?generation=3"
+            ))
+            .send()
+            .await;
+        server.join().map_err(|_| "provider fixture failed")??;
+        Ok(response?)
+    }
+
+    const PROVIDER_NOT_FOUND: &[u8] =
+        br#"{"error":{"code":"not_found","message":"resource was not found"}}"#;
+
+    #[tokio::test]
+    async fn delete_accepts_typed_provider_not_found() -> Result<(), Box<dyn std::error::Error>> {
+        for content_type in ["application/json", "application/json; charset=utf-8"] {
+            let mut response =
+                provider_error_response(404, Some(content_type), PROVIDER_NOT_FOUND, None).await?;
+            assert!(
+                provider_delete_already_absent("service-instance.delete", &mut response).await?
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn only_delete_404_can_be_already_absent() -> Result<(), Box<dyn std::error::Error>> {
+        for (topic, status) in [
+            ("service-instance.reconcile", 404),
+            (PRINCIPAL_CONTEXT_REVOKE_ACTION, 404),
+            ("unknown", 404),
+            ("service-instance.delete", 200),
+            ("service-instance.delete", 401),
+            ("service-instance.delete", 403),
+            ("service-instance.delete", 409),
+            ("service-instance.delete", 502),
+        ] {
+            let mut response =
+                provider_error_response(status, Some("application/json"), PROVIDER_NOT_FOUND, None)
+                    .await?;
+            assert!(!provider_delete_already_absent(topic, &mut response).await?);
+            assert_eq!(response.bytes().await?.as_ref(), PROVIDER_NOT_FOUND);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_proxy_auth_and_untyped_not_found()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for body in [
+            "",
+            "<html>404 Not Found</html>",
+            r#"{"error":{"code":"invalid_credentials","message":"not found"}}"#,
+            r#"{"error":{"code":"permission_denied","message":"not found"}}"#,
+            r#"{"error":{"code":"route_not_found","message":"not found"}}"#,
+            r#"{"error":{"code":"stale_generation","message":"not found"}}"#,
+            r#"{"error":{"code":404,"message":"not_found"}}"#,
+            r#"{"code":"not_found","message":"resource was not found"}"#,
+            r#"{"error":{"message":"not_found"}}"#,
+            r#"{"error":{"code":"not_found"}}"#,
+            r#"{"error":{"code":"not_found","message":" "}}"#,
+            r#"{"error":{"code":"not_found","message":false}}"#,
+            r#"{"error":{"code":"not_found","message":"missing"}"#,
+        ] {
+            let mut response =
+                provider_error_response(404, Some("application/json"), body.as_bytes(), None)
+                    .await?;
+            assert!(
+                !provider_delete_already_absent("service-instance.delete", &mut response).await?,
+                "unexpected acknowledgement for {body}"
+            );
+        }
+        for content_type in [None, Some("text/html"), Some("text/plain")] {
+            let mut response =
+                provider_error_response(404, content_type, PROVIDER_NOT_FOUND, None).await?;
+            assert!(
+                !provider_delete_already_absent("service-instance.delete", &mut response).await?
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn delete_requires_a_complete_bounded_error_envelope()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut body = PROVIDER_NOT_FOUND.to_vec();
+        body.resize(MAX_PROVIDER_ERROR_BODY_BYTES, b' ');
+        let mut response =
+            provider_error_response(404, Some("application/json"), &body, None).await?;
+        assert!(provider_delete_already_absent("service-instance.delete", &mut response).await?);
+
+        body.push(b' ');
+        let mut response =
+            provider_error_response(404, Some("application/json"), &body, None).await?;
+        assert!(!provider_delete_already_absent("service-instance.delete", &mut response).await?);
+
+        let mut response = provider_error_response(
+            404,
+            Some("application/json"),
+            PROVIDER_NOT_FOUND,
+            Some(PROVIDER_NOT_FOUND.len() + 1),
+        )
+        .await?;
+        assert!(
+            provider_delete_already_absent("service-instance.delete", &mut response)
+                .await
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn delete_payload_still_requires_current_generation_and_scope()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let id = PrincipalContextId::from_u128(1);
+        let organization_id = PrincipalContextId::from_u128(2);
+        let project_id = PrincipalContextId::from_u128(3);
+        let instance: ServiceInstance = serde_json::from_value(json!({
+            "id": id,
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "provider": "syouyu",
+            "name": "audit",
+            "generation": 3,
+            "state": "deleting",
+            "spec": {},
+            "status": {},
+            "created_at": "2026-09-07T00:00:00Z",
+            "updated_at": "2026-09-07T00:00:00Z",
+        }))?;
+        let mut payload: ReconcilePayload = serde_json::from_value(json!({
+            "service_instance_id": id,
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "principal_id": PrincipalContextId::from_u128(4),
+            "provider": "syouyu",
+            "generation": 3,
+        }))?;
+        assert!(service_instance_matches_payload(&instance, &payload));
+        for generation in [0, 2, 4] {
+            payload.generation = generation;
+            assert!(!service_instance_matches_payload(&instance, &payload));
+        }
+        payload.generation = 3;
+        payload.provider = "flash".into();
+        assert!(!service_instance_matches_payload(&instance, &payload));
+        payload.provider = "syouyu".into();
+        payload.organization_id = OrganizationId(PrincipalContextId::from_u128(5));
+        assert!(!service_instance_matches_payload(&instance, &payload));
+        payload.organization_id = OrganizationId(organization_id);
+        payload.project_id = ProjectId(PrincipalContextId::from_u128(6));
+        assert!(!service_instance_matches_payload(&instance, &payload));
+        Ok(())
     }
 
     #[test]
