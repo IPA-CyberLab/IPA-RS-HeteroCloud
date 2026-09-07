@@ -19,6 +19,7 @@ pub use services::{ApiOutputFormat, ServiceArgs};
 const NODE_SCOPED_SERVICE_PREFIXES: [&str; 1] = ["cloud"];
 const FLOW_SERVICE_PREFIX: &str = "flow";
 const REGISTRY_SERVICE_PREFIX: &str = "registry";
+const SYOUYU_SERVICE_PREFIX: &str = "s3";
 const MAX_BASE_DOMAIN_LENGTH: usize = 230;
 
 #[derive(Parser)]
@@ -550,7 +551,7 @@ fn validate_addresses(addresses: &[Ipv4Addr], allow_non_public: bool) -> Result<
 }
 
 pub fn build_records(domain: &str, addresses: &[Ipv4Addr], ttl: u32) -> Vec<DnsRecord> {
-    let mut records = Vec::with_capacity(addresses.len() * 4);
+    let mut records = Vec::with_capacity(addresses.len() * 5);
     for (index, address) in addresses.iter().enumerate() {
         let node = node_label(index);
         for service in NODE_SCOPED_SERVICE_PREFIXES {
@@ -591,6 +592,16 @@ pub fn build_records(domain: &str, addresses: &[Ipv4Addr], ttl: u32) -> Vec<DnsR
             value: *address,
             ttl,
             service: REGISTRY_SERVICE_PREFIX,
+            node: "cluster".to_owned(),
+        });
+    }
+    for address in addresses {
+        records.push(DnsRecord {
+            record_type: "A",
+            name: format!("{SYOUYU_SERVICE_PREFIX}.{domain}"),
+            value: *address,
+            ttl,
+            service: SYOUYU_SERVICE_PREFIX,
             node: "cluster".to_owned(),
         });
     }
@@ -787,7 +798,7 @@ mod tests {
             Ipv4Addr::new(163, 220, 236, 53),
         ];
         let records = build_records("hc.example.com", &addresses, 60);
-        assert_eq!(records.len(), 12);
+        assert_eq!(records.len(), 15);
         assert_eq!(records[0].name, "cloud-a.hc.example.com");
         assert_eq!(records[1].name, "cloud-b.hc.example.com");
         assert_eq!(records[2].name, "cloud-c.hc.example.com");
@@ -797,6 +808,8 @@ mod tests {
         assert_eq!(records[8].name, "flow.hc.example.com");
         assert_eq!(records[9].name, "registry.hc.example.com");
         assert_eq!(records[11].name, "registry.hc.example.com");
+        assert_eq!(records[12].name, "s3.hc.example.com");
+        assert_eq!(records[14].name, "s3.hc.example.com");
         assert!(records.iter().all(|record| {
             !record.name.starts_with("flow-")
                 && !record.name.starts_with("rtc-")

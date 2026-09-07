@@ -360,7 +360,9 @@ fn build_plan(args: &ReconcileArgs) -> Result<ReconcilePlan, CliError> {
         record.name != domain
             && !matches!(
                 record.service,
-                super::FLOW_SERVICE_PREFIX | super::REGISTRY_SERVICE_PREFIX
+                super::FLOW_SERVICE_PREFIX
+                    | super::REGISTRY_SERVICE_PREFIX
+                    | super::SYOUYU_SERVICE_PREFIX
             )
     }) {
         grouped_targets
@@ -1279,7 +1281,7 @@ mod tests {
     }
 
     #[test]
-    fn static_endpoint_excludes_service_managed_flow_and_registry_records()
+    fn static_endpoint_excludes_service_managed_flow_registry_and_s3_records()
     -> Result<(), Box<dyn std::error::Error>> {
         let plan = build_plan(&base_args("inmemory"))?;
         let endpoints = plan.endpoint["spec"]["endpoints"]
@@ -1289,6 +1291,11 @@ mod tests {
         assert_eq!(endpoints[0]["dnsName"], "cloud-a.heterocloud.example.com");
         assert_eq!(endpoints[1]["dnsName"], "cloud-b.heterocloud.example.com");
         assert_eq!(endpoints[2]["dnsName"], "cloud-c.heterocloud.example.com");
+        assert!(
+            endpoints
+                .iter()
+                .all(|endpoint| endpoint["dnsName"] != "s3.heterocloud.example.com")
+        );
         assert!(
             endpoints
                 .iter()
@@ -1331,7 +1338,7 @@ mod tests {
         let endpoints = plan.endpoint["spec"]["endpoints"]
             .as_array()
             .ok_or("endpoints must be an array")?;
-        assert_eq!(plan.verification_records.len(), 9);
+        assert_eq!(plan.verification_records.len(), 12);
         assert_eq!(
             plan.http_route["metadata"]["annotations"]["external-dns.alpha.kubernetes.io/cloudflare-proxied"],
             "true"

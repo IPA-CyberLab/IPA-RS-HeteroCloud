@@ -12,7 +12,7 @@ use reqwest::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::time::{Instant, sleep};
+use tokio::time::{Instant, sleep, timeout_at};
 use uuid::Uuid;
 
 use crate::CliError;
@@ -365,7 +365,7 @@ impl ApiClient {
     async fn wait_ready(&self, kind: ServiceKind, id: Uuid) -> Result<ManagedService, CliError> {
         let deadline = Instant::now() + self.wait_timeout;
         loop {
-            match self.get(kind, id).await {
+            match self.get_before_deadline(kind, id, deadline).await {
                 Ok(Some(service)) if service.state == "ready" => return Ok(service),
                 Ok(Some(service)) if service.state == "error" => {
                     return Err(CliError::ServiceFailed {
@@ -384,14 +384,14 @@ impl ApiClient {
                     seconds: self.wait_timeout.as_secs(),
                 });
             }
-            sleep(POLL_INTERVAL).await;
+            sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now()))).await;
         }
     }
 
     async fn wait_deleted(&self, kind: ServiceKind, id: Uuid) -> Result<(), CliError> {
         let deadline = Instant::now() + self.wait_timeout;
         loop {
-            match self.get(kind, id).await {
+            match self.get_before_deadline(kind, id, deadline).await {
                 Ok(None) => return Ok(()),
                 Ok(Some(service)) if service.state == "error" => {
                     return Err(CliError::ServiceFailed {
@@ -409,8 +409,27 @@ impl ApiClient {
                     seconds: self.wait_timeout.as_secs(),
                 });
             }
-            sleep(POLL_INTERVAL).await;
+            sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now()))).await;
         }
+    }
+
+    async fn get_before_deadline(
+        &self,
+        kind: ServiceKind,
+        id: Uuid,
+        deadline: Instant,
+    ) -> Result<Option<ManagedService>, CliError> {
+        let expired = || CliError::ServiceTimeout {
+            id,
+            seconds: self.wait_timeout.as_secs(),
+        };
+        if Instant::now() >= deadline {
+            return Err(expired());
+        }
+        // Bound the whole read, including HTTP retries, by the operation deadline.
+        timeout_at(deadline, self.get(kind, id))
+            .await
+            .map_err(|_| expired())?
     }
 
     async fn get_json_with_retry(
