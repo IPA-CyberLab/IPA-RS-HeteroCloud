@@ -87,6 +87,18 @@ Terraform users can manage the same resources with the separate
 [`IPA-CyberLab/terraform-provider-heterocloud`](https://github.com/IPA-CyberLab/terraform-provider-heterocloud)
 provider.
 
+To exercise every CLI subcommand against isolated API and DNS command fixtures:
+
+```sh
+cargo build --locked -p heterocloud-cli
+python3 scripts/tests/cli_audit.py --binary target/debug/heterocloud \
+  --report /tmp/heterocloud-cli-audit.json
+```
+
+The Linux release job runs this audit before publishing the CLI archive. It does
+not change production DNS or resources; authenticated live checks are reported
+separately in [the live audit](docs/CLI_LIVE_AUDIT_2026-09-07.md).
+
 ## Public DNS onboarding
 
 The `heterocloud` CLI publishes node-scoped `cloud-<node>` management names

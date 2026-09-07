@@ -121,6 +121,13 @@ jobs:
 
       - run: cargo build --release --locked -p heterocloud-cli
 
+      - name: Exercise CLI command contracts
+        if: runner.os == 'Linux'
+        run: >-
+          python3 scripts/tests/cli_audit.py
+          --binary target/release/heterocloud
+          --report /tmp/heterocloud-cli-audit.json
+
       - name: Upload Unix CLI
         if: runner.os != 'Windows'
         shell: bash
