@@ -4289,6 +4289,7 @@ mod tests {
             region: "heteronet-global".into(),
             image: "ghcr.io/example/udp-server:v1".into(),
             replicas: 2,
+            autoscaling: None,
             cpu_millis: 500,
             memory_mib: 512,
             ephemeral_storage_gib: 10,
@@ -4301,6 +4302,7 @@ mod tests {
             exposure: FlashExposure {
                 exposure_type: FlashExposureType::Public,
                 traffic_mode: FlashTrafficMode::Direct,
+                endpoint_mode: heterocloud_domain::FlashEndpointMode::Ip,
                 allowed_source_cidrs: Vec::new(),
                 denied_source_cidrs: Vec::new(),
             },
@@ -4311,6 +4313,45 @@ mod tests {
             metadata: Default::default(),
         };
         assert!(validate_flash_spec(&spec).is_ok());
+    }
+
+    #[test]
+    fn flash_api_accepts_autoscaling_manifests_and_rejects_invalid_combinations()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../../../examples/cli/flash-autoscaling.json"))?;
+        let create: super::CreateFlashService = serde_json::from_value(manifest.clone())?;
+        validate_flash_spec(&create.spec)?;
+        assert_eq!(create.spec.reserved_replicas(), 4);
+        assert_eq!(
+            serde_json::to_value(&create.spec)?["autoscaling"],
+            manifest["spec"]["autoscaling"]
+        );
+        let update: super::UpdateFlashService = serde_json::from_value(json!({
+            "name": manifest["name"], "spec": manifest["spec"]
+        }))?;
+        validate_flash_spec(&update.spec)?;
+        for (field, invalid) in [
+            ("autoscaling", json!({"min_replicas": 1, "max_replicas": 4})),
+            (
+                "exposure",
+                json!({"type": "public", "traffic_mode": "direct", "endpoint_mode": "load_balancer"}),
+            ),
+        ] {
+            let mut value = manifest.clone();
+            value["spec"][field] = invalid;
+            let request: super::CreateFlashService = serde_json::from_value(value)?;
+            assert!(validate_flash_spec(&request.spec).is_err());
+        }
+        let fixed: super::CreateFlashService =
+            serde_json::from_str(include_str!("../../../examples/cli/flash.json"))?;
+        validate_flash_spec(&fixed.spec)?;
+        assert!(
+            serde_json::to_value(fixed.spec)?
+                .get("autoscaling")
+                .is_none()
+        );
+        Ok(())
     }
 
     #[test]

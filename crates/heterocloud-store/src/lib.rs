@@ -2583,10 +2583,11 @@ async fn prepare_flash_spec(
     requested
         .validate_request()
         .map_err(|error| StoreError::RequestRejected(error.to_string()))?;
-    if requested.replicas > quota.flash.max_replicas_per_service {
+    if requested.reserved_replicas() > quota.flash.max_replicas_per_service {
         return Err(StoreError::RequestRejected(format!(
             "Flash replica limit exceeded: {} requested, limit is {} per service",
-            requested.replicas, quota.flash.max_replicas_per_service
+            requested.reserved_replicas(),
+            quota.flash.max_replicas_per_service
         )));
     }
     if requested.cpu_millis > quota.flash.max_cpu_millis_per_vm
@@ -2627,11 +2628,13 @@ async fn prepare_flash_spec(
         );
         if row.organization_id == organization_id.0 {
             organization_services += 1;
-            organization_replicas += u64::from(stored.replicas);
-            organization_cpu_millis += u64::from(stored.replicas) * u64::from(stored.cpu_millis);
-            organization_memory_mib += u64::from(stored.replicas) * u64::from(stored.memory_mib);
+            organization_replicas += u64::from(stored.reserved_replicas());
+            organization_cpu_millis +=
+                u64::from(stored.reserved_replicas()) * u64::from(stored.cpu_millis);
+            organization_memory_mib +=
+                u64::from(stored.reserved_replicas()) * u64::from(stored.memory_mib);
             organization_ephemeral_storage_gib +=
-                u64::from(stored.replicas) * u64::from(stored.ephemeral_storage_gib);
+                u64::from(stored.reserved_replicas()) * u64::from(stored.ephemeral_storage_gib);
         }
     }
 
@@ -2666,11 +2669,13 @@ async fn prepare_flash_spec(
         occupied_ports.insert((port.protocol, assigned));
     }
 
-    organization_cpu_millis += u64::from(requested.replicas) * u64::from(requested.cpu_millis);
-    organization_memory_mib += u64::from(requested.replicas) * u64::from(requested.memory_mib);
-    organization_replicas += u64::from(requested.replicas);
+    organization_cpu_millis +=
+        u64::from(requested.reserved_replicas()) * u64::from(requested.cpu_millis);
+    organization_memory_mib +=
+        u64::from(requested.reserved_replicas()) * u64::from(requested.memory_mib);
+    organization_replicas += u64::from(requested.reserved_replicas());
     organization_ephemeral_storage_gib +=
-        u64::from(requested.replicas) * u64::from(requested.ephemeral_storage_gib);
+        u64::from(requested.reserved_replicas()) * u64::from(requested.ephemeral_storage_gib);
     if organization_services > u64::from(quota.flash.max_services) {
         return Err(StoreError::RequestRejected(format!(
             "Flash service limit exceeded: {organization_services} requested, limit is {}",
@@ -2946,7 +2951,7 @@ impl ResourceQuotaUsage {
     }
 
     fn add_flash_spec(&mut self, spec: &FlashSpec) {
-        let replicas = u64::from(spec.replicas);
+        let replicas = u64::from(spec.reserved_replicas());
         self.flash_services = self.flash_services.saturating_add(1);
         self.flash_max_replicas_per_service = self.flash_max_replicas_per_service.max(replicas);
         self.flash_max_cpu_millis_per_vm = self
@@ -3637,6 +3642,7 @@ mod tests {
             json!({
                 "region": "heteronet-global",
                 "image": "registry.example.test/game:v2",
+                "autoscaling": {"min_replicas": 1, "max_replicas": 6, "target_cpu_utilization_percent": 70},
                 "replicas": 3,
                 "cpu_millis": 1000,
                 "memory_mib": 256,
@@ -3656,14 +3662,14 @@ mod tests {
         assert_eq!(usage.flow_max_rate_limit_requests_per_second, 8);
         assert_eq!(usage.flow_max_rate_limit_burst, 16);
         assert_eq!(usage.flash_services, 2);
-        assert_eq!(usage.flash_replicas, 5);
-        assert_eq!(usage.flash_max_replicas_per_service, 3);
+        assert_eq!(usage.flash_replicas, 8);
+        assert_eq!(usage.flash_max_replicas_per_service, 6);
         assert_eq!(usage.flash_max_cpu_millis_per_vm, 1_000);
         assert_eq!(usage.flash_max_memory_mib_per_vm, 512);
         assert_eq!(usage.flash_max_disk_gib_per_vm, 3);
-        assert_eq!(usage.flash_cpu_millis, 4_000);
-        assert_eq!(usage.flash_memory_mib, 1_792);
-        assert_eq!(usage.flash_disk_gib, 12);
+        assert_eq!(usage.flash_cpu_millis, 7_000);
+        assert_eq!(usage.flash_memory_mib, 2_560);
+        assert_eq!(usage.flash_disk_gib, 18);
         Ok(())
     }
 }

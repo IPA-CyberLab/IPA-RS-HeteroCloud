@@ -618,12 +618,28 @@ pub enum FlashTrafficMode {
     Direct,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FlashEndpointMode {
+    #[default]
+    Ip,
+    LoadBalancer,
+}
+
+impl FlashEndpointMode {
+    fn is_ip(&self) -> bool {
+        *self == Self::Ip
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlashExposure {
     #[serde(rename = "type")]
     pub exposure_type: FlashExposureType,
     pub traffic_mode: FlashTrafficMode,
+    #[serde(default, skip_serializing_if = "FlashEndpointMode::is_ip")]
+    pub endpoint_mode: FlashEndpointMode,
     #[serde(default)]
     pub allowed_source_cidrs: Vec<String>,
     #[serde(default)]
@@ -669,6 +685,8 @@ pub struct FlashSpec {
     pub region: String,
     pub image: String,
     pub replicas: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autoscaling: Option<FlashAutoscaling>,
     pub cpu_millis: u32,
     pub memory_mib: u32,
     #[serde(default = "default_flash_ephemeral_storage_gib")]
@@ -683,7 +701,25 @@ pub struct FlashSpec {
     pub metadata: BTreeMap<String, Value>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlashAutoscaling {
+    pub min_replicas: u32,
+    pub max_replicas: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_cpu_utilization_percent: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_memory_utilization_percent: Option<u32>,
+}
+
 impl FlashSpec {
+    /// Quota reservation includes the full autoscaling ceiling, not current replicas.
+    pub fn reserved_replicas(&self) -> u32 {
+        self.autoscaling
+            .as_ref()
+            .map_or(self.replicas, |scaling| scaling.max_replicas)
+    }
+
     pub fn validate(&self) -> Result<(), DomainError> {
         self.validate_inner(true)
     }
@@ -719,6 +755,30 @@ impl FlashSpec {
             return Err(invalid_flash_spec(format!(
                 "replicas must be between {MIN_FLASH_REPLICAS} and {MAX_FLASH_REPLICAS}"
             )));
+        }
+        if let Some(scaling) = &self.autoscaling {
+            if scaling.min_replicas < 1
+                || scaling.max_replicas < scaling.min_replicas
+                || !(scaling.min_replicas..=scaling.max_replicas).contains(&self.replicas)
+            {
+                return Err(invalid_flash_spec(
+                    "autoscaling requires min_replicas >= 1, max_replicas >= min_replicas, and replicas within these bounds",
+                ));
+            }
+            let targets = [
+                scaling.target_cpu_utilization_percent,
+                scaling.target_memory_utilization_percent,
+            ];
+            if targets.iter().all(Option::is_none)
+                || targets
+                    .into_iter()
+                    .flatten()
+                    .any(|target| !(1..=100).contains(&target))
+            {
+                return Err(invalid_flash_spec(
+                    "autoscaling requires at least one CPU or memory utilization target, each between 1 and 100",
+                ));
+            }
         }
         if !(MIN_FLASH_CPU_MILLIS..=MAX_FLASH_CPU_MILLIS).contains(&self.cpu_millis) {
             return Err(invalid_flash_spec(format!(
@@ -778,6 +838,14 @@ impl FlashSpec {
         {
             return Err(invalid_flash_spec(
                 "internal exposure requires forwarded traffic_mode",
+            ));
+        }
+        if self.exposure.endpoint_mode == FlashEndpointMode::LoadBalancer
+            && (self.exposure.exposure_type != FlashExposureType::Public
+                || self.exposure.traffic_mode != FlashTrafficMode::Forwarded)
+        {
+            return Err(invalid_flash_spec(
+                "load_balancer endpoint_mode requires public exposure and forwarded traffic_mode",
             ));
         }
         validate_flash_source_cidrs("allowed_source_cidrs", &self.exposure.allowed_source_cidrs)?;
@@ -1157,6 +1225,7 @@ mod tests {
             region: "heteronet-global".into(),
             image: "ghcr.io/example/game-server:v1".into(),
             replicas: 3,
+            autoscaling: None,
             cpu_millis: 500,
             memory_mib: 512,
             ephemeral_storage_gib: 10,
@@ -1169,6 +1238,7 @@ mod tests {
             exposure: FlashExposure {
                 exposure_type: FlashExposureType::Public,
                 traffic_mode: FlashTrafficMode::Direct,
+                endpoint_mode: super::FlashEndpointMode::Ip,
                 allowed_source_cidrs: vec!["192.0.2.10".into(), "2001:db8::/48".into()],
                 denied_source_cidrs: vec!["192.0.2.128/25".into()],
             },
@@ -1178,6 +1248,84 @@ mod tests {
             args: vec!["--port=7777".into()],
             metadata: [("team".into(), json!("simulation"))].into_iter().collect(),
         }
+    }
+
+    #[test]
+    fn flash_autoscaling_validation_and_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+        let fixed = serde_json::to_value(flash_spec())?;
+        assert!(fixed.get("autoscaling").is_none());
+        assert!(fixed["exposure"].get("endpoint_mode").is_none());
+        let decoded: FlashSpec = serde_json::from_value(fixed.clone())?;
+        assert_eq!(decoded.reserved_replicas(), 3);
+        assert_eq!(serde_json::to_value(decoded)?, fixed);
+
+        for targets in [
+            json!({"target_cpu_utilization_percent": 1}),
+            json!({"target_memory_utilization_percent": 100}),
+            json!({"target_cpu_utilization_percent": 70, "target_memory_utilization_percent": 80}),
+        ] {
+            let mut value = fixed.clone();
+            value["autoscaling"] = targets;
+            value["autoscaling"]["min_replicas"] = json!(3);
+            value["autoscaling"]["max_replicas"] = json!(6);
+            let spec: FlashSpec = serde_json::from_value(value.clone())?;
+            spec.validate_request()?;
+            spec.validate()?;
+            assert_eq!(spec.reserved_replicas(), 6);
+            assert_eq!(serde_json::to_value(spec)?, value);
+        }
+        for scaling in [
+            json!({"min_replicas": 1, "max_replicas": 6}),
+            json!({"min_replicas": 0, "max_replicas": 6, "target_cpu_utilization_percent": 70}),
+            json!({"min_replicas": 4, "max_replicas": 3, "target_cpu_utilization_percent": 70}),
+            json!({"min_replicas": 4, "max_replicas": 6, "target_cpu_utilization_percent": 70}),
+            json!({"min_replicas": 1, "max_replicas": 2, "target_cpu_utilization_percent": 70}),
+            json!({"min_replicas": 1, "max_replicas": 6, "target_cpu_utilization_percent": 0}),
+            json!({"min_replicas": 1, "max_replicas": 6, "target_memory_utilization_percent": 101}),
+            json!({"min_replicas": 1, "max_replicas": 6, "target_cpu_utilization_percent": 70, "target_memory_utilization_percent": 0}),
+        ] {
+            let mut value = fixed.clone();
+            value["autoscaling"] = scaling;
+            let spec: FlashSpec = serde_json::from_value(value)?;
+            assert!(spec.validate_request().is_err());
+            assert!(spec.validate().is_err());
+        }
+        let mut unknown = fixed;
+        unknown["autoscaling"] = json!({"min_replicas": 1, "max_replicas": 6, "target_cpu_utilization_percent": 70, "unknown": true});
+        assert!(serde_json::from_value::<FlashSpec>(unknown).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn flash_endpoint_mode_validation() -> Result<(), Box<dyn std::error::Error>> {
+        for exposure in ["public", "internal"] {
+            for traffic in ["forwarded", "direct"] {
+                for mode in ["ip", "load_balancer"] {
+                    let mut value = serde_json::to_value(flash_spec())?;
+                    value["exposure"]["type"] = json!(exposure);
+                    value["exposure"]["traffic_mode"] = json!(traffic);
+                    value["exposure"]["endpoint_mode"] = json!(mode);
+                    let spec: FlashSpec = serde_json::from_value(value)?;
+                    let valid = if mode == "load_balancer" {
+                        exposure == "public" && traffic == "forwarded"
+                    } else {
+                        exposure == "public" || traffic == "forwarded"
+                    };
+                    assert_eq!(spec.validate_request().is_ok(), valid);
+                    assert_eq!(spec.validate().is_ok(), valid);
+                    if mode == "load_balancer" {
+                        assert_eq!(
+                            serde_json::to_value(spec)?["exposure"]["endpoint_mode"],
+                            mode
+                        );
+                    }
+                }
+            }
+        }
+        let mut unknown = serde_json::to_value(flash_spec())?;
+        unknown["exposure"]["endpoint_mode"] = json!("unknown");
+        assert!(serde_json::from_value::<FlashSpec>(unknown).is_err());
+        Ok(())
     }
 
     #[test]

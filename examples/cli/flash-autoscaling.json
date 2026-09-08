@@ -1,0 +1,29 @@
+{
+  "project_id": "0198a118-073f-79e4-9ca4-0c1c2501c031",
+  "name": "autoscaled-game-server",
+  "spec": {
+    "region": "heteronet-global",
+    "image": "registry.heterocloud.mizuame.app/example/game-server:latest",
+    "replicas": 2,
+    "autoscaling": {
+      "min_replicas": 1,
+      "max_replicas": 4,
+      "target_cpu_utilization_percent": 70,
+      "target_memory_utilization_percent": 80
+    },
+    "cpu_millis": 1000,
+    "memory_mib": 2048,
+    "ephemeral_storage_gib": 10,
+    "ports": [{"name": "game-udp", "protocol": "udp", "container_port": 7777}],
+    "exposure": {
+      "type": "public",
+      "traffic_mode": "forwarded",
+      "endpoint_mode": "load_balancer"
+    },
+    "egress": {"mode": "disabled"},
+    "env": {},
+    "command": [],
+    "args": [],
+    "metadata": {}
+  }
+}

@@ -1,0 +1,497 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "HeteroCloud Flash API",
+    "version": "v1",
+    "description": "Scoped Flash create/update contract, not the complete HeteroCloud API. Runtime validation also applies existing image, DNS label, CIDR, environment and process argument constraints."
+  },
+  "paths": {
+    "/api/v1/organizations/{organization_id}/flash/services": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "summary": "Create a Flash service",
+        "description": "Validation and quota reservation occur before acceptance. CPU, memory, disk and replica quotas use autoscaling.max_replicas, or replicas for fixed services. Updates replace the previous reservation transactionally.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFlashService"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted service instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "spec"
+                  ],
+                  "properties": {
+                    "spec": {
+                      "$ref": "#/components/schemas/FlashSpec"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid specification or quota exceeded"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Project or service not found"
+          },
+          "422": {
+            "description": "Malformed request body"
+          }
+        }
+      }
+    },
+    "/api/v1/organizations/{organization_id}/flash/services/{service_instance_id}": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "service_instance_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "put": {
+        "summary": "Replace a Flash service specification",
+        "description": "Validation and quota reservation occur before acceptance. CPU, memory, disk and replica quotas use autoscaling.max_replicas, or replicas for fixed services. Updates replace the previous reservation transactionally.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFlashService"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted service instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "spec"
+                  ],
+                  "properties": {
+                    "spec": {
+                      "$ref": "#/components/schemas/FlashSpec"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid specification or quota exceeded"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Project or service not found"
+          },
+          "422": {
+            "description": "Malformed request body"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "FlashAutoscaling": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "min_replicas",
+          "max_replicas"
+        ],
+        "description": "At least one non-null utilization target is required. The API enforces max_replicas >= min_replicas and min_replicas <= spec.replicas <= max_replicas. Quotas reserve max_replicas.",
+        "properties": {
+          "min_replicas": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4294967295
+          },
+          "max_replicas": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4294967295
+          },
+          "target_cpu_utilization_percent": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 100
+          },
+          "target_memory_utilization_percent": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "target_cpu_utilization_percent"
+            ],
+            "properties": {
+              "target_cpu_utilization_percent": {
+                "type": "integer"
+              }
+            }
+          },
+          {
+            "required": [
+              "target_memory_utilization_percent"
+            ],
+            "properties": {
+              "target_memory_utilization_percent": {
+                "type": "integer"
+              }
+            }
+          }
+        ]
+      },
+      "FlashExposure": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "traffic_mode"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "internal",
+              "public"
+            ]
+          },
+          "traffic_mode": {
+            "type": "string",
+            "enum": [
+              "forwarded",
+              "direct"
+            ]
+          },
+          "endpoint_mode": {
+            "type": "string",
+            "enum": [
+              "ip",
+              "load_balancer"
+            ],
+            "default": "ip",
+            "description": "ip is omitted when serialized. load_balancer requires public exposure and forwarded traffic."
+          },
+          "allowed_source_cidrs": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "denied_source_cidrs": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "internal"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "traffic_mode": {
+                  "const": "forwarded"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "endpoint_mode"
+              ],
+              "properties": {
+                "endpoint_mode": {
+                  "const": "load_balancer"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "type": {
+                  "const": "public"
+                },
+                "traffic_mode": {
+                  "const": "forwarded"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "FlashPort": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "protocol",
+          "container_port"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 63
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "tcp",
+              "udp"
+            ]
+          },
+          "container_port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "service_port": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535,
+            "default": 0,
+            "description": "Request value is replaced by the server with an assigned port in 30000..32767."
+          }
+        }
+      },
+      "FlashEgress": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "restricted",
+              "internet"
+            ],
+            "default": "internet"
+          },
+          "allow_same_organization": {
+            "type": "boolean",
+            "default": false
+          },
+          "allowed_destination_cidrs": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "denied_destination_cidrs": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          }
+        }
+      },
+      "FlashSpec": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "region",
+          "image",
+          "replicas",
+          "cpu_millis",
+          "memory_mib",
+          "ports",
+          "exposure",
+          "env",
+          "command",
+          "args",
+          "metadata"
+        ],
+        "properties": {
+          "region": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63
+          },
+          "image": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "replicas": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000,
+            "description": "Initial desired replicas; must be within autoscaling bounds when enabled."
+          },
+          "autoscaling": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FlashAutoscaling"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional. Omitted for fixed services; null also disables autoscaling."
+          },
+          "cpu_millis": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 100000000
+          },
+          "memory_mib": {
+            "type": "integer",
+            "minimum": 16,
+            "maximum": 1048576
+          },
+          "ephemeral_storage_gib": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "default": 10
+          },
+          "ports": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/components/schemas/FlashPort"
+            }
+          },
+          "exposure": {
+            "$ref": "#/components/schemas/FlashExposure"
+          },
+          "egress": {
+            "$ref": "#/components/schemas/FlashEgress"
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      },
+      "CreateFlashService": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "project_id",
+          "name",
+          "spec"
+        ],
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "spec": {
+            "$ref": "#/components/schemas/FlashSpec"
+          }
+        }
+      },
+      "UpdateFlashService": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "spec"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "spec": {
+            "$ref": "#/components/schemas/FlashSpec"
+          }
+        }
+      }
+    }
+  }
+}

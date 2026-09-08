@@ -691,6 +691,26 @@ mod tests {
         assert!(validate_manifest("game", &json!([])).is_err());
     }
 
+    #[test]
+    fn flash_manifests_preserve_fixed_and_autoscaling_specs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for source in [
+            include_str!("../../../examples/cli/flash.json"),
+            include_str!("../../../examples/cli/flash-autoscaling.json"),
+        ] {
+            let original: Value = serde_json::from_str(source)?;
+            let create: CreateManifest = serde_json::from_str(source)?;
+            validate_manifest(&create.name, &create.spec)?;
+            assert_eq!(serde_json::to_value(&create)?, original);
+            let update = UpdateManifest {
+                name: create.name,
+                spec: create.spec,
+            };
+            assert_eq!(serde_json::to_value(update)?["spec"], original["spec"]);
+        }
+        Ok(())
+    }
+
     #[tokio::test]
     async fn sends_service_account_authorization_and_project_filter()
     -> Result<(), Box<dyn std::error::Error>> {

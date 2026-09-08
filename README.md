@@ -81,7 +81,8 @@ ready. Delete requires `--yes` and waits until the resource is absent. Use
 `--no-wait` for automation that monitors the returned state separately. The
 API origin must use HTTPS unless `--allow-insecure-http` is explicitly enabled
 for a private lab. JSON manifests for each service are under
-[`examples/cli`](examples/cli).
+[`examples/cli`](examples/cli). Flash autoscaling, endpoint modes, quota reservation,
+and the scoped OpenAPI schema are documented in [Flash API](docs/FLASH_API.md).
 
 Terraform users can manage the same resources with the separate
 [`IPA-CyberLab/terraform-provider-heterocloud`](https://github.com/IPA-CyberLab/terraform-provider-heterocloud)

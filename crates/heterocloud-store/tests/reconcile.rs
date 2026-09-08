@@ -209,6 +209,12 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
         .as_u64()
         .ok_or("Flash service port was not assigned")?;
     assert!((30_000..=32_767).contains(&assigned_port));
+    let mut normalized_fixed = flash_request.clone();
+    normalized_fixed["ports"][0]["service_port"] = json!(assigned_port);
+    normalized_fixed["egress"] = serde_json::to_value(heterocloud_domain::FlashEgress::default())?;
+    assert_eq!(flash.spec, normalized_fixed);
+    assert!(flash.spec.get("autoscaling").is_none());
+    assert!(flash.spec["exposure"].get("endpoint_mode").is_none());
     let error_operation_id = Uuid::from_u128(43);
     let error_status = json!({
         "phase": "error",
@@ -356,6 +362,117 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
         second_flash.spec["ports"][0]["service_port"],
         json!(assigned_port),
         "a removed endpoint must release its protocol-specific service port"
+    );
+
+    for (ceiling, cpu, memory, disk, error_text) in [
+        (101, 10, 16, 1, "replica limit"),
+        (100, 10, 16, 1, "tenant replica limit"),
+        (6, 4_000, 512, 1, "CPU limit"),
+        (5, 500, 8_128, 1, "memory limit"),
+        (10, 500, 512, 10, "disk limit"),
+    ] {
+        let mut request = flash_request.clone();
+        request["autoscaling"] = json!({
+            "min_replicas": 1, "max_replicas": ceiling,
+            "target_cpu_utilization_percent": 70
+        });
+        request["cpu_millis"] = json!(cpu);
+        request["memory_mib"] = json!(memory);
+        request["ephemeral_storage_gib"] = json!(disk);
+        assert!(matches!(
+            store.create_service_instance(organization_id, project.id, membership.principal_id,
+                "flash", "autoscaling-rejected", request.clone()).await,
+            Err(StoreError::RequestRejected(message)) if message.contains(error_text)
+        ));
+        assert!(matches!(
+            store.update_service_instance(organization_id, flash.id, "flash", membership.principal_id,
+                "autoscaling-rejected", request).await,
+            Err(StoreError::RequestRejected(message)) if message.contains(error_text)
+        ));
+        let unchanged = store
+            .service_instance(flash.id)
+            .await?
+            .ok_or("missing Flash")?;
+        assert_eq!(unchanged.spec, flash.spec);
+        assert_eq!(unchanged.generation, flash.generation);
+    }
+
+    // Only one six-replica reservation fits alongside the three fixed replicas.
+    let mut scaling = flash_request.clone();
+    scaling["autoscaling"] = json!({
+        "min_replicas": 1, "max_replicas": 6, "target_memory_utilization_percent": 80
+    });
+    scaling["exposure"]["endpoint_mode"] = json!("load_balancer");
+    let (first, second) = tokio::join!(
+        store.create_service_instance(
+            organization_id,
+            project.id,
+            membership.principal_id,
+            "flash",
+            "scaling-race-a",
+            scaling.clone()
+        ),
+        store.create_service_instance(
+            organization_id,
+            project.id,
+            membership.principal_id,
+            "flash",
+            "scaling-race-b",
+            scaling.clone()
+        ),
+    );
+    let winner = match (first, second) {
+        (Ok(winner), Err(StoreError::RequestRejected(message)))
+        | (Err(StoreError::RequestRejected(message)), Ok(winner))
+            if message.contains("disk limit") =>
+        {
+            winner
+        }
+        results => return Err(format!("expected exactly one reservation: {results:?}").into()),
+    };
+    let tenants = store.list_resource_quota_tenants().await?;
+    let tenant = tenants
+        .iter()
+        .find(|tenant| tenant.organization.id == organization_id)
+        .ok_or("missing tenant usage")?;
+    assert_eq!(tenant.usage.flash_replicas, 9);
+    assert_eq!(tenant.usage.flash_cpu_millis, 4_500);
+    assert_eq!(tenant.usage.flash_memory_mib, 4_608);
+    assert_eq!(tenant.usage.flash_disk_gib, 90);
+    assert_eq!(tenant.usage.flash_max_replicas_per_service, 6);
+
+    // Updating a service replaces its reservation; it must not count itself twice.
+    scaling["autoscaling"]["max_replicas"] = json!(7);
+    let winner = store
+        .update_service_instance(
+            organization_id,
+            winner.id,
+            "flash",
+            membership.principal_id,
+            "scaling-updated",
+            scaling,
+        )
+        .await?;
+    assert_eq!(winner.spec["autoscaling"]["max_replicas"], 7);
+    let fixed = store
+        .update_service_instance(
+            organization_id,
+            winner.id,
+            "flash",
+            membership.principal_id,
+            "scaling-disabled",
+            flash_request.clone(),
+        )
+        .await?;
+    assert!(fixed.spec.get("autoscaling").is_none());
+    assert!(fixed.spec["exposure"].get("endpoint_mode").is_none());
+    let deleting = store
+        .begin_delete_service_instance(organization_id, fixed.id, "flash", membership.principal_id)
+        .await?;
+    assert!(
+        store
+            .complete_delete_service_instance(deleting.id, "flash", deleting.generation)
+            .await?
     );
 
     let mut over_quota = flash_request.clone();
