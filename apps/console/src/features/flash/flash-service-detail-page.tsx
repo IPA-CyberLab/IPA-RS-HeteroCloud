@@ -109,7 +109,7 @@ export function FlashServiceDetailPage() {
     queryFn: ({ signal }) =>
       api.flash.services.listContainers(organizationId, serviceId, signal),
     enabled:
-      Boolean(serviceId) && shellOpen && service.data?.state === "ready",
+      Boolean(serviceId) && shellOpen && Boolean(service.data) && service.data?.state !== "deleting",
     refetchInterval: shellOpen ? 10_000 : false,
   });
   const updateService = useMutation({
@@ -224,7 +224,7 @@ export function FlashServiceDetailPage() {
             />
             <Button
               iconName="script"
-              disabled={disabled || item.state !== "ready"}
+              disabled={disabled}
               onClick={() => {
                 setShellPod(null);
                 setShellSession(0);

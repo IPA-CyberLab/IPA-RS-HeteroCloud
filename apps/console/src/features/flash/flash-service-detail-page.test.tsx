@@ -128,7 +128,8 @@ describe("FlashServiceDetailPage", () => {
     expect(screen.getByDisplayValue("ghcr.io/example/game-server:v1")).toBeInTheDocument();
   });
 
-  it("稼働中コンテナを選択するWeb Shellを開く", async () => {
+  it.each(["ready", "provisioning", "updating", "error"] as const)("%sでも稼働中コンテナのWeb Shellを開く", async (state) => {
+    vi.mocked(api.flash.services.get).mockResolvedValue({ ...service, state });
     const user = userEvent.setup();
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },

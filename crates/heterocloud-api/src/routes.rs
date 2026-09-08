@@ -2395,7 +2395,7 @@ async fn list_flash_containers(
     )
     .await?;
     let instance = flash_service(&state, organization_id, service_instance_id).await?;
-    if instance.state != ServiceState::Ready {
+    if instance.state == ServiceState::Deleting {
         return Err(ApiError::ServiceInstanceNotReady);
     }
     let provider = state
@@ -2443,7 +2443,7 @@ async fn exec_flash_container(
     )
     .await?;
     let instance = flash_service(&state, organization_id, service_instance_id).await?;
-    if instance.state != ServiceState::Ready {
+    if instance.state == ServiceState::Deleting {
         return Err(ApiError::ServiceInstanceNotReady);
     }
     let provider = state
