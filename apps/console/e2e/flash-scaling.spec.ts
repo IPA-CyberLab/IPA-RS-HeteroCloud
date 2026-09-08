@@ -42,6 +42,7 @@ test("Flash autoscaling and LB edit on desktop and mobile", async ({ page, isMob
   await expect(page.getByText("要求レプリカ", { exact: true }).locator("..")).toContainText("4");
   await expect(page.getByText("稼働レプリカ", { exact: true }).locator("..")).toContainText("3");
   await expect(page.getByText("lb.example.test:30001", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("flash-detail.png"), fullPage: true });
   await page.getByRole("button", { name: "編集", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Flashサービスを編集" });
   await expect(dialog.getByRole("spinbutton", { name: "最小レプリカ" })).toHaveValue("2");
@@ -66,6 +67,10 @@ test("Flash autoscaling and LB edit on desktop and mobile", async ({ page, isMob
   for (const position of positions) expect(position.width).toBeGreaterThan(80);
   if (!isMobile) expect(positions[0].y).toBeCloseTo(positions[2].y, 0);
   await page.screenshot({ path: testInfo.outputPath("flash-autoscale.png"), fullPage: true });
+  await dialog.locator(".flash-scale-controls").screenshot({ path: testInfo.outputPath("flash-scale-controls.png") });
+  await dialog.getByRole("button", { name: isMobile ? /公開アドレス.*ドメイン/ : "ドメイン (LB)" })
+    .evaluate((element) => element.scrollIntoView({ block: "center" }));
+  await page.screenshot({ path: testInfo.outputPath("flash-publishing.png") });
   await dialog.getByRole("button", { name: "変更を保存" }).click();
   await expect(dialog).not.toBeVisible();
   expect(saved?.spec).toMatchObject({ ...spec, ports: [{ name: "game", protocol: "udp", container_port: 7777 }],
