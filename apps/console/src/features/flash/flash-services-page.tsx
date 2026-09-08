@@ -119,7 +119,7 @@ export function FlashServicesPage() {
         header: "レプリカ",
         accessorFn: (service) => requestedReplicas(service),
         cell: ({ row }) =>
-          `${formatNumber(readyReplicas(row.original))} / ${requestedReplicas(row.original) === null ? "-" : formatNumber(requestedReplicas(row.original)!)}`,
+          `${readyReplicas(row.original) === null ? "-" : formatNumber(readyReplicas(row.original)!)} / ${requestedReplicas(row.original) === null ? "-" : formatNumber(requestedReplicas(row.original)!)}`,
       },
       {
         id: "exposure",
@@ -165,8 +165,8 @@ export function FlashServicesPage() {
 
   const serviceItems = services.data.items;
   const readyCount = serviceItems.filter((service) => service.state === "ready").length;
-  const replicaCount = serviceItems.reduce(
-    (total, service) => total + readyReplicas(service),
+  const replicaCount = serviceItems.some((service) => readyReplicas(service) === null) ? null : serviceItems.reduce(
+    (total, service) => total + (readyReplicas(service) ?? 0),
     0,
   );
   const endpointCount = serviceItems.reduce(
@@ -214,7 +214,7 @@ export function FlashServicesPage() {
           ].map(([label, value]) => (
             <div key={label}>
               <Box variant="awsui-key-label">{label}</Box>
-              <Box variant="awsui-value-large">{formatNumber(Number(value))}</Box>
+              <Box variant="awsui-value-large">{value === null ? "-" : formatNumber(Number(value))}</Box>
             </div>
           ))}
         </ColumnLayout>

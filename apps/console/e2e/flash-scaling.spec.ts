@@ -13,8 +13,8 @@ test("Flash autoscaling and LB edit on desktop and mobile", async ({ page, isMob
   const service = {
     id: "flash-test", organization_id: "org-test", project_id: "project-test", provider: "flash",
     name: "flash-autoscale", generation: 1, state: "ready", spec,
-    status: { status: { ready_replicas: 3, requested_replicas: 4, endpoints: [
-      { name: "game", protocol: "udp", address: "lb.example.test", port: 30001 },
+    status: { status: { ready_replicas: 3, desired_replicas: 4, endpoints: [
+      { name: "game", protocol: "udp", host: "lb.example.test", port: 30001 },
     ] } }, created_at: timestamp, updated_at: timestamp,
   };
   const errors: string[] = [];

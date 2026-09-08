@@ -114,8 +114,9 @@ export function flashServiceEndpoints(
   });
 }
 
-export function readyReplicas(service: Pick<FlashService, "status">): number {
+export function readyReplicas(service: Pick<FlashService, "status">): number | null {
   const status = flashProviderStatus(service.status);
+  if (status.live_status_unavailable === true) return null;
   const value =
     status.ready_replicas ?? status.available_replicas ?? 0;
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -123,7 +124,8 @@ export function readyReplicas(service: Pick<FlashService, "status">): number {
 
 export function requestedReplicas(service: Pick<FlashService, "status" | "spec">): number | null {
   const status = flashProviderStatus(service.status);
-  const value = status.requested_replicas ?? status.replicas;
+  if (status.live_status_unavailable === true) return null;
+  const value = status.desired_replicas ?? status.requested_replicas ?? status.replicas;
   if (typeof value === "number" && Number.isInteger(value) && value >= 0) return value;
   return service.spec.autoscaling ? null : service.spec.replicas;
 }

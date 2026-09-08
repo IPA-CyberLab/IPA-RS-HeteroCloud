@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FlashServiceStatus } from "@/lib/api-types";
-import { flashServiceEndpoints, requestedReplicas, flashScaleLabel } from "./flash-service-utils";
+import { flashServiceEndpoints, requestedReplicas, readyReplicas, flashScaleLabel } from "./flash-service-utils";
 import { defaultFlashServiceFormValue, flashSpecFromForm } from "./flash-service-form";
 
 describe("flashServiceEndpoints", () => {
@@ -80,6 +80,10 @@ it("separates configured scaling from provider requested replicas", () => {
   spec.autoscaling = { min_replicas: 1, max_replicas: 5, target_cpu_utilization_percent: 80 };
   expect(flashScaleLabel(spec)).toBe("自動・1〜5");
   expect(requestedReplicas({ spec, status: {} })).toBeNull();
+  expect(requestedReplicas({ spec, status: { status: { desired_replicas: 4, ready_replicas: 3 } } })).toBe(4);
   expect(requestedReplicas({ spec, status: { status: { requested_replicas: 4, ready_replicas: 3 } } })).toBe(4);
   expect(requestedReplicas({ spec, status: { replicas: 2 } })).toBe(2);
+  const unavailable = { status: { desired_replicas: 4, ready_replicas: 3, live_status_unavailable: true } };
+  expect(requestedReplicas({ spec, status: unavailable })).toBeNull();
+  expect(readyReplicas({ status: unavailable })).toBeNull();
 });

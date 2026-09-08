@@ -392,6 +392,7 @@ export interface FlashServiceStatus {
   status?: FlashServiceStatus;
   observed_generation?: number;
   ready_replicas?: number;
+  desired_replicas?: number;
   available_replicas?: number;
   runtime_class?: string;
   message?: string;

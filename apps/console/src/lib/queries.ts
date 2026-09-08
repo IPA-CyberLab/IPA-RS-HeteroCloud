@@ -155,6 +155,8 @@ export function flashServicesQueryOptions(organizationId: string) {
   return queryOptions({
     queryKey: ["organizations", organizationId, "flash", "services"],
     queryFn: ({ signal }) => api.flash.services.list(organizationId, signal),
+    refetchInterval: 15_000,
+    staleTime: 5_000,
   });
 }
 
