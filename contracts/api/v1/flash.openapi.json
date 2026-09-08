@@ -3,7 +3,7 @@
   "info": {
     "title": "HeteroCloud Flash API",
     "version": "v1",
-    "description": "Scoped Flash create/update contract, not the complete HeteroCloud API. Runtime validation also applies existing image, DNS label, CIDR, environment and process argument constraints."
+    "description": "Scoped Flash read/create/update contract, not the complete HeteroCloud API. Runtime validation also applies existing image, DNS label, CIDR, environment and process argument constraints."
   },
   "paths": {
     "/api/v1/organizations/{organization_id}/flash/services": {
@@ -18,6 +18,22 @@
           }
         }
       ],
+      "get": {
+        "summary": "List Flash services with best-effort live autoscaling status",
+        "description": "Requires flash:ListInstances. Optional project filter; currently no pagination limit. Autoscaled services refresh with concurrency four and one absolute two-second provider refresh budget including queue time. Fixed services are unchanged. Provider failure never fails the list: inner status is marked live_status_unavailable and desired/ready counts are absent. Database state and generation are never changed.",
+        "parameters": [{"name": "project_id", "in": "query", "schema": {"type": "string", "format": "uuid"}}],
+        "responses": {
+          "200": {
+            "description": "Services in stored list order; live status may be unavailable",
+            "content": {"application/json": {"schema": {
+              "type": "object", "required": ["items"],
+              "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/FlashServiceRead"}}}
+            }}}
+          },
+          "401": {"description": "Authentication required"},
+          "403": {"description": "Permission denied"}
+        }
+      },
       "post": {
         "summary": "Create a Flash service",
         "description": "Validation and quota reservation occur before acceptance. CPU, memory, disk and replica quotas use autoscaling.max_replicas, or replicas for fixed services. Updates replace the previous reservation transactionally.",
@@ -89,6 +105,19 @@
           }
         }
       ],
+      "get": {
+        "summary": "Read a Flash service with best-effort live autoscaling status",
+        "description": "Requires flash:GetInstance. Autoscaled services use a signed, read-only provider GET with a two-second deadline and exact observed_generation matching. Success replaces status.status. Failure retains cached status with live_status_unavailable: true and removes desired_replicas/ready_replicas; cached endpoints may remain. Fixed services are unchanged. No database lifecycle, generation, or spec mutation occurs.",
+        "responses": {
+          "200": {
+            "description": "Service with live or explicitly unavailable autoscaling status",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FlashServiceRead"}}}
+          },
+          "401": {"description": "Authentication required"},
+          "403": {"description": "Permission denied"},
+          "404": {"description": "Service not found"}
+        }
+      },
       "put": {
         "summary": "Replace a Flash service specification",
         "description": "Validation and quota reservation occur before acceptance. CPU, memory, disk and replica quotas use autoscaling.max_replicas, or replicas for fixed services. Updates replace the previous reservation transactionally.",
@@ -142,6 +171,39 @@
   },
   "components": {
     "schemas": {
+      "FlashServiceRead": {
+        "type": "object",
+        "required": ["id", "state", "generation", "spec", "status"],
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "state": {"type": "string", "description": "Persisted lifecycle state, unchanged by live status reads."},
+          "generation": {"type": "integer"},
+          "spec": {"$ref": "#/components/schemas/FlashSpec"},
+          "status": {
+            "type": "object",
+            "properties": {
+              "operation_id": {"type": "string"},
+              "status": {"$ref": "#/components/schemas/FlashObservedStatus"}
+            }
+          }
+        }
+      },
+      "FlashObservedStatus": {
+        "type": "object",
+        "description": "Live provider fields when available, otherwise cached fields with an explicit unavailable marker. Counts are never current when live_status_unavailable is true; cached endpoints may be stale.",
+        "properties": {
+          "observed_generation": {"type": "integer"},
+          "desired_replicas": {"type": "integer", "minimum": 0},
+          "ready_replicas": {"type": "integer", "minimum": 0},
+          "phase": {"type": "string"},
+          "endpoints": {"type": "array", "items": {"type": "object"}},
+          "live_status_unavailable": {"type": "boolean"}
+        },
+        "allOf": [{
+          "if": {"required": ["live_status_unavailable"], "properties": {"live_status_unavailable": {"const": true}}},
+          "then": {"not": {"anyOf": [{"required": ["desired_replicas"]}, {"required": ["ready_replicas"]}]}}
+        }]
+      },
       "FlashAutoscaling": {
         "type": "object",
         "additionalProperties": false,

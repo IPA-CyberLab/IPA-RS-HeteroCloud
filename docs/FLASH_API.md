@@ -1,7 +1,7 @@
 # Flash Autoscaling and Endpoint Modes
 
 The [Flash OpenAPI 3.1 contract](../contracts/api/v1/flash.openapi.json) describes
-the create and replacement-update request schemas. The API uses the same typed
+the read, create and replacement-update schemas. The API uses the same typed
 `FlashSpec` validation before enqueueing provider reconciliation.
 
 `spec.autoscaling` is optional. When present, it contains required integer
@@ -34,6 +34,34 @@ transaction locks serialize concurrent reservations; rejected writes do not chan
 the spec, generation or reconcile outbox. Deleting services retain existing quota
 release behavior. Owner usage reports use the same reservation calculation, not
 live running replica counts.
+
+## Live Status on Reads
+
+Authorized Flash detail and list GETs refresh autoscaled services using signed
+`GET /internal/v1/service-instances/{id}?generation=N` with provider action
+`flash.status.get`. The provider returns raw `FlashServiceStatus` JSON. Its
+`observed_generation` must exactly match the service generation; malformed or
+mismatched responses are not displayed as current. The response's inner
+`status.status` is replaced with this live status, including `desired_replicas`,
+`ready_replicas`, `phase` and `endpoints`. Fixed services are returned unchanged.
+
+Refresh is response-only: GET never calls provider PUT, writes the database,
+changes lifecycle state/generation, or enqueues reconciliation. A temporary
+provider `provisioning` phase during HPA scaling does not reset HeteroCloud's
+stored `ready` lifecycle state. Deleting services are not queried.
+
+Each detail refresh has a two-second deadline. Lists preserve order, use at most
+four concurrent provider requests, and share one absolute two-second refresh
+budget including queue time, regardless of list size (the current list query has
+no pagination limit). This budget covers provider refresh, not authentication or
+the database query.
+
+On timeout, unavailable provider configuration, non-success HTTP, malformed JSON,
+or generation mismatch, the API still returns the service/list successfully.
+The inner status has `live_status_unavailable: true`; `desired_replicas` and
+`ready_replicas` are removed. Cached endpoints and other cached status fields may
+remain, but are not guaranteed current. Clients must not substitute requested
+replicas for missing current counts. Success removes the unavailable marker.
 
 ## CLI
 

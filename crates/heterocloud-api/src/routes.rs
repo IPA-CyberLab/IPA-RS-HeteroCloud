@@ -50,6 +50,7 @@ use crate::{
     error::ApiError,
     flash_provider::{
         FlashContainerList, FlashProviderContext, FlashProviderProxy, bridge_websockets,
+        refresh_autoscaled_status, refresh_autoscaled_statuses,
     },
     flow_access::{FlowAccessInput, SignedFlowAccessContext},
     metrics::fetch_and_record_realtime_metrics,
@@ -1617,7 +1618,7 @@ async fn list_flash_services(
     jar: CookieJar,
 ) -> Result<Json<Value>, ApiError> {
     let actor = authenticated_actor(&state, &headers, &jar).await?;
-    authorize_actor(
+    let authorization = authorize_actor(
         &state,
         &actor,
         OrganizationId(organization_id),
@@ -1634,6 +1635,12 @@ async fn list_flash_services(
         )
         .await
         .map_err(ApiError::from_store)?;
+    let items = refresh_autoscaled_statuses(
+        state.flash_provider.as_deref(),
+        authorization.principal_id,
+        items,
+    )
+    .await;
     Ok(Json(json!({ "items": items })))
 }
 
@@ -1685,7 +1692,7 @@ async fn get_flash_service(
     jar: CookieJar,
 ) -> Result<Json<ServiceInstance>, ApiError> {
     let actor = authenticated_actor(&state, &headers, &jar).await?;
-    authorize_actor(
+    let authorization = authorize_actor(
         &state,
         &actor,
         OrganizationId(organization_id),
@@ -1693,8 +1700,14 @@ async fn get_flash_service(
         &flash_service_resource(organization_id, service_instance_id),
     )
     .await?;
+    let instance = flash_service(&state, organization_id, service_instance_id).await?;
     Ok(Json(
-        flash_service(&state, organization_id, service_instance_id).await?,
+        refresh_autoscaled_status(
+            state.flash_provider.as_deref(),
+            authorization.principal_id,
+            instance,
+        )
+        .await,
     ))
 }
 
