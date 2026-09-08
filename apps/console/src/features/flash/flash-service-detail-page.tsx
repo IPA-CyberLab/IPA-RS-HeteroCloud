@@ -50,6 +50,8 @@ import {
   flashProtocolLabel,
   flashServiceEndpoints,
   readyReplicas,
+  requestedReplicas,
+  flashScaleLabel,
 } from "./flash-service-utils";
 
 const portColumns: ColumnDef<FlashPort, unknown>[] = [
@@ -258,12 +260,12 @@ export function FlashServiceDetailPage() {
         <ColumnLayout columns={3} variant="text-grid">
           {[
             ["稼働レプリカ", readyReplicas(item)],
-            ["要求レプリカ", item.spec.replicas],
+            ["要求レプリカ", requestedReplicas(item)],
             ["エンドポイント", endpoints.length],
           ].map(([label, value]) => (
             <div key={label}>
               <Box variant="awsui-key-label">{label}</Box>
-              <Box variant="awsui-value-large">{formatNumber(Number(value))}</Box>
+              <Box variant="awsui-value-large">{value === null ? "-" : formatNumber(Number(value))}</Box>
             </div>
           ))}
         </ColumnLayout>
@@ -325,6 +327,11 @@ export function FlashServiceDetailPage() {
               { label: "状態", value: <StatusBadge status={item.state} /> },
               { label: "プロジェクト", value: projectName },
               { label: "リージョン", value: item.spec.region },
+              { label: "スケーリング", value: flashScaleLabel(item.spec) },
+              ...(item.spec.autoscaling ? [{ label: "目標使用率", value: [
+                item.spec.autoscaling.target_cpu_utilization_percent !== undefined ? `CPU ${item.spec.autoscaling.target_cpu_utilization_percent}%` : null,
+                item.spec.autoscaling.target_memory_utilization_percent !== undefined ? `メモリ ${item.spec.autoscaling.target_memory_utilization_percent}%` : null,
+              ].filter(Boolean).join(" / ") }] : []),
               { label: "CPU", value: `${formatNumber(item.spec.cpu_millis)} millicores` },
               { label: "メモリ", value: `${formatNumber(item.spec.memory_mib)} MiB` },
               { label: "ディスク上限（イメージ込み）", value: `${formatNumber(item.spec.ephemeral_storage_gib)} GiB` },

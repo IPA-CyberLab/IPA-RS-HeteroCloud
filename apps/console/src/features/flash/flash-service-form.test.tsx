@@ -7,6 +7,7 @@ import {
   defaultFlashServiceFormValue,
   FlashServiceForm,
   flashFormValidationError,
+  flashFormFromService,
   flashRegistryImageOptions,
   flashSpecFromForm,
   parseFlashDestinationCidrs,
@@ -300,9 +301,68 @@ describe("FlashServiceForm", () => {
     expect(flashFormValidationError(value)).toContain("転送モード");
     expect(flashSpecFromForm(value).exposure).toEqual({
       type: "internal",
+      endpoint_mode: "ip",
       traffic_mode: "forwarded",
       allowed_source_cidrs: [],
       denied_source_cidrs: [],
     });
+  });
+});
+
+describe("Flash autoscaling and domain publishing", () => {
+  const value: FlashServiceFormValue = {
+    ...defaultFlashServiceFormValue,
+    projectId: "project-1", name: "autoscaled", image: "example/server:v1",
+    scaleMode: "auto", replicas: 2, minReplicas: 2, maxReplicas: 5,
+    endpointMode: "load_balancer", memoryTargetEnabled: true,
+    environment: "MODE=production", command: "/app/server", args: "--verbose", processMode: "custom",
+    allowedSourceCidrs: "203.0.113.0/24", deniedSourceCidrs: "203.0.113.1",
+    egressMode: "restricted", allowedDestinationCidrs: "8.8.8.8", allowSameOrganization: true,
+  };
+
+  it("round-trips autoscaling, LB, and unrelated fields", () => {
+    const spec = flashSpecFromForm(value, { owner: "test" });
+    expect(spec.autoscaling).toEqual({ min_replicas: 2, max_replicas: 5, target_cpu_utilization_percent: 80, target_memory_utilization_percent: 80 });
+    const form = flashFormFromService({ project_id: value.projectId, name: value.name,
+      spec: { ...spec, ports: spec.ports.map((port) => ({ ...port, service_port: 30001 })) } });
+    expect(flashSpecFromForm({ ...form, name: "renamed" }, spec.metadata)).toEqual(spec);
+    expect(flashFormValidationError(form)).toBeNull();
+    expect(flashSpecFromForm({ ...form, scaleMode: "fixed" })).not.toHaveProperty("autoscaling");
+    expect(flashSpecFromForm({ ...form, cpuTargetEnabled: false }).autoscaling).toEqual({ min_replicas: 2, max_replicas: 5, target_memory_utilization_percent: 80 });
+    const legacy = { ...spec, autoscaling: undefined, exposure: { ...spec.exposure, endpoint_mode: undefined }, ports: [] };
+    expect(flashFormFromService({ project_id: "p", name: "n", spec: legacy })).toMatchObject({ scaleMode: "fixed", endpointMode: "ip" });
+  });
+
+  it.each([
+    { minReplicas: 0 }, { minReplicas: 6 }, { maxReplicas: 101 }, { maxReplicas: 2.5 },
+    { replicas: 1 }, { replicas: 6 }, { replicas: NaN },
+    { cpuTargetEnabled: false, memoryTargetEnabled: false },
+    { cpuTarget: 0 }, { cpuTarget: 101 }, { memoryTarget: 1.5 }, { memoryTarget: NaN },
+    { exposureType: "internal" as const }, { trafficMode: "direct" as const },
+  ])("rejects invalid contract values %j", (change) => {
+    expect(flashFormValidationError({ ...value, ...change })).not.toBeNull();
+  });
+
+  it("accepts target boundaries and ignores disabled targets", () => {
+    expect(flashFormValidationError({ ...value, cpuTarget: 1, memoryTarget: 100 })).toBeNull();
+    expect(flashFormValidationError({ ...value, cpuTargetEnabled: false, cpuTarget: 0 })).toBeNull();
+  });
+
+  it("switches scale and publishing modes without losing other input", () => {
+    render(<FormHarness />);
+    fireEvent.click(screen.getByText("自動", { exact: true }));
+    fireEvent.change(screen.getByRole("spinbutton", { name: "最小レプリカ" }), { target: { value: "2" } });
+    expect(screen.getByRole("spinbutton", { name: "初期レプリカ" })).toHaveValue(2);
+    expect(screen.getByRole("spinbutton", { name: "メモリ目標使用率 (%)" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "メモリ目標使用率 (%)" }));
+    expect(screen.getByRole("spinbutton", { name: "メモリ目標使用率 (%)" })).toBeEnabled();
+    fireEvent.click(screen.getByText("ダイレクト", { exact: true }));
+    fireEvent.click(screen.getByText("ドメイン (LB)", { exact: true }));
+    expect(screen.getByRole("button", { name: "ダイレクト" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "転送" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByText("内部", { exact: true }));
+    fireEvent.click(screen.getByText("公開", { exact: true }));
+    expect(screen.getByRole("button", { name: /^IP$/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("textbox", { name: "サービス名" })).toHaveValue("game-server");
   });
 });

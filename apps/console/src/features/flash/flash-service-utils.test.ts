@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FlashServiceStatus } from "@/lib/api-types";
-import { flashServiceEndpoints } from "./flash-service-utils";
+import { flashServiceEndpoints, requestedReplicas, flashScaleLabel } from "./flash-service-utils";
+import { defaultFlashServiceFormValue, flashSpecFromForm } from "./flash-service-form";
 
 describe("flashServiceEndpoints", () => {
   it("構造化されたTCP/UDPエンドポイントを表示形式へ変換する", () => {
@@ -20,7 +21,7 @@ describe("flashServiceEndpoints", () => {
       expect.objectContaining({
         name: "admin",
         protocol: "TCP",
-        address: "https://flash.example.com",
+        address: "flash.example.com",
       }),
     ]);
   });
@@ -63,4 +64,22 @@ describe("flashServiceEndpoints", () => {
       }),
     ]);
   });
+});
+
+it("renders provider LB hostnames and IPv6 with transport ports", () => {
+  expect(flashServiceEndpoints({ status: { endpoints: [
+    { protocol: "tcp", address: "lb.example.test", port: 443, url: "https://wrong.example.test" },
+    { protocol: "udp", address: "lb.example.test", port: 7777 },
+    { protocol: "tcp", address: "2001:db8::1", port: 8080 },
+  ] } }).map((endpoint) => endpoint.address)).toEqual(["lb.example.test:443", "lb.example.test:7777", "[2001:db8::1]:8080"]);
+});
+
+it("separates configured scaling from provider requested replicas", () => {
+  const spec = { ...flashSpecFromForm(defaultFlashServiceFormValue), ports: [] };
+  expect(requestedReplicas({ spec, status: {} })).toBe(1);
+  spec.autoscaling = { min_replicas: 1, max_replicas: 5, target_cpu_utilization_percent: 80 };
+  expect(flashScaleLabel(spec)).toBe("自動・1〜5");
+  expect(requestedReplicas({ spec, status: {} })).toBeNull();
+  expect(requestedReplicas({ spec, status: { status: { requested_replicas: 4, ready_replicas: 3 } } })).toBe(4);
+  expect(requestedReplicas({ spec, status: { replicas: 2 } })).toBe(2);
 });

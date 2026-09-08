@@ -10,6 +10,7 @@ import Textarea from "@cloudscape-design/components/textarea";
 import Toggle from "@cloudscape-design/components/toggle";
 import ipaddr from "ipaddr.js";
 import type { FormEvent, ReactNode } from "react";
+import "./flash-service-form.css";
 import { ProjectSelector } from "@/components/shared/resource-selectors";
 import type {
   FlashExposure,
@@ -32,6 +33,14 @@ export interface FlashServiceFormValue {
   imageSource: FlashImageSource;
   image: string;
   replicas: number;
+  scaleMode: "fixed" | "auto";
+  minReplicas: number;
+  maxReplicas: number;
+  cpuTargetEnabled: boolean;
+  memoryTargetEnabled: boolean;
+  cpuTarget: number;
+  memoryTarget: number;
+  endpointMode: NonNullable<FlashExposure["endpoint_mode"]>;
   cpuMillis: number;
   memoryMib: number;
   ephemeralStorageGib: number;
@@ -57,6 +66,14 @@ export const defaultFlashServiceFormValue: FlashServiceFormValue = {
   imageSource: "registry",
   image: "",
   replicas: 1,
+  scaleMode: "fixed",
+  minReplicas: 1,
+  maxReplicas: 2,
+  cpuTargetEnabled: true,
+  memoryTargetEnabled: false,
+  cpuTarget: 80,
+  memoryTarget: 80,
+  endpointMode: "ip",
   cpuMillis: 500,
   memoryMib: 512,
   ephemeralStorageGib: 10,
@@ -275,8 +292,25 @@ export function flashFormValidationError(
   if (!value.image.trim() || /\s/.test(value.image)) {
     return "コンテナイメージを入力してください。";
   }
-  if (value.replicas < 1 || value.replicas > quota.max_replicas_per_service) {
+  if (!Number.isInteger(value.replicas) || value.replicas < 1 || value.replicas > quota.max_replicas_per_service) {
     return `レプリカは1〜${quota.max_replicas_per_service.toLocaleString("ja-JP")}で入力してください。`;
+  }
+  if (value.scaleMode === "auto") {
+    if (!Number.isInteger(value.minReplicas) || !Number.isInteger(value.maxReplicas) ||
+        value.minReplicas < 1 || value.maxReplicas < value.minReplicas ||
+        value.maxReplicas > quota.max_replicas_per_service) {
+      return `最小・最大レプリカは1〜${quota.max_replicas_per_service}で、最大を最小以上に設定してください。`;
+    }
+    if (value.replicas < value.minReplicas || value.replicas > value.maxReplicas) {
+      return "レプリカは最小・最大レプリカの範囲内に設定してください。";
+    }
+    if (!value.cpuTargetEnabled && !value.memoryTargetEnabled) return "CPUまたはメモリの目標使用率を選択してください。";
+    for (const [enabled, target] of [[value.cpuTargetEnabled, value.cpuTarget], [value.memoryTargetEnabled, value.memoryTarget]] as const) {
+      if (enabled && (!Number.isInteger(target) || target < 1 || target > 100)) return "目標使用率は1〜100%で入力してください。";
+    }
+  }
+  if (value.endpointMode === "load_balancer" && (value.exposureType !== "public" || value.trafficMode !== "forwarded")) {
+    return "ドメイン公開では公開・転送モードを使用してください。";
   }
   if (value.cpuMillis < 10 || value.cpuMillis > quota.max_cpu_millis_per_vm) {
     return `CPUは10〜${quota.max_cpu_millis_per_vm.toLocaleString("ja-JP")} millicoresで入力してください。`;
@@ -332,14 +366,21 @@ export function flashSpecFromForm(
     region: value.region,
     image: value.image.trim(),
     replicas: value.replicas,
+    ...(value.scaleMode === "auto" ? { autoscaling: {
+      min_replicas: value.minReplicas,
+      max_replicas: value.maxReplicas,
+      ...(value.cpuTargetEnabled ? { target_cpu_utilization_percent: value.cpuTarget } : {}),
+      ...(value.memoryTargetEnabled ? { target_memory_utilization_percent: value.memoryTarget } : {}),
+    } } : {}),
     cpu_millis: value.cpuMillis,
     memory_mib: value.memoryMib,
     ephemeral_storage_gib: value.ephemeralStorageGib,
     ports: value.ports,
     exposure: {
       type: value.exposureType,
+      endpoint_mode: value.exposureType === "internal" ? "ip" : value.endpointMode,
       traffic_mode:
-        value.exposureType === "internal" ? "forwarded" : value.trafficMode,
+        value.exposureType === "internal" || value.endpointMode === "load_balancer" ? "forwarded" : value.trafficMode,
       allowed_source_cidrs: parseFlashSourceCidrs(value.allowedSourceCidrs).cidrs,
       denied_source_cidrs: parseFlashSourceCidrs(value.deniedSourceCidrs).cidrs,
     },
@@ -393,6 +434,14 @@ export function flashFormFromService(
       : "manual",
     image: service.spec.image,
     replicas: service.spec.replicas,
+    scaleMode: service.spec.autoscaling ? "auto" : "fixed",
+    minReplicas: service.spec.autoscaling?.min_replicas ?? service.spec.replicas,
+    maxReplicas: service.spec.autoscaling?.max_replicas ?? service.spec.replicas,
+    cpuTargetEnabled: service.spec.autoscaling ? service.spec.autoscaling.target_cpu_utilization_percent !== undefined : true,
+    memoryTargetEnabled: service.spec.autoscaling?.target_memory_utilization_percent !== undefined,
+    cpuTarget: service.spec.autoscaling?.target_cpu_utilization_percent ?? 80,
+    memoryTarget: service.spec.autoscaling?.target_memory_utilization_percent ?? 80,
+    endpointMode: service.spec.exposure.endpoint_mode ?? "ip",
     cpuMillis: service.spec.cpu_millis,
     memoryMib: service.spec.memory_mib,
     ephemeralStorageGib: service.spec.ephemeral_storage_gib,
@@ -549,7 +598,7 @@ export function FlashServiceForm({
             />
           </FormField>
           <FormField
-            label="レプリカ"
+            label={value.scaleMode === "auto" ? "初期レプリカ" : "レプリカ"}
             constraintText={`1〜${quota.max_replicas_per_service.toLocaleString("ja-JP")}（アカウント上限）`}
           >
             <Input
@@ -573,6 +622,52 @@ export function FlashServiceForm({
             />
           </FormField>
         </ColumnLayout>
+        <SpaceBetween size="s">
+          <FormField label="スケーリング">
+            <SegmentedControl
+              label="スケーリング"
+              selectedId={value.scaleMode}
+              options={[{ id: "fixed", text: "固定", disabled }, { id: "auto", text: "自動", disabled }]}
+              onChange={({ detail }) => {
+                if (disabled) return;
+                const scaleMode = detail.selectedId as FlashServiceFormValue["scaleMode"];
+                onChange({
+                  ...value,
+                  scaleMode,
+                  minReplicas: Math.min(value.minReplicas, value.replicas),
+                  maxReplicas: Math.min(quota.max_replicas_per_service, Math.max(value.maxReplicas, value.replicas)),
+                });
+              }}
+            />
+          </FormField>
+          {value.scaleMode === "auto" ? (
+              <div className="flash-scale-controls">
+                {([["minReplicas", "最小レプリカ"], ["maxReplicas", "最大レプリカ"]] as const).map(([key, label]) => (
+                  <FormField key={key} label={label}>
+                    <Input type="number" inputMode="numeric" step={1}
+                      nativeInputAttributes={{ min: 1, max: quota.max_replicas_per_service }}
+                      value={String(value[key])} disabled={disabled}
+                      onChange={({ detail }) => {
+                        const next = boundedInteger(detail.value, 1, quota.max_replicas_per_service, value[key]);
+                        onChange({ ...value, [key]: next, replicas: key === "minReplicas"
+                          ? Math.max(value.replicas, next) : Math.min(value.replicas, next) });
+                      }} />
+                  </FormField>
+                ))}
+                {([["cpuTargetEnabled", "cpuTarget", "CPU目標使用率 (%)"], ["memoryTargetEnabled", "memoryTarget", "メモリ目標使用率 (%)"]] as const).map(([enabledKey, targetKey, label]) => (
+                  <FormField key={targetKey} label={
+                    <Toggle checked={value[enabledKey]} disabled={disabled}
+                      onChange={({ detail }) => update(enabledKey, detail.checked)}>{label}</Toggle>
+                  }>
+                    <Input ariaLabel={label} type="number" inputMode="numeric" step={1}
+                      nativeInputAttributes={{ min: 1, max: 100 }}
+                      value={String(value[targetKey])} disabled={disabled || !value[enabledKey]}
+                      onChange={({ detail }) => update(targetKey, boundedInteger(detail.value, 1, 100, value[targetKey]))} />
+                  </FormField>
+                ))}
+              </div>
+            ) : null}
+        </SpaceBetween>
         <ColumnLayout columns={3}>
           <FormField
             label="CPU"
@@ -662,6 +757,7 @@ export function FlashServiceForm({
                   onChange({
                     ...value,
                     exposureType,
+                    endpointMode: exposureType === "internal" ? "ip" : value.endpointMode,
                     trafficMode:
                       exposureType === "internal" ? "forwarded" : value.trafficMode,
                   });
@@ -677,7 +773,7 @@ export function FlashServiceForm({
                 {
                   id: "direct",
                   text: "ダイレクト",
-                  disabled: disabled || value.exposureType === "internal",
+                  disabled: disabled || value.exposureType === "internal" || value.endpointMode === "load_balancer",
                   disabledReason:
                     value.exposureType === "internal"
                       ? "内部サービスは転送モードで動作します。"
@@ -686,11 +782,22 @@ export function FlashServiceForm({
               ]}
               label="通信モード"
               onChange={({ detail }) => {
-                if (!disabled) update("trafficMode", detail.selectedId as FlashExposure["traffic_mode"]);
+                if (!disabled && !(detail.selectedId === "direct" && (value.exposureType === "internal" || value.endpointMode === "load_balancer"))) update("trafficMode", detail.selectedId as FlashExposure["traffic_mode"]);
               }}
             />
           </FormField>
         </ColumnLayout>
+        {value.exposureType === "public" ? (
+          <FormField label="公開アドレス">
+            <SegmentedControl label="公開アドレス" selectedId={value.endpointMode}
+              options={[{ id: "ip", text: "IP", disabled }, { id: "load_balancer", text: "ドメイン (LB)", disabled }]}
+              onChange={({ detail }) => {
+                if (disabled) return;
+                const endpointMode = detail.selectedId as FlashServiceFormValue["endpointMode"];
+                onChange({ ...value, endpointMode, trafficMode: endpointMode === "load_balancer" ? "forwarded" : value.trafficMode });
+              }} />
+          </FormField>
+        ) : null}
         <SpaceBetween size="m">
           <Header
             variant="h3"

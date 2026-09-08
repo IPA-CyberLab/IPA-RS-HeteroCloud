@@ -35,6 +35,7 @@ import {
   flashExposureLabel,
   flashServiceEndpoints,
   readyReplicas,
+  requestedReplicas,
 } from "./flash-service-utils";
 
 export function FlashServicesPage() {
@@ -116,9 +117,9 @@ export function FlashServicesPage() {
       {
         id: "replicas",
         header: "レプリカ",
-        accessorFn: (service) => service.spec.replicas,
+        accessorFn: (service) => requestedReplicas(service),
         cell: ({ row }) =>
-          `${formatNumber(readyReplicas(row.original))} / ${formatNumber(row.original.spec.replicas)}`,
+          `${formatNumber(readyReplicas(row.original))} / ${requestedReplicas(row.original) === null ? "-" : formatNumber(requestedReplicas(row.original)!)}`,
       },
       {
         id: "exposure",

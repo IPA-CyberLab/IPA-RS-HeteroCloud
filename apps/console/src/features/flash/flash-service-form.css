@@ -1,0 +1,17 @@
+.flash-scale-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: end;
+  gap: 16px 20px;
+  max-width: 960px;
+}
+
+.flash-scale-controls > * {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .flash-scale-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

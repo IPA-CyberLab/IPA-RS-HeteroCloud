@@ -335,6 +335,7 @@ export interface FlashPort extends FlashPortInput {
 export interface FlashExposure {
   type: "internal" | "public";
   traffic_mode: "forwarded" | "direct";
+  endpoint_mode?: "ip" | "load_balancer";
   allowed_source_cidrs?: string[];
   denied_source_cidrs?: string[];
 }
@@ -348,10 +349,18 @@ export interface FlashEgress {
   denied_destination_cidrs: string[];
 }
 
+export interface FlashAutoscaling {
+  min_replicas: number;
+  max_replicas: number;
+  target_cpu_utilization_percent?: number;
+  target_memory_utilization_percent?: number;
+}
+
 export interface FlashServiceSpec {
   region: string;
   image: string;
   replicas: number;
+  autoscaling?: FlashAutoscaling;
   cpu_millis: number;
   memory_mib: number;
   ephemeral_storage_gib: number;

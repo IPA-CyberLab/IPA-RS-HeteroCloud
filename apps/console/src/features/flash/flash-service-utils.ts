@@ -21,9 +21,20 @@ export function flashProviderStatus(
 }
 
 function endpointAddress(endpoint: FlashServiceEndpoint): string | null {
-  if (endpoint.url) return endpoint.url;
-  const host = endpoint.host ?? endpoint.address;
+  const transport = ["tcp", "udp"].includes(endpoint.protocol?.toLowerCase() ?? "");
+  if (endpoint.url && !transport) return endpoint.url;
+  let host = endpoint.host ?? endpoint.address;
+  if (!host && endpoint.url && transport) {
+    try {
+      const url = new URL(endpoint.url);
+      host = url.hostname;
+      if (!endpoint.port && url.port) return `${host}:${url.port}`;
+    } catch {
+      return null;
+    }
+  }
   if (!host) return null;
+  if (host.includes(":") && !host.startsWith("[")) host = `[${host}]`;
   return endpoint.port ? `${host}:${endpoint.port}` : host;
 }
 
@@ -110,13 +121,27 @@ export function readyReplicas(service: Pick<FlashService, "status">): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+export function requestedReplicas(service: Pick<FlashService, "status" | "spec">): number | null {
+  const status = flashProviderStatus(service.status);
+  const value = status.requested_replicas ?? status.replicas;
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) return value;
+  return service.spec.autoscaling ? null : service.spec.replicas;
+}
+
+export function flashScaleLabel(spec: FlashService["spec"]): string {
+  const scale = spec.autoscaling;
+  if (!scale) return `固定・${spec.replicas}`;
+  return `自動・${scale.min_replicas}〜${scale.max_replicas}`;
+}
+
 export function flashProtocolLabel(protocol: FlashPortProtocol): string {
   return protocol.toUpperCase();
 }
 
 export function flashExposureLabel(
-  exposure: Pick<FlashService["spec"]["exposure"], "type" | "traffic_mode">,
+  exposure: Pick<FlashService["spec"]["exposure"], "type" | "traffic_mode" | "endpoint_mode">,
 ): string {
   if (exposure.type === "internal") return "内部";
+  if (exposure.endpoint_mode === "load_balancer") return "公開・ドメイン (LB)";
   return exposure.traffic_mode === "direct" ? "公開・ダイレクト" : "公開・転送";
 }
