@@ -63,6 +63,40 @@ install_if_changed() {
   mv -f "$target_file.new" "$target_file" || return 1
 }
 
+render_extra_with_managed_tls() {
+  python3 - "$1" "$2" <<'PY'
+import os
+from pathlib import Path
+import stat
+import sys
+
+source, target = map(Path, sys.argv[1:])
+begin = b"# BEGIN managed flash-web TLS\n"
+end = b"# END managed flash-web TLS\n"
+content = source.read_bytes()
+if begin in content or end in content:
+    raise SystemExit("canonical template must not contain generated TLS state")
+if target.exists() or target.is_symlink():
+    mode = target.lstat()
+    if not stat.S_ISREG(mode.st_mode) or mode.st_mode & 0o022:
+        raise SystemExit("unsafe existing gateway extra file")
+    if os.geteuid() == 0 and mode.st_uid != 0:
+        raise SystemExit("gateway extra must be root-owned")
+    existing = target.read_bytes()
+    if existing.count(begin) != existing.count(end) or existing.count(begin) > 1:
+        raise SystemExit("ambiguous managed TLS markers")
+    if begin in existing:
+        start, stop = existing.index(begin), existing.index(end)
+        if start >= stop or (start and existing[start-1:start] != b"\n"):
+            raise SystemExit("invalid managed TLS block")
+        content = content.rstrip(b"\n") + b"\n\n" + existing[start:stop+len(end)]
+if len(content) > 256 * 1024 or b"\0" in content:
+    raise SystemExit("gateway extra exceeds safety limits")
+content.decode("utf-8")
+sys.stdout.buffer.write(content)
+PY
+}
+
 reconcile_gateway_bootstrap() {
   local gateway_file=$1
   local caddy_bin=$2
@@ -140,13 +174,24 @@ main() {
   install -d -o root -g root -m 0755 "$(dirname "$target_file")"
   install -d -o root -g root -m 0755 "$(dirname "$drop_in")"
 
+  # Serialize with the cert-manager Secret synchronizer and preserve its
+  # immutable certificate paths when replacing the canonical service routes.
+  local tls_lock_fd extra_candidate
+  exec {tls_lock_fd}>"$(dirname "$target_file")/.flash-web-tls.lock"
+  flock -x "$tls_lock_fd"
+  extra_candidate=$(mktemp "${target_file}.candidate.XXXXXX")
+  trap 'rm -f "$extra_candidate"' EXIT
+  render_extra_with_managed_tls "$source_file" "$target_file" >"$extra_candidate"
   local extra_changed=false drop_in_changed=false active_reload_needed=false install_result=0
-  install_if_changed "$source_file" "$target_file" || install_result=$?
+  install_if_changed "$extra_candidate" "$target_file" || install_result=$?
   case "$install_result" in
     0) extra_changed=true ;;
     10) ;;
     *) echo "failed to install $target_file" >&2; exit "$install_result" ;;
   esac
+  rm -f "$extra_candidate"
+  flock -u "$tls_lock_fd"
+  exec {tls_lock_fd}>&-
 
   local drop_in_candidate
   drop_in_candidate=$(mktemp "${drop_in}.new.XXXXXX")

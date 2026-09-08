@@ -624,6 +624,7 @@ pub enum FlashEndpointMode {
     #[default]
     Ip,
     LoadBalancer,
+    Web,
 }
 
 impl FlashEndpointMode {
@@ -840,13 +841,30 @@ impl FlashSpec {
                 "internal exposure requires forwarded traffic_mode",
             ));
         }
-        if self.exposure.endpoint_mode == FlashEndpointMode::LoadBalancer
-            && (self.exposure.exposure_type != FlashExposureType::Public
-                || self.exposure.traffic_mode != FlashTrafficMode::Forwarded)
+        if matches!(
+            self.exposure.endpoint_mode,
+            FlashEndpointMode::LoadBalancer | FlashEndpointMode::Web
+        ) && (self.exposure.exposure_type != FlashExposureType::Public
+            || self.exposure.traffic_mode != FlashTrafficMode::Forwarded)
         {
             return Err(invalid_flash_spec(
-                "load_balancer endpoint_mode requires public exposure and forwarded traffic_mode",
+                "load_balancer and web endpoint_mode require public exposure and forwarded traffic_mode",
             ));
+        }
+        if self.exposure.endpoint_mode == FlashEndpointMode::Web {
+            if self.ports.len() != 1 || self.ports[0].protocol != FlashProtocol::Tcp {
+                return Err(invalid_flash_spec(
+                    "web endpoint_mode requires exactly one TCP port",
+                ));
+            }
+            // Gateway forwarding does not preserve the client IP for network-layer ACLs.
+            if !self.exposure.allowed_source_cidrs.is_empty()
+                || !self.exposure.denied_source_cidrs.is_empty()
+            {
+                return Err(invalid_flash_spec(
+                    "web endpoint_mode does not support allowed_source_cidrs or denied_source_cidrs",
+                ));
+            }
         }
         validate_flash_source_cidrs("allowed_source_cidrs", &self.exposure.allowed_source_cidrs)?;
         validate_flash_source_cidrs("denied_source_cidrs", &self.exposure.denied_source_cidrs)?;
@@ -1300,20 +1318,25 @@ mod tests {
     fn flash_endpoint_mode_validation() -> Result<(), Box<dyn std::error::Error>> {
         for exposure in ["public", "internal"] {
             for traffic in ["forwarded", "direct"] {
-                for mode in ["ip", "load_balancer"] {
+                for mode in ["ip", "load_balancer", "web"] {
                     let mut value = serde_json::to_value(flash_spec())?;
                     value["exposure"]["type"] = json!(exposure);
                     value["exposure"]["traffic_mode"] = json!(traffic);
                     value["exposure"]["endpoint_mode"] = json!(mode);
+                    if mode == "web" {
+                        value["ports"][0]["protocol"] = json!("tcp");
+                        value["exposure"]["allowed_source_cidrs"] = json!([]);
+                        value["exposure"]["denied_source_cidrs"] = json!([]);
+                    }
                     let spec: FlashSpec = serde_json::from_value(value)?;
-                    let valid = if mode == "load_balancer" {
+                    let valid = if mode != "ip" {
                         exposure == "public" && traffic == "forwarded"
                     } else {
                         exposure == "public" || traffic == "forwarded"
                     };
                     assert_eq!(spec.validate_request().is_ok(), valid);
                     assert_eq!(spec.validate().is_ok(), valid);
-                    if mode == "load_balancer" {
+                    if mode != "ip" {
                         assert_eq!(
                             serde_json::to_value(spec)?["exposure"]["endpoint_mode"],
                             mode
@@ -1325,6 +1348,72 @@ mod tests {
         let mut unknown = serde_json::to_value(flash_spec())?;
         unknown["exposure"]["endpoint_mode"] = json!("unknown");
         assert!(serde_json::from_value::<FlashSpec>(unknown).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn flash_web_requires_single_tcp_port_and_rejects_source_acls()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut spec = flash_spec();
+        spec.exposure.endpoint_mode = super::FlashEndpointMode::Web;
+        spec.exposure.traffic_mode = FlashTrafficMode::Forwarded;
+        spec.exposure.allowed_source_cidrs.clear();
+        spec.exposure.denied_source_cidrs.clear();
+        spec.ports[0].protocol = FlashProtocol::Tcp;
+        spec.validate_request()?;
+        spec.validate()?;
+        let serialized = serde_json::to_value(&spec)?;
+        assert_eq!(serialized["exposure"]["endpoint_mode"], "web");
+        assert_eq!(serde_json::from_value::<FlashSpec>(serialized)?, spec);
+
+        for ports in [
+            vec![],
+            vec![FlashPort {
+                protocol: FlashProtocol::Udp,
+                ..spec.ports[0].clone()
+            }],
+            vec![
+                spec.ports[0].clone(),
+                FlashPort {
+                    name: "second".into(),
+                    service_port: MIN_FLASH_SERVICE_PORT + 1,
+                    ..spec.ports[0].clone()
+                },
+            ],
+        ] {
+            let mut invalid = spec.clone();
+            invalid.ports = ports;
+            assert!(invalid.validate_request().is_err());
+            assert!(invalid.validate().is_err());
+        }
+        for (allow, deny) in [
+            (vec!["0.0.0.0/0".into()], vec![]),
+            (vec![], vec!["192.0.2.0/24".into()]),
+            (vec!["::/0".into()], vec!["2001:db8::/32".into()]),
+        ] {
+            let mut invalid = spec.clone();
+            invalid.exposure.allowed_source_cidrs = allow;
+            invalid.exposure.denied_source_cidrs = deny;
+            assert!(invalid.validate_request().is_err());
+            assert!(invalid.validate().is_err());
+            for mode in [
+                super::FlashEndpointMode::Ip,
+                super::FlashEndpointMode::LoadBalancer,
+            ] {
+                invalid.exposure.endpoint_mode = mode;
+                invalid.validate_request()?;
+                invalid.validate()?;
+            }
+        }
+        spec.autoscaling = Some(super::FlashAutoscaling {
+            min_replicas: 1,
+            max_replicas: 6,
+            target_cpu_utilization_percent: Some(70),
+            target_memory_utilization_percent: None,
+        });
+        spec.validate_request()?;
+        spec.validate()?;
+        assert_eq!(spec.reserved_replicas(), 6);
         Ok(())
     }
 

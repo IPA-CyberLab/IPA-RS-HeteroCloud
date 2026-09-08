@@ -12,8 +12,9 @@ At least one non-null target is required; each target must be in `1..100`.
 value must be within these bounds. Existing per-field and tenant limits apply.
 Omission or null disables autoscaling. Updates replace the entire spec.
 
-`spec.exposure.endpoint_mode` accepts `ip` (default) or `load_balancer`.
-`load_balancer` is valid only with `type: public` and `traffic_mode: forwarded`.
+`spec.exposure.endpoint_mode` accepts `ip` (default), `load_balancer`, or `web`.
+`load_balancer` and `web` are valid only with `type: public` and
+`traffic_mode: forwarded`.
 Existing IP exposure rules remain unchanged, including internal exposure requiring
 forwarded traffic. Autoscaling and endpoint mode are independent settings.
 
@@ -34,6 +35,33 @@ transaction locks serialize concurrent reservations; rejected writes do not chan
 the spec, generation or reconcile outbox. Deleting services retain existing quota
 release behavior. Owner usage reports use the same reservation calculation, not
 live running replica counts.
+
+## Web Publication
+
+`web` publishes an HTTP application through a provider-managed ClusterIP Service
+and HTTPRoute. It requires exactly one port with `protocol: tcp`. The application
+serves HTTP on that port's `container_port`; the external endpoint is a hostname
+with `port: 443` and `protocol: tcp`, opened as `https://<hostname>/` without a
+custom port suffix. Wildcard TLS terminates at the parent-managed Caddy gateway,
+which forwards to Envoy. The assigned spec `service_port` is not the public web
+port. Existing IP and load-balancer endpoint semantics are unchanged.
+
+Both `allowed_source_cidrs` and `denied_source_cidrs` must be omitted or empty for
+`web`, including when changing an existing service to web mode. Nonempty lists
+are rejected, not discarded: network-layer source ACLs cannot be assumed to
+enforce original client addresses through the HTTP proxy path. Web publication
+does not yet support these ACLs. Application authentication remains separate.
+Egress configuration retains its existing validation and behavior.
+
+Web publication works with fixed replicas or autoscaling; quota reservation is
+unchanged. Configure it with the [web manifest](../examples/cli/flash-web.json):
+
+```sh
+heterocloud flash create --file examples/cli/flash-web.json
+```
+
+Set the example project ID and image for your environment. For replacement
+updates, omit `project_id` and keep `name` and `spec`.
 
 ## Live Status on Reads
 

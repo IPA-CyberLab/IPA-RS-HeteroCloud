@@ -215,6 +215,46 @@ async fn reconcile_ready_update_is_generation_and_provider_guarded() -> Result<(
     assert_eq!(flash.spec, normalized_fixed);
     assert!(flash.spec.get("autoscaling").is_none());
     assert!(flash.spec["exposure"].get("endpoint_mode").is_none());
+    let web_manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../examples/cli/flash-web.json"))?;
+    let web = store
+        .create_service_instance(
+            organization_id,
+            project.id,
+            membership.principal_id,
+            "flash",
+            "web-service",
+            web_manifest["spec"].clone(),
+        )
+        .await?;
+    assert_eq!(web.spec["exposure"]["endpoint_mode"], "web");
+    assert_eq!(web.spec["ports"][0]["protocol"], "tcp");
+    for field in ["allowed_source_cidrs", "denied_source_cidrs"] {
+        let mut rejected = web.spec.clone();
+        rejected["exposure"][field] = json!(["192.0.2.0/24"]);
+        assert!(matches!(store.create_service_instance(
+            organization_id, project.id, membership.principal_id,
+            "flash", "web-with-acl", rejected.clone(),
+        ).await, Err(StoreError::RequestRejected(message)) if message.contains("does not support")));
+        assert!(matches!(store.update_service_instance(
+            organization_id, web.id, "flash", membership.principal_id,
+            "web-with-acl", rejected,
+        ).await, Err(StoreError::RequestRejected(message)) if message.contains("does not support")));
+        let unchanged = store
+            .service_instance(web.id)
+            .await?
+            .ok_or("missing web service")?;
+        assert_eq!(unchanged.spec, web.spec);
+        assert_eq!(unchanged.generation, web.generation);
+    }
+    let deleting_web = store
+        .begin_delete_service_instance(organization_id, web.id, "flash", membership.principal_id)
+        .await?;
+    assert!(
+        store
+            .complete_delete_service_instance(web.id, "flash", deleting_web.generation)
+            .await?
+    );
     let error_operation_id = Uuid::from_u128(43);
     let error_status = json!({
         "phase": "error",

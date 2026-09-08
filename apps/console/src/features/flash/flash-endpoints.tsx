@@ -1,5 +1,6 @@
 import Box from "@cloudscape-design/components/box";
 import CopyToClipboard from "@cloudscape-design/components/copy-to-clipboard";
+import Link from "@cloudscape-design/components/link";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import type { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/shared/data-table";
@@ -18,11 +19,13 @@ const columns: ColumnDef<DisplayFlashEndpoint, unknown>[] = [
   {
     accessorKey: "address",
     header: "接続先",
-    cell: ({ getValue }) => {
+    cell: ({ getValue, row }) => {
       const address = getValue<string>();
       return (
         <SpaceBetween direction="horizontal" size="xs">
-          <Box variant="code">{address}</Box>
+          {row.original.href ? (
+            <Link href={row.original.href} external externalIconAriaLabel="新しいタブで開く">{address}</Link>
+          ) : <Box variant="code">{address}</Box>}
           <CopyToClipboard
             textToCopy={address}
             copyButtonAriaLabel="接続先をコピー"
@@ -52,4 +55,3 @@ export function FlashEndpoints({
     />
   );
 }
-

@@ -1,20 +1,22 @@
 import { expect, test } from "@playwright/test";
 
-test("Flash autoscaling and LB edit on desktop and mobile", async ({ page, isMobile }, testInfo) => {
+for (const endpointMode of ["load_balancer", "web"] as const) {
+test(`Flash autoscaling and ${endpointMode} edit on desktop and mobile`, async ({ page, isMobile }, testInfo) => {
+  const web = endpointMode === "web";
   const timestamp = "2026-09-08T00:00:00Z";
   const spec = {
     region: "heteronet-global", image: "example/server:v1", replicas: 2,
     autoscaling: { min_replicas: 2, max_replicas: 8, target_cpu_utilization_percent: 70 },
     cpu_millis: 500, memory_mib: 512, ephemeral_storage_gib: 10,
-    ports: [{ name: "game", protocol: "udp", container_port: 7777, service_port: 30001 }],
-    exposure: { type: "public", traffic_mode: "forwarded", endpoint_mode: "load_balancer", allowed_source_cidrs: ["203.0.113.0/24"], denied_source_cidrs: [] },
+    ports: [{ name: "game", protocol: web ? "tcp" : "udp", container_port: web ? 8080 : 7777, service_port: 30001 }],
+    exposure: { type: "public", traffic_mode: "forwarded", endpoint_mode: endpointMode, allowed_source_cidrs: web ? [] : ["203.0.113.0/24"], denied_source_cidrs: [] },
     env: { MODE: "production" }, command: ["/app/server"], args: ["--listen"], metadata: { keep: true },
   };
   const service = {
     id: "flash-test", organization_id: "org-test", project_id: "project-test", provider: "flash",
     name: "flash-autoscale", generation: 1, state: "ready", spec,
     status: { status: { ready_replicas: 3, desired_replicas: 4, endpoints: [
-      { name: "game", protocol: "udp", host: "lb.example.test", port: 30001 },
+      { name: "game", protocol: web ? "tcp" : "udp", host: "lb.example.test", port: 30001 },
     ] } }, created_at: timestamp, updated_at: timestamp,
   };
   const errors: string[] = [];
@@ -41,8 +43,15 @@ test("Flash autoscaling and LB edit on desktop and mobile", async ({ page, isMob
   await expect(page.getByText("自動・2〜8")).toBeVisible();
   await expect(page.getByText("要求レプリカ", { exact: true }).locator("..")).toContainText("4");
   await expect(page.getByText("稼働レプリカ", { exact: true }).locator("..")).toContainText("3");
-  await expect(page.getByText("lb.example.test:30001", { exact: true })).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath("flash-detail.png"), fullPage: true });
+  if (web) {
+    await expect(page.getByRole("link", { name: /https:\/\/lb.example.test/ })).toHaveAttribute("href", "https://lb.example.test");
+    await expect(page.getByText(/:443|:30001/)).toHaveCount(0);
+    await expect(page.getByText("サービスポート", { exact: true })).toHaveCount(0);
+  } else {
+    await expect(page.getByText("lb.example.test:30001", { exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: /lb.example.test/ })).toHaveCount(0);
+  }
+  await page.screenshot({ path: testInfo.outputPath(web ? "flash-web-detail.png" : "flash-detail.png"), fullPage: true });
   await page.getByRole("button", { name: "編集", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Flashサービスを編集" });
   await expect(dialog.getByRole("spinbutton", { name: "最小レプリカ" })).toHaveValue("2");
@@ -52,6 +61,21 @@ test("Flash autoscaling and LB edit on desktop and mobile", async ({ page, isMob
     await page.keyboard.press("Escape");
   } else {
     await expect(dialog.getByRole("button", { name: "ダイレクト" })).toBeDisabled();
+  }
+  if (web) {
+    await expect(dialog.getByRole("button", { name: /gameのプロトコル/ })).toHaveText("TCP");
+    await expect(dialog.getByRole("button", { name: "エンドポイントを追加" })).toBeDisabled();
+    await expect(dialog.getByRole("spinbutton", { name: "サービスポート" })).toHaveCount(0);
+    await dialog.getByRole("spinbutton", { name: "コンテナポート" }).fill("8081");
+    for (const label of ["受信許可元IP / CIDR", "受信拒否元IP / CIDR"]) {
+      const cidrs = dialog.getByRole("textbox", { name: label, exact: true });
+      await cidrs.fill("203.0.113.0/24");
+      await expect(cidrs).toHaveValue("203.0.113.0/24");
+      await expect(dialog.getByRole("button", { name: "変更を保存" })).toBeDisabled();
+      await expect(dialog.getByText(/設定を削除するか/).first()).toBeVisible();
+      await cidrs.fill("");
+    }
+    await expect(dialog.getByRole("button", { name: "変更を保存" })).toBeEnabled();
   }
   await dialog.getByRole("spinbutton", { name: "最大レプリカ" }).fill("9");
   await dialog.getByRole("checkbox", { name: "メモリ目標使用率 (%)" }).check();
@@ -68,12 +92,14 @@ test("Flash autoscaling and LB edit on desktop and mobile", async ({ page, isMob
   if (!isMobile) expect(positions[0].y).toBeCloseTo(positions[2].y, 0);
   await page.screenshot({ path: testInfo.outputPath("flash-autoscale.png"), fullPage: true });
   await dialog.locator(".flash-scale-controls").screenshot({ path: testInfo.outputPath("flash-scale-controls.png") });
-  await dialog.getByRole("button", { name: isMobile ? /公開アドレス.*ドメイン/ : "ドメイン (LB)" })
+  await dialog.getByRole("button", { name: isMobile ? /公開アドレス.*ドメイン/ : web ? "HTTP/HTTPS ドメイン" : "ドメイン (LB)" })
     .evaluate((element) => element.scrollIntoView({ block: "center" }));
-  await page.screenshot({ path: testInfo.outputPath("flash-publishing.png") });
+  await page.screenshot({ path: testInfo.outputPath(web ? "flash-web-edit.png" : "flash-publishing.png") });
   await dialog.getByRole("button", { name: "変更を保存" }).click();
   await expect(dialog).not.toBeVisible();
-  expect(saved?.spec).toMatchObject({ ...spec, ports: [{ name: "game", protocol: "udp", container_port: 7777 }],
+  expect(saved?.spec).toMatchObject({ ...spec, ports: [{ name: "game", protocol: web ? "tcp" : "udp", container_port: web ? 8081 : 7777 }],
     autoscaling: { ...spec.autoscaling, max_replicas: 9, target_memory_utilization_percent: 65 } });
+  if (web) await expect(page.getByRole("link", { name: /https:\/\/lb.example.test/ })).toHaveAttribute("href", "https://lb.example.test");
   expect(errors).toEqual([]);
 });
+}

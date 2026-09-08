@@ -114,3 +114,21 @@ for gateway_id in a b c d; do
 done
 
 echo "public gateway reconciliation tests passed"
+
+tls_existing="$tmp_dir/tls-existing"
+tls_rendered="$tmp_dir/tls-rendered"
+printf '%s\n' 'old content' '# BEGIN managed flash-web TLS' 'https://*.flash.example.test { }' '# END managed flash-web TLS' >"$tls_existing"
+render_extra_with_managed_tls "$canonical_file" "$tls_existing" >"$tls_rendered"
+grep -Fq 'https://*.flash.example.test { }' "$tls_rendered"
+if grep -Fq 'old content' "$tls_rendered"; then
+  echo "obsolete canonical content survived merge" >&2
+  exit 1
+fi
+render_extra_with_managed_tls "$canonical_file" "$tls_rendered" >"$tmp_dir/tls-again"
+cmp "$tls_rendered" "$tmp_dir/tls-again"
+printf '%s\n' '# BEGIN managed flash-web TLS' >"$tls_existing"
+if render_extra_with_managed_tls "$canonical_file" "$tls_existing" >/dev/null 2>&1; then
+  echo "incomplete TLS block accepted" >&2
+  exit 1
+fi
+echo "managed Flash TLS preservation tests passed"

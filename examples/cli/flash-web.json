@@ -1,0 +1,25 @@
+{
+  "project_id": "0198a118-073f-79e4-9ca4-0c1c2501c031",
+  "name": "web-service",
+  "spec": {
+    "region": "heteronet-global",
+    "image": "nginx:stable-alpine",
+    "replicas": 1,
+    "cpu_millis": 250,
+    "memory_mib": 128,
+    "ephemeral_storage_gib": 1,
+    "ports": [{"name": "http", "protocol": "tcp", "container_port": 80}],
+    "exposure": {
+      "type": "public",
+      "traffic_mode": "forwarded",
+      "endpoint_mode": "web",
+      "allowed_source_cidrs": [],
+      "denied_source_cidrs": []
+    },
+    "egress": {"mode": "disabled"},
+    "env": {},
+    "command": [],
+    "args": [],
+    "metadata": {}
+  }
+}

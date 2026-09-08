@@ -335,7 +335,7 @@ export interface FlashPort extends FlashPortInput {
 export interface FlashExposure {
   type: "internal" | "public";
   traffic_mode: "forwarded" | "direct";
-  endpoint_mode?: "ip" | "load_balancer";
+  endpoint_mode?: "ip" | "load_balancer" | "web";
   allowed_source_cidrs?: string[];
   denied_source_cidrs?: string[];
 }

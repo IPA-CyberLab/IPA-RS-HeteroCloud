@@ -289,10 +289,11 @@
             "type": "string",
             "enum": [
               "ip",
-              "load_balancer"
+              "load_balancer",
+              "web"
             ],
             "default": "ip",
-            "description": "ip is omitted when serialized. load_balancer requires public exposure and forwarded traffic."
+            "description": "ip is omitted when serialized. load_balancer and web require public exposure and forwarded traffic. web publishes HTTP via an HTTPS hostname on TCP 443 and requires exactly one TCP port and empty source allow/deny lists."
           },
           "allowed_source_cidrs": {
             "type": "array",
@@ -335,7 +336,7 @@
               ],
               "properties": {
                 "endpoint_mode": {
-                  "const": "load_balancer"
+                  "enum": ["load_balancer", "web"]
                 }
               }
             },
@@ -347,6 +348,18 @@
                 "traffic_mode": {
                   "const": "forwarded"
                 }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": ["endpoint_mode"],
+              "properties": {"endpoint_mode": {"const": "web"}}
+            },
+            "then": {
+              "properties": {
+                "allowed_source_cidrs": {"maxItems": 0},
+                "denied_source_cidrs": {"maxItems": 0}
               }
             }
           }
@@ -424,6 +437,22 @@
       "FlashSpec": {
         "type": "object",
         "additionalProperties": false,
+        "allOf": [{
+          "if": {
+            "required": ["exposure"],
+            "properties": {"exposure": {
+              "required": ["endpoint_mode"],
+              "properties": {"endpoint_mode": {"const": "web"}}
+            }}
+          },
+          "then": {
+            "properties": {"ports": {
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {"properties": {"protocol": {"const": "tcp"}}}
+            }}
+          }
+        }],
         "required": [
           "region",
           "image",

@@ -10,6 +10,7 @@ export interface DisplayFlashEndpoint {
   name: string;
   protocol: string;
   address: string;
+  href?: string;
 }
 
 export function flashProviderStatus(
@@ -59,7 +60,7 @@ function endpointFromObject(
   };
 }
 
-export function flashServiceEndpoints(
+function transportEndpoints(
   status: FlashServiceStatus,
 ): DisplayFlashEndpoint[] {
   const source = flashProviderStatus(status).endpoints;
@@ -114,6 +115,24 @@ export function flashServiceEndpoints(
   });
 }
 
+export function flashServiceEndpoints(
+  status: FlashServiceStatus,
+  endpointMode: FlashService["spec"]["exposure"]["endpoint_mode"] = "ip",
+): DisplayFlashEndpoint[] {
+  const endpoints = transportEndpoints(status);
+  if (endpointMode !== "web") return endpoints;
+  return endpoints.flatMap((endpoint) => {
+    try {
+      const url = new URL(endpoint.address.includes("://") ? endpoint.address : `https://${endpoint.address}`);
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || !url.hostname) return [];
+      const href = `https://${url.hostname}`;
+      return [{ ...endpoint, address: href, href, protocol: "HTTPS" }];
+    } catch {
+      return [];
+    }
+  });
+}
+
 export function readyReplicas(service: Pick<FlashService, "status">): number | null {
   const status = flashProviderStatus(service.status);
   if (status.live_status_unavailable === true) return null;
@@ -145,5 +164,6 @@ export function flashExposureLabel(
 ): string {
   if (exposure.type === "internal") return "内部";
   if (exposure.endpoint_mode === "load_balancer") return "公開・ドメイン (LB)";
+  if (exposure.endpoint_mode === "web") return "公開・HTTP/HTTPS";
   return exposure.traffic_mode === "direct" ? "公開・ダイレクト" : "公開・転送";
 }

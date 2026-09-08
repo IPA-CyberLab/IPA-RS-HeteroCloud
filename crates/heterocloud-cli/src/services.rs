@@ -697,6 +697,7 @@ mod tests {
         for source in [
             include_str!("../../../examples/cli/flash.json"),
             include_str!("../../../examples/cli/flash-autoscaling.json"),
+            include_str!("../../../examples/cli/flash-web.json"),
         ] {
             let original: Value = serde_json::from_str(source)?;
             let create: CreateManifest = serde_json::from_str(source)?;

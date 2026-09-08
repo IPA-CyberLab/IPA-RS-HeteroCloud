@@ -123,6 +123,7 @@ const protocols = [
   { value: "udp", label: "UDP" },
   { value: "tcp", label: "TCP" },
 ];
+const webSourceCidrError = "HTTP/HTTPS公開では受信許可・拒否IP / CIDRは未対応です。設定を削除するか、IP / ドメイン (LB) を選択してください。";
 const protectedDestinationCidrs = [
   "::/128",
   "::1/128",
@@ -309,8 +310,17 @@ export function flashFormValidationError(
       if (enabled && (!Number.isInteger(target) || target < 1 || target > 100)) return "目標使用率は1〜100%で入力してください。";
     }
   }
-  if (value.endpointMode === "load_balancer" && (value.exposureType !== "public" || value.trafficMode !== "forwarded")) {
+  if (value.endpointMode !== "ip" && (value.exposureType !== "public" || value.trafficMode !== "forwarded")) {
     return "ドメイン公開では公開・転送モードを使用してください。";
+  }
+  if (value.endpointMode === "web") {
+    if (value.ports.length !== 1 || value.ports[0].protocol !== "tcp") {
+      return "HTTP/HTTPS公開にはTCPコンテナポートを1つだけ設定してください。";
+    }
+    const port = value.ports[0].container_port;
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+      return "コンテナポートは1〜65535で入力してください。";
+    }
   }
   if (value.cpuMillis < 10 || value.cpuMillis > quota.max_cpu_millis_per_vm) {
     return `CPUは10〜${quota.max_cpu_millis_per_vm.toLocaleString("ja-JP")} millicoresで入力してください。`;
@@ -339,6 +349,9 @@ export function flashFormValidationError(
   if (allowedSources.error) return `許可IP: ${allowedSources.error}`;
   const deniedSources = parseFlashSourceCidrs(value.deniedSourceCidrs);
   if (deniedSources.error) return `拒否IP: ${deniedSources.error}`;
+  if (value.endpointMode === "web" && (allowedSources.cidrs.length || deniedSources.cidrs.length)) {
+    return webSourceCidrError;
+  }
   const allowedDestinations = parseFlashDestinationCidrs(
     value.allowedDestinationCidrs,
     true,
@@ -380,7 +393,7 @@ export function flashSpecFromForm(
       type: value.exposureType,
       endpoint_mode: value.exposureType === "internal" ? "ip" : value.endpointMode,
       traffic_mode:
-        value.exposureType === "internal" || value.endpointMode === "load_balancer" ? "forwarded" : value.trafficMode,
+        value.exposureType === "internal" || value.endpointMode !== "ip" ? "forwarded" : value.trafficMode,
       allowed_source_cidrs: parseFlashSourceCidrs(value.allowedSourceCidrs).cidrs,
       denied_source_cidrs: parseFlashSourceCidrs(value.deniedSourceCidrs).cidrs,
     },
@@ -503,8 +516,12 @@ export function FlashServiceForm({
     update("ports", ports);
   };
   const environmentError = parseFlashEnvironment(value.environment).error;
-  const allowedSourceError = parseFlashSourceCidrs(value.allowedSourceCidrs).error;
-  const deniedSourceError = parseFlashSourceCidrs(value.deniedSourceCidrs).error;
+  const allowedSources = parseFlashSourceCidrs(value.allowedSourceCidrs);
+  const deniedSources = parseFlashSourceCidrs(value.deniedSourceCidrs);
+  const allowedSourceError = allowedSources.error ??
+    (value.endpointMode === "web" && allowedSources.cidrs.length ? webSourceCidrError : null);
+  const deniedSourceError = deniedSources.error ??
+    (value.endpointMode === "web" && deniedSources.cidrs.length ? webSourceCidrError : null);
   const allowedDestinationError = parseFlashDestinationCidrs(
     value.allowedDestinationCidrs,
     true,
@@ -773,7 +790,7 @@ export function FlashServiceForm({
                 {
                   id: "direct",
                   text: "ダイレクト",
-                  disabled: disabled || value.exposureType === "internal" || value.endpointMode === "load_balancer",
+                  disabled: disabled || value.exposureType === "internal" || value.endpointMode !== "ip",
                   disabledReason:
                     value.exposureType === "internal"
                       ? "内部サービスは転送モードで動作します。"
@@ -782,7 +799,7 @@ export function FlashServiceForm({
               ]}
               label="通信モード"
               onChange={({ detail }) => {
-                if (!disabled && !(detail.selectedId === "direct" && (value.exposureType === "internal" || value.endpointMode === "load_balancer"))) update("trafficMode", detail.selectedId as FlashExposure["traffic_mode"]);
+                if (!disabled && !(detail.selectedId === "direct" && (value.exposureType === "internal" || value.endpointMode !== "ip"))) update("trafficMode", detail.selectedId as FlashExposure["traffic_mode"]);
               }}
             />
           </FormField>
@@ -790,11 +807,11 @@ export function FlashServiceForm({
         {value.exposureType === "public" ? (
           <FormField label="公開アドレス">
             <SegmentedControl label="公開アドレス" selectedId={value.endpointMode}
-              options={[{ id: "ip", text: "IP", disabled }, { id: "load_balancer", text: "ドメイン (LB)", disabled }]}
+              options={[{ id: "ip", text: "IP", disabled }, { id: "load_balancer", text: "ドメイン (LB)", disabled }, { id: "web", text: "HTTP/HTTPS ドメイン", disabled }]}
               onChange={({ detail }) => {
                 if (disabled) return;
                 const endpointMode = detail.selectedId as FlashServiceFormValue["endpointMode"];
-                onChange({ ...value, endpointMode, trafficMode: endpointMode === "load_balancer" ? "forwarded" : value.trafficMode });
+                onChange({ ...value, endpointMode, trafficMode: endpointMode !== "ip" ? "forwarded" : value.trafficMode });
               }} />
           </FormField>
         ) : null}
@@ -805,13 +822,13 @@ export function FlashServiceForm({
               <Button
                 iconName="add-plus"
                 formAction="none"
-                disabled={disabled || value.ports.length >= 16}
+                disabled={disabled || value.ports.length >= (value.endpointMode === "web" ? 1 : 16)}
                 onClick={() =>
                   update("ports", [
                     ...value.ports,
                     {
                       name: `port-${value.ports.length + 1}`,
-                      protocol: "udp",
+                      protocol: value.endpointMode === "web" ? "tcp" : "udp",
                       container_port: 7777,
                     },
                   ])
@@ -867,7 +884,7 @@ export function FlashServiceForm({
         <ColumnLayout columns={2}>
           <FormField
             label="受信許可元IP / CIDR"
-            constraintText="空欄の場合はすべて許可。1行につき1件"
+            constraintText={value.endpointMode === "web" ? "HTTP/HTTPS公開では未対応" : "空欄の場合はすべて許可。1行につき1件"}
             errorText={allowedSourceError ?? undefined}
           >
             <Textarea
@@ -880,7 +897,7 @@ export function FlashServiceForm({
           </FormField>
           <FormField
             label="受信拒否元IP / CIDR"
-            constraintText="許可IPより優先。1行につき1件"
+            constraintText={value.endpointMode === "web" ? "HTTP/HTTPS公開では未対応" : "許可IPより優先。1行につき1件"}
             errorText={deniedSourceError ?? undefined}
           >
             <Textarea

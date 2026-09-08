@@ -3,6 +3,27 @@ import type { FlashServiceStatus } from "@/lib/api-types";
 import { flashServiceEndpoints, requestedReplicas, readyReplicas, flashScaleLabel } from "./flash-service-utils";
 import { defaultFlashServiceFormValue, flashSpecFromForm } from "./flash-service-form";
 
+describe("web endpoint display", () => {
+  it.each([443, 30000, 8080])("uses HTTPS without the internal port %i only in web mode", (port) => {
+    const status: FlashServiceStatus = { status: { endpoints: [{ name: "http", protocol: "tcp", address: "web.example.test", port }] } };
+    expect(flashServiceEndpoints(status, "web")).toEqual([expect.objectContaining({
+      address: "https://web.example.test", href: "https://web.example.test", protocol: "HTTPS",
+    })]);
+    for (const mode of ["ip", "load_balancer"] as const) {
+      const [endpoint] = flashServiceEndpoints(status, mode);
+      expect(endpoint.address).toBe(`web.example.test:${port}`);
+      expect(endpoint.protocol).toBe("TCP");
+      expect(endpoint.href).toBeUndefined();
+    }
+  });
+
+  it("normalizes URL and map endpoints and rejects unsafe links", () => {
+    expect(flashServiceEndpoints({ endpoints: { http: "http://web.example.test:30000/path" } }, "web")[0].href).toBe("https://web.example.test");
+    expect(flashServiceEndpoints({ endpoints: [{ protocol: "TCP", url: "https://web.example.test:443" }] }, "web")[0].href).toBe("https://web.example.test");
+    expect(flashServiceEndpoints({ endpoints: { bad: "javascript://example.test", credentials: "https://user:pass@example.test", invalid: "bad host" } }, "web")).toEqual([]);
+  });
+});
+
 describe("flashServiceEndpoints", () => {
   it("構造化されたTCP/UDPエンドポイントを表示形式へ変換する", () => {
     const status: FlashServiceStatus = {

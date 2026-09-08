@@ -167,7 +167,7 @@ export function FlashServiceDetailPage() {
   }
 
   const item = service.data;
-  const endpoints = flashServiceEndpoints(item.status);
+  const endpoints = flashServiceEndpoints(item.status, item.spec.exposure.endpoint_mode);
   const projectName =
     projects.data.items.find((project) => project.id === item.project_id)?.name ??
     item.project_id;
@@ -353,10 +353,12 @@ export function FlashServiceDetailPage() {
       </ColumnLayout>
       <Container header={<Header variant="h2">エンドポイント設定</Header>}>
         <DataTable
-          columns={portColumns}
+          columns={item.spec.exposure.endpoint_mode === "web"
+            ? portColumns.filter((column) => !("accessorKey" in column && column.accessorKey === "service_port"))
+            : portColumns}
           data={item.spec.ports}
           getRowId={(port) => `${port.protocol}-${port.name}-${port.service_port}`}
-          mobileVisibleColumns={["name", "protocol", "service_port"]}
+          mobileVisibleColumns={["name", "protocol", item.spec.exposure.endpoint_mode === "web" ? "container_port" : "service_port"]}
           searchPlaceholder="名前、プロトコル、ポート番号で検索"
           emptyTitle="エンドポイントがありません"
           emptyDescription="編集画面からエンドポイントを追加してください。"

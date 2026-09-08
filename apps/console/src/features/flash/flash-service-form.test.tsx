@@ -20,12 +20,13 @@ vi.mock("@/components/shared/resource-selectors", () => ({
   ProjectSelector: () => <div>Project selector</div>,
 }));
 
-function FormHarness({ quota }: { quota?: FlashQuotaLimits }) {
+function FormHarness({ quota, initial = {} }: { quota?: FlashQuotaLimits; initial?: Partial<FlashServiceFormValue> }) {
   const [value, setValue] = useState<FlashServiceFormValue>({
     ...defaultFlashServiceFormValue,
     projectId: "project-1",
     name: "game-server",
     image: "ghcr.io/example/game-server:v1",
+    ...initial,
   });
   return (
     <FlashServiceForm
@@ -364,5 +365,60 @@ describe("Flash autoscaling and domain publishing", () => {
     fireEvent.click(screen.getByText("公開", { exact: true }));
     expect(screen.getByRole("button", { name: /^IP$/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("textbox", { name: "サービス名" })).toHaveValue("game-server");
+  });
+});
+
+describe("Flash web publishing", () => {
+  const web: FlashServiceFormValue = {
+    ...defaultFlashServiceFormValue,
+    projectId: "project-1", name: "web-service", image: "example/web:v1",
+    endpointMode: "web", ports: [{ name: "http", protocol: "tcp", container_port: 8080 }],
+    environment: "MODE=production", processMode: "custom", command: "/app/server", args: "--http",
+  };
+
+  it("round-trips web without changing container or autoscaling settings", () => {
+    const value = { ...web, scaleMode: "auto" as const, minReplicas: 1, maxReplicas: 4 };
+    const spec = flashSpecFromForm(value, { keep: true });
+    const form = flashFormFromService({ project_id: value.projectId, name: value.name,
+      spec: { ...spec, ports: spec.ports.map((port) => ({ ...port, service_port: 30000 })) } });
+    expect(form.endpointMode).toBe("web");
+    expect(flashFormValidationError(form)).toBeNull();
+    expect(flashSpecFromForm(form, spec.metadata)).toEqual(spec);
+    expect(spec.exposure).toMatchObject({ type: "public", traffic_mode: "forwarded", endpoint_mode: "web" });
+    expect(spec.ports).toEqual(web.ports);
+  });
+
+  it.each([
+    { exposureType: "internal" as const }, { trafficMode: "direct" as const },
+    { ports: [] }, { ports: [...web.ports, { ...web.ports[0], name: "second" }] },
+    { ports: [{ ...web.ports[0], protocol: "udp" as const }] },
+    ...[0, 65536, 1.5, NaN].map((container_port) => ({ ports: [{ ...web.ports[0], container_port }] })),
+  ])("rejects unsupported web exposure or ports %j", (change) => {
+    expect(flashFormValidationError({ ...web, ...change })).not.toBeNull();
+  });
+
+  it.each(["allowedSourceCidrs", "deniedSourceCidrs"] as const)("rejects but retains %s", (key) => {
+    const value = { ...web, [key]: "203.0.113.0/24" };
+    expect(flashFormValidationError(value)).toContain("未対応");
+    expect(flashSpecFromForm(value).exposure).toMatchObject({
+      [key === "allowedSourceCidrs" ? "allowed_source_cidrs" : "denied_source_cidrs"]: ["203.0.113.0/24"],
+    });
+    expect(flashFormValidationError({ ...value, endpointMode: "load_balancer" })).toBeNull();
+    expect(flashFormValidationError({ ...value, [key]: " \n " })).toBeNull();
+  });
+
+  it("switches to forwarded web without dropping existing ports or CIDRs", () => {
+    render(<FormHarness initial={{ ...web, endpointMode: "ip", trafficMode: "direct", allowedSourceCidrs: "203.0.113.0/24" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "HTTP/HTTPS ドメイン" }));
+    expect(screen.getByRole("button", { name: "転送" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "ダイレクト" })).toBeDisabled();
+    expect(screen.getByRole("spinbutton", { name: "コンテナポート" })).toHaveValue(8080);
+    expect(screen.getByRole("textbox", { name: "受信許可元IP / CIDR" })).toHaveValue("203.0.113.0/24");
+    expect(screen.getByText(/設定を削除するか/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "エンドポイントを追加" })).toBeDisabled();
+    expect(screen.queryByRole("spinbutton", { name: "サービスポート" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "httpを削除" }));
+    fireEvent.click(screen.getByRole("button", { name: "エンドポイントを追加" }));
+    expect(screen.getByRole("button", { name: /port-1のプロトコル/ })).toHaveTextContent("TCP");
   });
 });

@@ -95,6 +95,27 @@ describe("FlashServiceDetailPage", () => {
     });
   });
 
+  it("links web domains without exposing internal service ports", async () => {
+    vi.mocked(api.flash.services.get).mockResolvedValue({ ...service,
+      spec: { ...service.spec, exposure: { ...service.spec.exposure, endpoint_mode: "web" },
+        ports: [{ name: "http", protocol: "tcp", container_port: 8080, service_port: 30000 }] },
+      status: { endpoints: [{ name: "http", protocol: "tcp", address: "web.example.test", port: 30000 }] },
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={[`/flash/services/${service.id}`]}>
+          <Routes><Route path="/flash/services/:serviceId" element={<FlashServiceDetailPage />} /></Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("link", { name: /https:\/\/web.example.test/ })).toHaveAttribute("href", "https://web.example.test");
+    expect(screen.getByText("公開・HTTP/HTTPS")).toBeInTheDocument();
+    expect(screen.queryByText("サービスポート")).not.toBeInTheDocument();
+    expect(screen.queryByText(/:30000|:443/)).not.toBeInTheDocument();
+    expect(screen.getByText("8080")).toBeInTheDocument();
+  });
+
   it("状態、レプリカ、UDPエンドポイントを表示して編集を開く", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient({

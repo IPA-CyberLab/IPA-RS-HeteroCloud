@@ -4368,6 +4368,40 @@ mod tests {
     }
 
     #[test]
+    fn flash_web_api_validates_create_and_update_manifests()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let manifest: Value =
+            serde_json::from_str(include_str!("../../../examples/cli/flash-web.json"))?;
+        let create: super::CreateFlashService = serde_json::from_value(manifest.clone())?;
+        validate_flash_spec(&create.spec)?;
+        assert_eq!(
+            serde_json::to_value(&create.spec)?["exposure"],
+            manifest["spec"]["exposure"]
+        );
+        let update: super::UpdateFlashService = serde_json::from_value(json!({
+            "name": manifest["name"], "spec": manifest["spec"]
+        }))?;
+        validate_flash_spec(&update.spec)?;
+
+        for (field, value) in [
+            ("type", json!("internal")),
+            ("traffic_mode", json!("direct")),
+            ("allowed_source_cidrs", json!(["0.0.0.0/0"])),
+            ("denied_source_cidrs", json!(["192.0.2.0/24"])),
+        ] {
+            let mut invalid = manifest.clone();
+            invalid["spec"]["exposure"][field] = value;
+            let create: super::CreateFlashService = serde_json::from_value(invalid.clone())?;
+            assert!(validate_flash_spec(&create.spec).is_err());
+            let update: super::UpdateFlashService = serde_json::from_value(json!({
+                "name": invalid["name"], "spec": invalid["spec"]
+            }))?;
+            assert!(validate_flash_spec(&update.spec).is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn syouyu_credential_contract_is_prefix_free_and_uses_only_read_write()
     -> Result<(), Box<dyn std::error::Error>> {
         let service_id = Uuid::from_u128(40);

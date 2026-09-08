@@ -170,7 +170,7 @@ export function FlashServicesPage() {
     0,
   );
   const endpointCount = serviceItems.reduce(
-    (total, service) => total + flashServiceEndpoints(service.status).length,
+    (total, service) => total + flashServiceEndpoints(service.status, service.spec.exposure.endpoint_mode).length,
     0,
   );
   const validationError = flashFormValidationError(form, quota.data);
