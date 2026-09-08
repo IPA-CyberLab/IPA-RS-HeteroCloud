@@ -20,6 +20,10 @@ spec:
       labels:
         {{- include "heterocloud.selectorLabels" . | nindent 8 }}
     spec:
+      {{- with .Values.hostAliases }}
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       hostNetwork: {{ .Values.hostNetwork }}
       {{- if .Values.hostNetwork }}
       dnsPolicy: ClusterFirstWithHostNet

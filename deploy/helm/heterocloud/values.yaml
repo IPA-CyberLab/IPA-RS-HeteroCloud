@@ -1,5 +1,7 @@
 replicaCount: 3
 hostNetwork: true
+# Pod-local hostname mappings shared by the API and owner console (not workers).
+hostAliases: []
 
 image:
   repository: ghcr.io/ipa-cyberlab/ipa-rs-heterocloud

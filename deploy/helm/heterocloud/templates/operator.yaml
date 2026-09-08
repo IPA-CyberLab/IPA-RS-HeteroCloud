@@ -57,6 +57,10 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: owner-console
     spec:
+      {{- with .Values.hostAliases }}
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       hostNetwork: {{ .Values.ownerConsole.hostNetwork }}
       dnsPolicy: {{ ternary "ClusterFirstWithHostNet" "ClusterFirst" .Values.ownerConsole.hostNetwork }}
       serviceAccountName: {{ include "heterocloud.fullname" . }}
