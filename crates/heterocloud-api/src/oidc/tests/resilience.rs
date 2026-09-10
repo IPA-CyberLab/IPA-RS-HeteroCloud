@@ -125,11 +125,20 @@ async fn total_deadline_includes_headers_and_body() -> Result<(), Box<dyn Error>
             .retry(reqwest::retry::never())
             .build()?;
         let started = tokio::time::Instant::now();
-        let result = provider_get_json::<Value>(&client, url, "jwks", 128, fast_policy()).await;
+        let policy = GetPolicy {
+            total: Duration::from_secs(2),
+            attempt: Duration::from_millis(1800),
+            ..fast_policy()
+        };
+        let result = provider_get_json::<Value>(&client, url, "jwks", 128, policy).await;
+        let elapsed = started.elapsed();
         server.abort();
         assert!(matches!(result, Err(OidcError::ProviderUnavailable)));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
-        assert!(started.elapsed() < Duration::from_millis(350));
+        assert!(elapsed >= policy.total);
+        // A fresh timeout for attempt two would take at least 3605 ms.
+        // Allow scheduler slack without accepting that deadline-reset regression.
+        assert!(elapsed < Duration::from_millis(2800), "elapsed: {elapsed:?}");
     }
     Ok(())
 }
