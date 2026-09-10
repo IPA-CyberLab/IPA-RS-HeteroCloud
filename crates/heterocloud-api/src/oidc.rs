@@ -68,6 +68,7 @@ impl OidcConfig {
         validate_callback_url(&public_callback_url, allow_insecure_http)?;
         let client = Client::builder()
             .redirect(RedirectPolicy::none())
+            .retry(reqwest::retry::never())
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(10))
             .user_agent("heterocloud-api/oidc")
@@ -164,6 +165,7 @@ impl OidcConfig {
         }
 
         let discovery = self.discovery().await?;
+        let token_started = tokio::time::Instant::now();
         let token_response = self
             .client
             .post(discovery.token_endpoint)
@@ -178,38 +180,71 @@ impl OidcConfig {
             ])
             .send()
             .await
-            .map_err(|_| OidcError::ProviderUnavailable)?;
+            .map_err(|error| {
+                ProviderFailure::transport(&error).report("token_exchange", 1, token_started);
+                OidcError::ProviderUnavailable
+            })?;
         if token_response.status().is_client_error() {
+            ProviderFailure::status(token_response.status()).report(
+                "token_exchange",
+                1,
+                token_started,
+            );
             return Err(OidcError::AuthorizationRejected);
         }
         if !token_response.status().is_success() {
+            ProviderFailure::status(token_response.status()).report(
+                "token_exchange",
+                1,
+                token_started,
+            );
             return Err(OidcError::ProviderUnavailable);
         }
-        let tokens: TokenResponse = bounded_json(token_response, MAX_TOKEN_RESPONSE_BYTES).await?;
+        let tokens: TokenResponse = bounded_json(token_response, MAX_TOKEN_RESPONSE_BYTES)
+            .await
+            .map_err(|failure| {
+                failure.report("token_exchange", 1, token_started);
+                OidcError::ProviderUnavailable
+            })?;
         if tokens.id_token.is_empty() || tokens.id_token.len() > MAX_ID_TOKEN_BYTES {
+            ProviderFailure::permanent("invalid_token_size").report(
+                "token_exchange",
+                1,
+                token_started,
+            );
             return Err(OidcError::InvalidToken);
         }
 
-        let jwks_response = self
-            .client
-            .get(discovery.jwks_uri)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .send()
-            .await
-            .map_err(|_| OidcError::ProviderUnavailable)?;
-        if !jwks_response.status().is_success() {
-            return Err(OidcError::ProviderUnavailable);
-        }
-        let jwks: JwkSet = bounded_json(jwks_response, MAX_JWKS_BYTES).await?;
+        let jwks: JwkSet = provider_get_json(
+            &self.client,
+            discovery.jwks_uri,
+            "jwks",
+            MAX_JWKS_BYTES,
+            GetPolicy::default(),
+        )
+        .await?;
         if jwks.keys.is_empty() || jwks.keys.len() > MAX_JWKS_KEYS {
+            ProviderFailure::permanent("invalid_key_count").report(
+                "jwks_validation",
+                1,
+                tokio::time::Instant::now(),
+            );
             return Err(OidcError::InvalidToken);
         }
+        let validation_started = tokio::time::Instant::now();
         self.validate_id_token(
             &tokens.id_token,
             &transaction.nonce,
             &discovery.id_token_signing_alg_values_supported,
             &jwks,
         )
+        .inspect_err(|_| {
+            ProviderFailure::permanent("validation").report(
+                "id_token_validation",
+                1,
+                validation_started,
+            );
+        })
     }
 
     fn validate_id_token(
@@ -309,17 +344,14 @@ impl OidcConfig {
             self.discovery_issuer
         ))
         .map_err(|_| OidcError::Internal)?;
-        let response = self
-            .client
-            .get(discovery_url)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .send()
-            .await
-            .map_err(|_| OidcError::ProviderUnavailable)?;
-        if !response.status().is_success() {
-            return Err(OidcError::ProviderUnavailable);
-        }
-        let metadata: ProviderMetadata = bounded_json(response, MAX_DISCOVERY_BYTES).await?;
+        let metadata: ProviderMetadata = provider_get_json(
+            &self.client,
+            discovery_url,
+            "discovery",
+            MAX_DISCOVERY_BYTES,
+            GetPolicy::default(),
+        )
+        .await?;
         if metadata.issuer != self.issuer
             || !valid_provider_endpoint(
                 &metadata.authorization_endpoint,
@@ -337,6 +369,11 @@ impl OidcConfig {
                 self.discovery_allow_insecure_http,
             )
         {
+            ProviderFailure::permanent("endpoint_validation").report(
+                "discovery_validation",
+                1,
+                tokio::time::Instant::now(),
+            );
             return Err(OidcError::ProviderUnavailable);
         }
         Ok(metadata)
@@ -636,28 +673,153 @@ fn display_name(name: Option<&str>, username: Option<&str>, email: &str) -> Stri
     "OIDC user".to_owned()
 }
 
+#[derive(Clone, Copy)]
+struct GetPolicy {
+    total: Duration,
+    attempt: Duration,
+    backoff: Duration,
+    jitter: Duration,
+}
+
+impl Default for GetPolicy {
+    fn default() -> Self {
+        Self {
+            total: Duration::from_secs(10),
+            attempt: Duration::from_secs(5),
+            backoff: Duration::from_millis(150),
+            jitter: Duration::from_millis(100),
+        }
+    }
+}
+
+// Never retain provider URLs, error strings, or response bodies in diagnostics.
+#[derive(Debug)]
+struct ProviderFailure {
+    class: &'static str,
+    status: Option<u16>,
+    retryable: bool,
+}
+
+impl ProviderFailure {
+    fn permanent(class: &'static str) -> Self {
+        Self {
+            class,
+            status: None,
+            retryable: false,
+        }
+    }
+
+    fn timeout() -> Self {
+        Self {
+            class: "timeout",
+            status: None,
+            retryable: true,
+        }
+    }
+
+    fn transport(error: &reqwest::Error) -> Self {
+        if error.is_timeout() {
+            return Self::timeout();
+        }
+        Self {
+            class: "transport",
+            status: None,
+            retryable: error.is_connect() || error.is_request() || error.is_body(),
+        }
+    }
+
+    fn status(status: reqwest::StatusCode) -> Self {
+        Self {
+            class: "http_status",
+            status: Some(status.as_u16()),
+            retryable: matches!(status.as_u16(), 502 | 503 | 504),
+        }
+    }
+
+    fn report(&self, stage: &'static str, attempt: u8, started: tokio::time::Instant) {
+        tracing::warn!(
+            stage,
+            failure_class = self.class,
+            status = self.status,
+            attempt,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "OIDC provider stage failed"
+        );
+    }
+}
+
+// Only idempotent metadata GETs enter this loop; token exchange must never do so.
+async fn provider_get_json<T: DeserializeOwned>(
+    client: &Client,
+    url: Url,
+    stage: &'static str,
+    limit: usize,
+    policy: GetPolicy,
+) -> Result<T, OidcError> {
+    let started = tokio::time::Instant::now();
+    let deadline = started + policy.total;
+    for attempt in 1..=2 {
+        let attempt_deadline = deadline.min(tokio::time::Instant::now() + policy.attempt);
+        let result = tokio::time::timeout_at(attempt_deadline, async {
+            let response = client
+                .get(url.clone())
+                .header(reqwest::header::ACCEPT, "application/json")
+                .send()
+                .await
+                .map_err(|error| ProviderFailure::transport(&error))?;
+            if !response.status().is_success() {
+                return Err(ProviderFailure::status(response.status()));
+            }
+            bounded_json(response, limit).await
+        })
+        .await
+        .unwrap_or_else(|_| Err(ProviderFailure::timeout()));
+        match result {
+            Ok(value) => return Ok(value),
+            Err(failure) => {
+                failure.report(stage, attempt, started);
+                if !failure.retryable || attempt == 2 {
+                    break;
+                }
+            }
+        }
+        let jitter_ms = uuid::Uuid::new_v4().as_u128() % (policy.jitter.as_millis() + 1);
+        let retry_at = tokio::time::Instant::now()
+            + policy.backoff
+            + Duration::from_millis(u64::try_from(jitter_ms).unwrap_or(u64::MAX));
+        if retry_at >= deadline {
+            break;
+        }
+        tokio::time::sleep_until(retry_at).await;
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+    }
+    Err(OidcError::ProviderUnavailable)
+}
+
 async fn bounded_json<T: DeserializeOwned>(
     mut response: Response,
     limit: usize,
-) -> Result<T, OidcError> {
+) -> Result<T, ProviderFailure> {
     if response
         .content_length()
         .is_some_and(|length| length > u64::try_from(limit).unwrap_or(u64::MAX))
     {
-        return Err(OidcError::ProviderUnavailable);
+        return Err(ProviderFailure::permanent("oversized_body"));
     }
     let mut body = Vec::new();
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|_| OidcError::ProviderUnavailable)?
+        .map_err(|error| ProviderFailure::transport(&error))?
     {
         if body.len().saturating_add(chunk.len()) > limit {
-            return Err(OidcError::ProviderUnavailable);
+            return Err(ProviderFailure::permanent("oversized_body"));
         }
         body.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&body).map_err(|_| OidcError::ProviderUnavailable)
+    serde_json::from_slice(&body).map_err(|_| ProviderFailure::permanent("invalid_json"))
 }
 
 fn unix_timestamp() -> Result<u64, std::time::SystemTimeError> {
@@ -677,6 +839,7 @@ pub fn clear_transaction_cookie(secure: bool) -> Cookie<'static> {
 
 #[cfg(test)]
 mod tests {
+    mod resilience;
     use std::{collections::HashMap, error::Error};
 
     use axum::{

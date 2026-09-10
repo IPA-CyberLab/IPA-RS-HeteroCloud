@@ -330,3 +330,17 @@ The browser starts login at `GET /api/v1/auth/oidc/start`. A successful
 callback creates only the user, a personal organization, and its owner
 membership, then issues the existing HeteroCloud server session and redirects
 to `/`. Projects, services, and quota are never created by registration.
+
+Discovery and JWKS GETs allow at most two attempts for transport failures,
+timeouts, or HTTP 502/503/504. Each stage has a 10-second total deadline,
+including response bodies and the 150-250 ms jittered retry delay; individual
+attempts are capped at 5 seconds. Redirects, other HTTP statuses (including
+408/429), malformed or oversized JSON, and validation failures are not retried.
+Authorization-code token POSTs are never retried, even if the subsequent JWKS
+GET fails. The callback itself is not restarted, and all issuer, endpoint,
+signature, audience, nonce, state, and transaction checks remain enforced.
+
+OIDC provider failures log fixed stage and failure-class labels, optional HTTP
+status, attempt number, and elapsed milliseconds. These diagnostics do not
+include provider URLs, response bodies, credentials, authorization codes,
+tokens, or raw transport errors. Public error responses remain unchanged.
