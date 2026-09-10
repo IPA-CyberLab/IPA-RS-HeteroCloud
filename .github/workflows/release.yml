@@ -8,6 +8,15 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/ipa-cyberlab/ipa-rs-heterocloud
+  RELEASE_TAG: ${{ github.event.release.tag_name }}
+  RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -27,6 +36,20 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Validate release identity and artifact contract
+        run: |
+          python3 -m unittest discover -s scripts/tests -p test_release_artifact.py -v
+          python3 scripts/release_artifact.py validate
+      - name: Refuse an already published channel artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$RELEASE_TAG" --json assets > "$RUNNER_TEMP/release-assets.json"
+          python3 -c 'import json,os; from pathlib import Path; assets=json.loads((Path(os.environ["RUNNER_TEMP"])/"release-assets.json").read_text())["assets"]; assert not any(a["name"] == "heterocloud-release-artifact.json" for a in assets), "channel artifact already published"'
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -75,8 +98,17 @@ jobs:
   image:
     needs: validate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Verify release identity
+        id: release
+        run: python3 scripts/release_artifact.py validate >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -86,17 +118,31 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/${{ github.repository_owner }}/ipa-rs-heterocloud
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
           tags: |
-            type=semver,pattern={{version}}
-            type=sha
+            type=raw,value=${{ steps.release.outputs.version }}
+            type=sha,format=long
+            type=raw,value=latest,enable=${{ steps.release.outputs.latest }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            io.heterocloud.cargo-version=${{ steps.release.outputs.cargo_version }}
       - uses: docker/build-push-action@v6
+        id: build
         with:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64
+      - name: Export pushed digest and attach channel artifact
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/release_artifact.py generate > "$RUNNER_TEMP/heterocloud-release-artifact.json"
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/heterocloud-release-artifact.json"
 
   cli:
     needs: validate
@@ -112,6 +158,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify release identity
+        shell: bash
+        run: python scripts/release_artifact.py validate
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -144,7 +199,7 @@ jobs:
           else
             shasum -a 256 "$asset" >"${asset}.sha256"
           fi
-          gh release upload "$RELEASE_TAG" "$asset" "${asset}.sha256" --clobber
+          gh release upload "$RELEASE_TAG" "$asset" "${asset}.sha256"
 
       - name: Upload Windows CLI
         if: runner.os == 'Windows'
@@ -158,4 +213,4 @@ jobs:
           Compress-Archive -Path target/release/heterocloud.exe -DestinationPath $asset
           $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
           "$hash  $asset" | Set-Content -NoNewline "$asset.sha256"
-          gh release upload $env:RELEASE_TAG $asset "$asset.sha256" --clobber
+          gh release upload $env:RELEASE_TAG $asset "$asset.sha256"
