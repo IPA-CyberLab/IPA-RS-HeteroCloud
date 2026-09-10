@@ -138,7 +138,10 @@ async fn total_deadline_includes_headers_and_body() -> Result<(), Box<dyn Error>
         assert!(elapsed >= policy.total);
         // A fresh timeout for attempt two would take at least 3605 ms.
         // Allow scheduler slack without accepting that deadline-reset regression.
-        assert!(elapsed < Duration::from_millis(2800), "elapsed: {elapsed:?}");
+        assert!(
+            elapsed < Duration::from_millis(2800),
+            "elapsed: {elapsed:?}"
+        );
     }
     Ok(())
 }
