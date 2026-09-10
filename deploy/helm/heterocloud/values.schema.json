@@ -2,6 +2,14 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
+    "ownerConsole": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "origin": { "type": "string" },
+        "secureCookie": { "type": "boolean" }
+      }
+    },
     "hostAliases": {
       "description": "Pod-local hostname mappings for the API and owner console.",
       "type": "array",

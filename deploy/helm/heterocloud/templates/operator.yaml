@@ -1,4 +1,15 @@
 {{- if .Values.ownerConsole.enabled }}
+{{- $ownerOrigin := required "ownerConsole.origin is required" .Values.ownerConsole.origin }}
+{{- $ownerScheme := lower (urlParse $ownerOrigin).scheme }}
+{{- if not (kindIs "bool" .Values.ownerConsole.secureCookie) }}
+{{- fail "ownerConsole.secureCookie must be a boolean" }}
+{{- end }}
+{{- if not (has $ownerScheme (list "http" "https")) }}
+{{- fail "ownerConsole.origin must use http or https" }}
+{{- end }}
+{{- if ne .Values.ownerConsole.secureCookie (eq $ownerScheme "https") }}
+{{- fail "ownerConsole.secureCookie must be true for HTTPS and false for HTTP owner origins" }}
+{{- end }}
 {{- if .Values.ownerConsole.databaseProxy.enabled }}
 apiVersion: v1
 kind: ConfigMap
@@ -123,7 +134,7 @@ spec:
             - --flash-audience={{ .Values.flashExec.audience }}
             - --provider-key-id={{ .Values.flashExec.providerKeyId }}
             - --public-origin={{ required "ownerConsole.origin is required" .Values.ownerConsole.origin }}
-            - --secure-cookie=false
+            - --secure-cookie={{ .Values.ownerConsole.secureCookie }}
             - --session-ttl-seconds={{ .Values.sessionTtlSeconds }}
             - --database-max-connections={{ .Values.databaseMaxConnections }}
             - --owner-origin={{ required "ownerConsole.origin is required" .Values.ownerConsole.origin }}
