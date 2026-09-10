@@ -732,7 +732,7 @@ impl ProviderFailure {
         Self {
             class: "http_status",
             status: Some(status.as_u16()),
-            retryable: matches!(status.as_u16(), 502 | 503 | 504),
+            retryable: matches!(status.as_u16(), 502..=504),
         }
     }
 
