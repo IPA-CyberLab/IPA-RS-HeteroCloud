@@ -107,6 +107,10 @@ spec:
         {{- end }}
       containers:
         - name: owner-console
+          {{- if .Values.databaseTls.caSecretName }}
+          env:
+            {{- include "heterocloud.databaseTlsEnv" . | nindent 12 }}
+          {{- end }}
           image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:

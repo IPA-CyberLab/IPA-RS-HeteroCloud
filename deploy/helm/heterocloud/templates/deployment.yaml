@@ -60,6 +60,7 @@ spec:
           image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- include "heterocloud.databaseTlsEnv" . | nindent 12 }}
             - name: HOST_IP
               valueFrom:
                 fieldRef:

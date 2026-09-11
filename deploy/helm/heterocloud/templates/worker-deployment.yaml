@@ -66,6 +66,10 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
             - /usr/local/bin/heterocloud-worker
+          {{- if .Values.databaseTls.caSecretName }}
+          env:
+            {{- include "heterocloud.databaseTlsEnv" . | nindent 12 }}
+          {{- end }}
           args:
             - --database-url-file=/var/run/secrets/runtime/database-url
             - --signing-key-file=/var/run/secrets/provider/ed25519-private.pem

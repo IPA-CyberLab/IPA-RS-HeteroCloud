@@ -19,6 +19,11 @@ secureCookie: true
 sessionTtlSeconds: 43200
 databaseMaxConnections: 20
 
+# Namespace-local PEM CA Secret. The database URL must use sslmode=verify-full.
+databaseTls:
+  caSecretName: ""
+  caSecretKey: ca.crt
+
 oidc:
   enabled: false
   issuerUrl: ""

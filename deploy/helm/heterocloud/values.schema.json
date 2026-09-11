@@ -2,6 +2,24 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
+    "databaseTls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["caSecretName", "caSecretKey"],
+      "properties": {
+        "caSecretName": {
+          "type": "string",
+          "maxLength": 253,
+          "pattern": "^$|^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+        },
+        "caSecretKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        }
+      }
+    },
     "ownerConsole": {
       "type": "object",
       "properties": {
