@@ -1,4 +1,5 @@
 use std::{
+    io::Read,
     net::SocketAddr,
     path::{Path, PathBuf},
     time::Duration,
@@ -176,6 +177,10 @@ pub struct Config {
     #[arg(long, env = "HETEROCLOUD_OIDC_CLIENT_SECRET_FILE")]
     pub oidc_client_secret_file: Option<PathBuf>,
 
+    /// Additional PEM roots for the OIDC HTTP client only.
+    #[arg(long, env = "HETEROCLOUD_OIDC_ROOT_CA_FILE")]
+    pub oidc_root_ca_file: Option<PathBuf>,
+
     #[arg(long, env = "HETEROCLOUD_OIDC_PUBLIC_CALLBACK_URL")]
     pub oidc_public_callback_url: Option<Url>,
 
@@ -351,6 +356,10 @@ impl Config {
         flow_access_secret: SecretString,
         oidc_client_secret: Option<SecretString>,
     ) -> Result<RuntimeConfig, ConfigError> {
+        if self.oidc_root_ca_file.is_some() && self.oidc_issuer_url.is_none() {
+            return Err(ConfigError::IncompleteOidc);
+        }
+        let oidc_roots = load_oidc_roots(self.oidc_root_ca_file.as_deref())?;
         validate_owner_config(self.owner_origin.as_ref(), self.owner_email.as_deref())?;
         validate_flow_public_endpoints(&self.flow_public_endpoints, self.secure_cookie)?;
         validate_flow_internal_endpoint(&self.flow_internal_endpoint)?;
@@ -383,13 +392,14 @@ impl Config {
                 Some(client_id),
                 Some(client_secret),
                 Some(callback),
-            ) => Some(OidcConfig::new(
+            ) => Some(OidcConfig::new_with_root_certificates(
                 issuer.clone(),
                 backchannel_issuer.clone(),
                 client_id.clone(),
                 client_secret,
                 callback.clone(),
                 !self.secure_cookie,
+                &oidc_roots,
             )?),
             _ => return Err(ConfigError::IncompleteOidc),
         };
@@ -425,6 +435,33 @@ pub struct LoadedSecrets {
     pub bootstrap_password: Option<SecretString>,
     pub oidc_client_secret: Option<SecretString>,
     pub registry_admin_password: Option<SecretString>,
+}
+
+fn load_oidc_roots(path: Option<&Path>) -> Result<Vec<reqwest::Certificate>, ConfigError> {
+    let Some(path) = path else {
+        return Ok(Vec::new());
+    };
+    const LIMIT: u64 = 256 * 1024;
+    let metadata = std::fs::metadata(path).map_err(|_| ConfigError::InvalidOidcRootCa)?;
+    if !metadata.is_file() || metadata.len() > LIMIT {
+        return Err(ConfigError::InvalidOidcRootCa);
+    }
+    // Called once during startup; bound the read even if a projected file changes.
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|_| ConfigError::InvalidOidcRootCa)?
+        .take(LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ConfigError::InvalidOidcRootCa)?;
+    if bytes.len() as u64 > LIMIT || bytes.windows(11).any(|part| part == b"PRIVATE KEY") {
+        return Err(ConfigError::InvalidOidcRootCa);
+    }
+    let roots = reqwest::Certificate::from_pem_bundle(&bytes)
+        .map_err(|_| ConfigError::InvalidOidcRootCa)?;
+    if roots.is_empty() || roots.len() > 16 {
+        return Err(ConfigError::InvalidOidcRootCa);
+    }
+    Ok(roots)
 }
 
 async fn read_secret(path: &Path) -> Result<SecretString, ConfigError> {
@@ -600,6 +637,8 @@ pub enum ConfigError {
         "OIDC issuer, optional backchannel issuer, client ID, client secret file, and public callback URL must be configured together"
     )]
     IncompleteOidc,
+    #[error("OIDC root CA file must contain a bounded, nonempty PEM certificate bundle")]
+    InvalidOidcRootCa,
     #[error(transparent)]
     FlowAccess(#[from] FlowAccessError),
     #[error(transparent)]
@@ -649,6 +688,31 @@ mod tests {
     #[cfg(unix)]
     use super::read_secret;
     use super::validate_flow_public_endpoints;
+
+    #[cfg(unix)]
+    #[test]
+    fn oidc_root_bundle_is_bounded_and_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
+        let directory =
+            std::env::temp_dir().join(format!("heterocloud-oidc-ca-{}", Uuid::now_v7()));
+        fs::create_dir(&directory)?;
+        let path = directory.join("ca.pem");
+        assert!(super::load_oidc_roots(None)?.is_empty());
+        assert!(super::load_oidc_roots(Some(&path)).is_err());
+        assert!(super::load_oidc_roots(Some(&directory)).is_err());
+        for data in [
+            Vec::new(),
+            b"not a certificate".to_vec(),
+            vec![b'x'; 256 * 1024 + 1],
+            include_bytes!("oidc/tests/tls-fixtures/server-key.fixture").to_vec(),
+        ] {
+            fs::write(&path, data)?;
+            assert!(super::load_oidc_roots(Some(&path)).is_err());
+        }
+        fs::write(&path, include_bytes!("oidc/tests/tls-fixtures/ca.fixture"))?;
+        assert_eq!(super::load_oidc_roots(Some(&path))?.len(), 1);
+        fs::remove_dir_all(directory)?;
+        Ok(())
+    }
 
     #[test]
     fn secure_mode_requires_nonempty_https_flow_endpoints() -> Result<(), Box<dyn std::error::Error>>

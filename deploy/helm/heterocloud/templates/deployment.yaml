@@ -110,6 +110,9 @@ spec:
             {{- end }}
             - --oidc-client-id={{ required "oidc.clientId is required" .Values.oidc.clientId }}
             - --oidc-client-secret-file=/var/run/secrets/oidc/client-secret
+            {{- if .Values.oidc.rootCaSecretName }}
+            - --oidc-root-ca-file=/var/run/secrets/oidc-ca/ca.crt
+            {{- end }}
             - --oidc-public-callback-url={{ required "oidc.publicCallbackUrl is required" .Values.oidc.publicCallbackUrl }}
             {{- end }}
             - --console-dir=/opt/heterocloud/console
@@ -153,6 +156,11 @@ spec:
               drop:
                 - ALL
           volumeMounts:
+            {{- if and .Values.oidc.enabled .Values.oidc.rootCaSecretName }}
+            - name: oidc-ca
+              mountPath: /var/run/secrets/oidc-ca
+              readOnly: true
+            {{- end }}
             - name: runtime
               mountPath: /var/run/secrets/runtime
               readOnly: true
@@ -181,6 +189,15 @@ spec:
             - name: tmp
               mountPath: /tmp
       volumes:
+        {{- if and .Values.oidc.enabled .Values.oidc.rootCaSecretName }}
+        - name: oidc-ca
+          secret:
+            secretName: {{ .Values.oidc.rootCaSecretName | quote }}
+            defaultMode: 0444
+            items:
+              - key: {{ required "oidc.rootCaSecretKey is required" .Values.oidc.rootCaSecretKey | quote }}
+                path: ca.crt
+        {{- end }}
         - name: runtime
           secret:
             secretName: {{ .Values.secrets.runtimeSecretName }}

@@ -2,6 +2,16 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
+    "oidc": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "rootCaSecretName": {"type": "string"},
+        "rootCaSecretKey": {"type": "string", "minLength": 1}
+      },
+      "if": {"required": ["rootCaSecretName"], "properties": {"rootCaSecretName": {"type": "string", "minLength": 1}}},
+      "then": {"required": ["enabled"], "properties": {"enabled": {"const": true}}}
+    },
     "databaseTls": {
       "type": "object",
       "additionalProperties": false,

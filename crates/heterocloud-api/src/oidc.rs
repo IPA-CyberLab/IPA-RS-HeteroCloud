@@ -50,6 +50,26 @@ impl OidcConfig {
         public_callback_url: Url,
         allow_insecure_http: bool,
     ) -> Result<Self, OidcConfigError> {
+        Self::new_with_root_certificates(
+            issuer,
+            backchannel_issuer,
+            client_id,
+            client_secret,
+            public_callback_url,
+            allow_insecure_http,
+            &[],
+        )
+    }
+
+    pub fn new_with_root_certificates(
+        issuer: Url,
+        backchannel_issuer: Option<Url>,
+        client_id: String,
+        client_secret: SecretString,
+        public_callback_url: Url,
+        allow_insecure_http: bool,
+        roots: &[reqwest::Certificate],
+    ) -> Result<Self, OidcConfigError> {
         let issuer = normalize_issuer(issuer, allow_insecure_http)?;
         let (discovery_issuer, discovery_allow_insecure_http) =
             if let Some(backchannel_issuer) = backchannel_issuer {
@@ -67,6 +87,7 @@ impl OidcConfig {
         }
         validate_callback_url(&public_callback_url, allow_insecure_http)?;
         let client = Client::builder()
+            .tls_certs_merge(roots.iter().cloned())
             .redirect(RedirectPolicy::none())
             .retry(reqwest::retry::never())
             .connect_timeout(Duration::from_secs(5))
@@ -840,6 +861,7 @@ pub fn clear_transaction_cookie(secure: bool) -> Cookie<'static> {
 #[cfg(test)]
 mod tests {
     mod resilience;
+    mod tls;
     use std::{collections::HashMap, error::Error};
 
     use axum::{

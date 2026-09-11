@@ -26,6 +26,8 @@ databaseTls:
 
 oidc:
   enabled: false
+  rootCaSecretName: ""
+  rootCaSecretKey: ca.crt
   issuerUrl: ""
   backchannelIssuerUrl: ""
   clientId: ""
