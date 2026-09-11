@@ -13,6 +13,9 @@ async fn oidc_private_ca_preserves_certificate_verification()
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     listener.set_nonblocking(true)?;
     let issuer = format!("https://{}", listener.local_addr()?);
+    let issuer_url: url::Url = issuer.parse()?;
+    let callback_url: url::Url =
+        "https://console.example.test/api/v1/auth/oidc/callback".parse()?;
     let tls = axum_server::tls_rustls::RustlsConfig::from_pem(SERVER.to_vec(), SERVER_KEY.to_vec())
         .await?;
     let router = Router::new()
@@ -25,13 +28,11 @@ async fn oidc_private_ca_preserves_certificate_verification()
     let server = tokio::spawn(async move { serving.serve(router.into_make_service()).await });
     let build = |roots: &[reqwest::Certificate]| {
         OidcConfig::new_with_root_certificates(
-            issuer.parse().expect("fixture URL"),
+            issuer_url.clone(),
             None,
             "fixture-client".to_owned(),
             SecretString::from("fixture-client-secret-only"),
-            "https://console.example.test/api/v1/auth/oidc/callback"
-                .parse()
-                .expect("fixture callback"),
+            callback_url.clone(),
             false,
             roots,
         )
