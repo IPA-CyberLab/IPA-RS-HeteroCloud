@@ -23,6 +23,14 @@ mode are omitted from serialized specs. Provider reconciliation receives the
 non-default fields unchanged. Provider implementation and endpoint provisioning
 remain the provider's responsibility.
 
+## GPU selection
+
+`spec.gpu_count` is optional and defaults to `0`. The only nonzero value is `1`,
+which assigns one exclusive physical GPU to every replica. Values above one are
+rejected by both the management API and the Flash provider. The provider selects
+the NVIDIA runtime and schedules the replica only on a node that has passed the
+cluster GPU acceptance test. Omitting the field keeps the existing gVisor path.
+
 ## Quota Reservation
 
 Creation and update reserve `autoscaling.max_replicas`, or `replicas` when fixed.

@@ -4305,6 +4305,7 @@ mod tests {
             autoscaling: None,
             cpu_millis: 500,
             memory_mib: 512,
+            gpu_count: 0,
             ephemeral_storage_gib: 10,
             ports: vec![FlashPort {
                 name: "game-udp".into(),

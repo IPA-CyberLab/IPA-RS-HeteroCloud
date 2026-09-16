@@ -315,6 +315,7 @@ pub const MIN_FLASH_CPU_MILLIS: u32 = 10;
 pub const MAX_FLASH_CPU_MILLIS: u32 = 100_000_000;
 pub const MIN_FLASH_MEMORY_MIB: u32 = 16;
 pub const MAX_FLASH_MEMORY_MIB: u32 = 1_048_576;
+pub const MAX_FLASH_GPUS_PER_VM: u32 = 1;
 pub const MIN_FLASH_EPHEMERAL_STORAGE_GIB: u32 = 1;
 pub const MAX_FLASH_EPHEMERAL_STORAGE_GIB: u32 = 1_000_000;
 pub const DEFAULT_FLASH_MAX_REPLICAS_PER_SERVICE: u32 = 100;
@@ -690,6 +691,8 @@ pub struct FlashSpec {
     pub autoscaling: Option<FlashAutoscaling>,
     pub cpu_millis: u32,
     pub memory_mib: u32,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub gpu_count: u32,
     #[serde(default = "default_flash_ephemeral_storage_gib")]
     pub ephemeral_storage_gib: u32,
     pub ports: Vec<FlashPort>,
@@ -789,6 +792,11 @@ impl FlashSpec {
         if !(MIN_FLASH_MEMORY_MIB..=MAX_FLASH_MEMORY_MIB).contains(&self.memory_mib) {
             return Err(invalid_flash_spec(format!(
                 "memory_mib must be between {MIN_FLASH_MEMORY_MIB} and {MAX_FLASH_MEMORY_MIB}"
+            )));
+        }
+        if self.gpu_count > MAX_FLASH_GPUS_PER_VM {
+            return Err(invalid_flash_spec(format!(
+                "gpu_count must be between 0 and {MAX_FLASH_GPUS_PER_VM}"
             )));
         }
         if !(MIN_FLASH_EPHEMERAL_STORAGE_GIB..=MAX_FLASH_EPHEMERAL_STORAGE_GIB)
@@ -990,6 +998,10 @@ fn parse_flash_cidrs(
 
 const fn default_flash_ephemeral_storage_gib() -> u32 {
     DEFAULT_FLASH_EPHEMERAL_STORAGE_GIB
+}
+
+const fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
 }
 
 fn valid_flash_port_name(name: &str) -> bool {
@@ -1246,6 +1258,7 @@ mod tests {
             autoscaling: None,
             cpu_millis: 500,
             memory_mib: 512,
+            gpu_count: 0,
             ephemeral_storage_gib: 10,
             ports: vec![FlashPort {
                 name: "game-udp".into(),
@@ -1434,6 +1447,7 @@ mod tests {
             json!(["192.0.2.128/25"])
         );
         assert_eq!(value["ephemeral_storage_gib"], json!(10));
+        assert!(value.get("gpu_count").is_none());
         assert_eq!(value["egress"]["mode"], json!("internet"));
         assert_eq!(value["egress"]["allow_same_organization"], json!(false));
 
@@ -1469,6 +1483,16 @@ mod tests {
         assert!(defaulted.exposure.denied_source_cidrs.is_empty());
         assert_eq!(defaulted.egress.mode, FlashEgressMode::Internet);
         assert!(!defaulted.egress.allow_same_organization);
+        assert_eq!(defaulted.gpu_count, 0);
+
+        let mut gpu = flash_spec();
+        gpu.gpu_count = 1;
+        gpu.validate()?;
+        assert_eq!(serde_json::to_value(&gpu)?["gpu_count"], json!(1));
+
+        let mut too_many_gpus = flash_spec();
+        too_many_gpus.gpu_count = 2;
+        assert!(too_many_gpus.validate().is_err());
 
         let mut owner_authorized = flash_spec();
         owner_authorized.ephemeral_storage_gib = 20;

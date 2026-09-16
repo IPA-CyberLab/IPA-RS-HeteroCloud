@@ -363,6 +363,7 @@ export interface FlashServiceSpec {
   autoscaling?: FlashAutoscaling;
   cpu_millis: number;
   memory_mib: number;
+  gpu_count?: number;
   ephemeral_storage_gib: number;
   ports: FlashPort[];
   exposure: FlashExposure;

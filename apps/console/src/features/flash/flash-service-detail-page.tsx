@@ -334,6 +334,7 @@ export function FlashServiceDetailPage() {
               ].filter(Boolean).join(" / ") }] : []),
               { label: "CPU", value: `${formatNumber(item.spec.cpu_millis)} millicores` },
               { label: "メモリ", value: `${formatNumber(item.spec.memory_mib)} MiB` },
+              { label: "GPU", value: item.spec.gpu_count === 1 ? "1 GPU" : "なし" },
               { label: "ディスク上限（イメージ込み）", value: `${formatNumber(item.spec.ephemeral_storage_gib)} GiB` },
               { label: "更新日時", value: formatDateTime(item.updated_at) },
             ]}

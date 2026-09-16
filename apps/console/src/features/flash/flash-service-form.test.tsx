@@ -29,14 +29,17 @@ function FormHarness({ quota, initial = {} }: { quota?: FlashQuotaLimits; initia
     ...initial,
   });
   return (
-    <FlashServiceForm
-      value={value}
-      onChange={setValue}
-      onSubmit={(event) => event.preventDefault()}
-      quota={quota}
-    >
-      <button type="submit">保存</button>
-    </FlashServiceForm>
+    <>
+      <FlashServiceForm
+        value={value}
+        onChange={setValue}
+        onSubmit={(event) => event.preventDefault()}
+        quota={quota}
+      >
+        <button type="submit">保存</button>
+      </FlashServiceForm>
+      <output data-testid="gpu-count">{value.gpuCount}</output>
+    </>
   );
 }
 
@@ -86,6 +89,7 @@ describe("FlashServiceForm", () => {
     expect(screen.getByRole("spinbutton", { name: "レプリカ" })).toHaveValue(1);
     expect(screen.getByRole("spinbutton", { name: "CPU" })).toHaveValue(500);
     expect(screen.getByRole("spinbutton", { name: "メモリ" })).toHaveValue(512);
+    expect(screen.getByText("使用しない")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /udpのプロトコル/ })).toHaveTextContent("UDP");
     expect(screen.queryByRole("spinbutton", { name: "サービスポート" })).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "CPU" })).toHaveAttribute("max", "4000");
@@ -135,6 +139,28 @@ describe("FlashServiceForm", () => {
         quota,
       ),
     ).toBeNull();
+  });
+
+  it("GPUをVMあたり1基だけ要求して編集時にも保持する", () => {
+    render(<FormHarness initial={{ gpuCount: 1 }} />);
+    expect(screen.getByText("1 GPU")).toBeInTheDocument();
+    expect(screen.getByTestId("gpu-count")).toHaveTextContent("1");
+
+    const spec = flashSpecFromForm({
+      ...defaultFlashServiceFormValue,
+      projectId: "project-1",
+      name: "gpu-service",
+      image: "example/cuda:v1",
+      gpuCount: 1,
+    });
+    expect(spec.gpu_count).toBe(1);
+    const form = flashFormFromService({
+      project_id: "project-1",
+      name: "gpu-service",
+      spec: { ...spec, ports: spec.ports.map((port) => ({ ...port, service_port: 30_001 })) },
+    });
+    expect(form.gpuCount).toBe(1);
+    expect(flashSpecFromForm(form).gpu_count).toBe(1);
   });
 
   it("Flash Registryと直接入力からコンテナイメージを指定できる", () => {

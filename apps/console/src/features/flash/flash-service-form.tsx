@@ -43,6 +43,7 @@ export interface FlashServiceFormValue {
   endpointMode: NonNullable<FlashExposure["endpoint_mode"]>;
   cpuMillis: number;
   memoryMib: number;
+  gpuCount: 0 | 1;
   ephemeralStorageGib: number;
   ports: FlashPortInput[];
   exposureType: FlashExposure["type"];
@@ -76,6 +77,7 @@ export const defaultFlashServiceFormValue: FlashServiceFormValue = {
   endpointMode: "ip",
   cpuMillis: 500,
   memoryMib: 512,
+  gpuCount: 0,
   ephemeralStorageGib: 10,
   ports: [
     {
@@ -387,6 +389,7 @@ export function flashSpecFromForm(
     } } : {}),
     cpu_millis: value.cpuMillis,
     memory_mib: value.memoryMib,
+    ...(value.gpuCount === 1 ? { gpu_count: 1 } : {}),
     ephemeral_storage_gib: value.ephemeralStorageGib,
     ports: value.ports,
     exposure: {
@@ -457,6 +460,7 @@ export function flashFormFromService(
     endpointMode: service.spec.exposure.endpoint_mode ?? "ip",
     cpuMillis: service.spec.cpu_millis,
     memoryMib: service.spec.memory_mib,
+    gpuCount: service.spec.gpu_count === 1 ? 1 : 0,
     ephemeralStorageGib: service.spec.ephemeral_storage_gib,
     ports: service.spec.ports.map(({ name, protocol, container_port }) => ({
       name,
@@ -685,7 +689,7 @@ export function FlashServiceForm({
               </div>
             ) : null}
         </SpaceBetween>
-        <ColumnLayout columns={3}>
+        <ColumnLayout columns={4}>
           <FormField
             label="CPU"
             constraintText={`10〜${quota.max_cpu_millis_per_vm.toLocaleString("ja-JP")} millicores`}
@@ -757,6 +761,18 @@ export function FlashServiceForm({
                 )
               }
             />
+          </FormField>
+          <FormField
+            label="GPU"
+            description="対応ノードでは1 VMにつきGPUを1基専有します。"
+          >
+            <Toggle
+              checked={value.gpuCount === 1}
+              disabled={disabled}
+              onChange={({ detail }) => update("gpuCount", detail.checked ? 1 : 0)}
+            >
+              {value.gpuCount === 1 ? "1 GPU" : "使用しない"}
+            </Toggle>
           </FormField>
         </ColumnLayout>
         <ColumnLayout columns={2}>

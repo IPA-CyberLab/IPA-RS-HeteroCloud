@@ -504,6 +504,13 @@
             "minimum": 16,
             "maximum": 1048576
           },
+          "gpu_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0,
+            "description": "Exclusive physical GPUs requested by each VM. GTX 1080 Ti workloads use the native NVIDIA runtime."
+          },
           "ephemeral_storage_gib": {
             "type": "integer",
             "minimum": 1,
