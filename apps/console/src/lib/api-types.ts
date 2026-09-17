@@ -43,6 +43,7 @@ export interface FlashQuotaLimits {
   max_total_cpu_millis: number;
   max_total_memory_mib: number;
   max_total_disk_gib: number;
+  max_weekly_gpu_seconds: number;
 }
 
 export interface RegistryQuotaLimits {
@@ -354,6 +355,7 @@ export interface FlashAutoscaling {
   max_replicas: number;
   target_cpu_utilization_percent?: number;
   target_memory_utilization_percent?: number;
+  idle_timeout_seconds?: number;
 }
 
 export interface FlashServiceSpec {

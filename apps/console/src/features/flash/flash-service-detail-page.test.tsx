@@ -71,6 +71,7 @@ const quota: FlashQuotaLimits = {
   max_total_cpu_millis: 20_000,
   max_total_memory_mib: 32_768,
   max_total_disk_gib: 100,
+  max_weekly_gpu_seconds: 40_320,
 };
 
 describe("FlashServiceDetailPage", () => {

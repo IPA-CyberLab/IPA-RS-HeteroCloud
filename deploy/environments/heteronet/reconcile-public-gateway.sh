@@ -152,7 +152,8 @@ main() {
     b) expected_host=uc-k8sp2; public_ip=163.220.236.52 ;;
     c) expected_host=uc-k8s3p; public_ip=163.220.236.53 ;;
     d) expected_host=ichikawap1; public_ip=163.220.236.61 ;;
-    *) echo "usage: $0 {a|b|c|d}" >&2; exit 2 ;;
+    e) expected_host=uc-k8sp4; public_ip=163.220.236.54 ;;
+    *) echo "usage: $0 {a|b|c|d|e}" >&2; exit 2 ;;
   esac
 
   local actual_host

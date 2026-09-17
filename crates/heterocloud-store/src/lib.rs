@@ -216,6 +216,51 @@ impl Store {
         self.resource_quota_defaults().await
     }
 
+    pub async fn enqueue_flash_quota_reconcile(
+        &self,
+        organization_id: Option<OrganizationId>,
+    ) -> Result<u64, StoreError> {
+        let rows = sqlx::query_as::<_, FlashQuotaReconcileRow>(
+            "SELECT s.id, s.organization_id, s.project_id, s.generation,
+                    principal.id AS principal_id
+             FROM service_instances s
+             JOIN LATERAL (
+                 SELECT p.id
+                 FROM principals p
+                 WHERE p.organization_id = s.organization_id AND p.enabled = true
+                 ORDER BY p.id
+                 LIMIT 1
+             ) principal ON true
+             WHERE s.provider = 'flash' AND s.state <> 'deleting'
+               AND ($1::uuid IS NULL OR s.organization_id = $1)
+             ORDER BY s.id",
+        )
+        .bind(organization_id.map(|id| id.0))
+        .fetch_all(&self.pool)
+        .await?;
+        let mut transaction = self.pool.begin().await?;
+        for row in &rows {
+            sqlx::query(
+                "INSERT INTO outbox_events (id, topic, aggregate_id, payload)
+                 VALUES ($1, 'service-instance.reconcile', $2, $3)",
+            )
+            .bind(Uuid::now_v7())
+            .bind(row.id)
+            .bind(serde_json::json!({
+                "service_instance_id": ServiceInstanceId(row.id),
+                "organization_id": OrganizationId(row.organization_id),
+                "project_id": ProjectId(row.project_id),
+                "principal_id": PrincipalId(row.principal_id),
+                "provider": "flash",
+                "generation": row.generation,
+            }))
+            .execute(&mut *transaction)
+            .await?;
+        }
+        transaction.commit().await?;
+        u64::try_from(rows.len()).map_err(|_| StoreError::Invariant("too many Flash services"))
+    }
+
     pub async fn list_resource_quota_tenants(
         &self,
     ) -> Result<Vec<ResourceQuotaTenant>, StoreError> {
@@ -2899,6 +2944,15 @@ pub struct OwnerAccountRecord {
     pub memberships: Vec<Membership>,
     pub last_login: Option<UserLoginEventRecord>,
     pub login_count: u64,
+}
+
+#[derive(sqlx::FromRow)]
+struct FlashQuotaReconcileRow {
+    id: Uuid,
+    organization_id: Uuid,
+    project_id: Uuid,
+    generation: i64,
+    principal_id: Uuid,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]

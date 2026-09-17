@@ -8,9 +8,9 @@ use heterocloud_domain::{
     OrganizationId, PrincipalId, ProjectId, ServiceInstance, ServiceInstanceId, SyouyuSpec,
 };
 use heterocloud_provider::{
-    AcceptedOperation, PRINCIPAL_CONTEXT_REVOCATION_GRACE_SECONDS, PRINCIPAL_CONTEXT_REVOKE_ACTION,
-    PrincipalContextId, PrincipalContextRevocationRequest, ProviderContext, ProviderSigner,
-    ReconcileRequest,
+    AcceptedOperation, FlashProviderPolicy, PRINCIPAL_CONTEXT_REVOCATION_GRACE_SECONDS,
+    PRINCIPAL_CONTEXT_REVOKE_ACTION, PrincipalContextId, PrincipalContextRevocationRequest,
+    ProviderContext, ProviderSigner, ReconcileRequest,
 };
 use heterocloud_store::{OutboxEvent, Store};
 use secrecy::{ExposeSecret, SecretString};
@@ -282,11 +282,22 @@ async fn deliver(
         request.send().await?
     } else {
         let spec = provider_reconcile_spec(&payload.provider, instance.spec)?;
+        let policy = if payload.provider == "flash" {
+            let quota = store
+                .effective_resource_quota(payload.organization_id)
+                .await?;
+            Some(FlashProviderPolicy {
+                max_weekly_gpu_seconds: quota.flash.max_weekly_gpu_seconds,
+            })
+        } else {
+            None
+        };
         request
             .json(&ReconcileRequest {
                 generation: instance.generation,
                 name: instance.name,
                 spec,
+                policy,
             })
             .send()
             .await?

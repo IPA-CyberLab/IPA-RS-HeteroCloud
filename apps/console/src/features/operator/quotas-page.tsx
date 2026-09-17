@@ -57,6 +57,7 @@ const QUOTA_BOUNDS = {
     maxTotalCpuMillis: 100_000_000,
     maxTotalMemoryMib: 1_048_576,
     maxTotalDiskGib: 1_000_000,
+    maxWeeklyGpuSeconds: 31_536_000,
   },
   registry: {
     maxStorageGib: 10_240,
@@ -294,6 +295,11 @@ export function normalizeResourceQuotaLimits(
         flashDiskGibPerVm,
         QUOTA_BOUNDS.flash.maxTotalDiskGib,
       ),
+      max_weekly_gpu_seconds: clampInteger(
+        value.flash.max_weekly_gpu_seconds,
+        0,
+        QUOTA_BOUNDS.flash.maxWeeklyGpuSeconds,
+      ),
     },
     registry: {
       storage_gib: clampInteger(
@@ -438,6 +444,19 @@ function QuotaEditor({
             <ColumnLayout columns={2}>
               <NumberField label="ディスク / VM (GiB)" value={value.flash.max_disk_gib_per_vm} min={QUOTA_BOUNDS.flash.minDiskGibPerVm} max={QUOTA_BOUNDS.flash.maxDiskGibPerVm} onChange={(next) => flash("max_disk_gib_per_vm", next)} />
               <NumberField label="合計ディスク (GiB)" value={value.flash.max_total_disk_gib} min={value.flash.max_disk_gib_per_vm} max={QUOTA_BOUNDS.flash.maxTotalDiskGib} onChange={(next) => flash("max_total_disk_gib", next)} />
+            </ColumnLayout>
+          </SpaceBetween>
+          <SpaceBetween size="xs">
+            <Box variant="awsui-key-label">GPU ランタイム</Box>
+            <ColumnLayout columns={2}>
+              <NumberField
+                label="週次 GPU 上限 (秒)"
+                description="組織内の全 Flash サービスで共有します。40,320 秒は 11.2 GPU 時間です。毎週月曜 00:00 UTC にリセットされます。"
+                value={value.flash.max_weekly_gpu_seconds}
+                min={0}
+                max={QUOTA_BOUNDS.flash.maxWeeklyGpuSeconds}
+                onChange={(next) => flash("max_weekly_gpu_seconds", next)}
+              />
             </ColumnLayout>
           </SpaceBetween>
         </SpaceBetween>

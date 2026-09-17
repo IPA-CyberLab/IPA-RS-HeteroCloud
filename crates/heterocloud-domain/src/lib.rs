@@ -327,6 +327,11 @@ pub const DEFAULT_FLASH_ORGANIZATION_CPU_MILLIS: u64 = 20_000;
 pub const DEFAULT_FLASH_ORGANIZATION_MEMORY_MIB: u64 = 32_768;
 pub const DEFAULT_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB: u64 = 100;
 pub const DEFAULT_FLASH_ORGANIZATION_REPLICAS: u64 = 100;
+pub const DEFAULT_FLASH_WEEKLY_GPU_SECONDS: u64 = 40_320;
+pub const MAX_FLASH_WEEKLY_GPU_SECONDS: u64 = 31_536_000;
+pub const DEFAULT_FLASH_IDLE_TIMEOUT_SECONDS: u32 = 900;
+pub const MIN_FLASH_IDLE_TIMEOUT_SECONDS: u32 = 60;
+pub const MAX_FLASH_IDLE_TIMEOUT_SECONDS: u32 = 86_400;
 pub const MAX_FLASH_ORGANIZATION_CPU_MILLIS: u64 = 100_000_000;
 pub const MAX_FLASH_ORGANIZATION_MEMORY_MIB: u64 = 1_048_576;
 pub const MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB: u64 = 1_000_000;
@@ -381,6 +386,7 @@ pub struct FlashQuotaLimits {
     pub max_total_cpu_millis: u64,
     pub max_total_memory_mib: u64,
     pub max_total_disk_gib: u64,
+    pub max_weekly_gpu_seconds: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -436,6 +442,7 @@ impl Default for ResourceQuotaLimits {
                 max_total_cpu_millis: DEFAULT_FLASH_ORGANIZATION_CPU_MILLIS,
                 max_total_memory_mib: DEFAULT_FLASH_ORGANIZATION_MEMORY_MIB,
                 max_total_disk_gib: DEFAULT_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB,
+                max_weekly_gpu_seconds: DEFAULT_FLASH_WEEKLY_GPU_SECONDS,
             },
             registry: RegistryQuotaLimits {
                 storage_gib: 10,
@@ -568,6 +575,11 @@ impl ResourceQuotaLimits {
             return Err(invalid_quota(format!(
                 "flash.max_total_disk_gib must be between {} and {MAX_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB}",
                 flash.max_disk_gib_per_vm,
+            )));
+        }
+        if flash.max_weekly_gpu_seconds > MAX_FLASH_WEEKLY_GPU_SECONDS {
+            return Err(invalid_quota(format!(
+                "flash.max_weekly_gpu_seconds must be between 0 and {MAX_FLASH_WEEKLY_GPU_SECONDS}"
             )));
         }
         if !(1..=10_240).contains(&self.registry.storage_gib) {
@@ -714,6 +726,11 @@ pub struct FlashAutoscaling {
     pub target_cpu_utilization_percent: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_memory_utilization_percent: Option<u32>,
+    #[serde(
+        default = "default_flash_idle_timeout_seconds",
+        skip_serializing_if = "is_default_flash_idle_timeout_seconds"
+    )]
+    pub idle_timeout_seconds: u32,
 }
 
 impl FlashSpec {
@@ -761,13 +778,24 @@ impl FlashSpec {
             )));
         }
         if let Some(scaling) = &self.autoscaling {
-            if scaling.min_replicas < 1
-                || scaling.max_replicas < scaling.min_replicas
-                || !(scaling.min_replicas..=scaling.max_replicas).contains(&self.replicas)
+            if scaling.max_replicas < scaling.min_replicas
+                || !(scaling.min_replicas.max(1)..=scaling.max_replicas).contains(&self.replicas)
             {
                 return Err(invalid_flash_spec(
-                    "autoscaling requires min_replicas >= 1, max_replicas >= min_replicas, and replicas within these bounds",
+                    "autoscaling requires min_replicas >= 0, max_replicas >= min_replicas, and replicas within these bounds",
                 ));
+            }
+            if scaling.min_replicas == 0 && self.exposure.endpoint_mode != FlashEndpointMode::Web {
+                return Err(invalid_flash_spec(
+                    "min_replicas=0 requires the HTTP/HTTPS web endpoint mode",
+                ));
+            }
+            if !(MIN_FLASH_IDLE_TIMEOUT_SECONDS..=MAX_FLASH_IDLE_TIMEOUT_SECONDS)
+                .contains(&scaling.idle_timeout_seconds)
+            {
+                return Err(invalid_flash_spec(format!(
+                    "idle_timeout_seconds must be between {MIN_FLASH_IDLE_TIMEOUT_SECONDS} and {MAX_FLASH_IDLE_TIMEOUT_SECONDS}"
+                )));
             }
             let targets = [
                 scaling.target_cpu_utilization_percent,
@@ -998,6 +1026,14 @@ fn parse_flash_cidrs(
 
 const fn default_flash_ephemeral_storage_gib() -> u32 {
     DEFAULT_FLASH_EPHEMERAL_STORAGE_GIB
+}
+
+const fn default_flash_idle_timeout_seconds() -> u32 {
+    DEFAULT_FLASH_IDLE_TIMEOUT_SECONDS
+}
+
+const fn is_default_flash_idle_timeout_seconds(value: &u32) -> bool {
+    *value == DEFAULT_FLASH_IDLE_TIMEOUT_SECONDS
 }
 
 const fn is_zero_u32(value: &u32) -> bool {
@@ -1248,6 +1284,10 @@ mod tests {
         assert_eq!(limits.max_buckets, 10);
         assert_eq!(limits.max_bytes_per_bucket, 10 * 1_024 * 1_024 * 1_024);
         assert_eq!(limits.max_total_bytes, 30 * 1_024 * 1_024 * 1_024);
+        assert_eq!(
+            ResourceQuotaLimits::default().flash.max_weekly_gpu_seconds,
+            40_320
+        );
     }
 
     fn flash_spec() -> FlashSpec {
@@ -1321,6 +1361,24 @@ mod tests {
             assert!(spec.validate_request().is_err());
             assert!(spec.validate().is_err());
         }
+        let mut web = fixed.clone();
+        web["exposure"]["type"] = json!("public");
+        web["exposure"]["traffic_mode"] = json!("forwarded");
+        web["exposure"]["endpoint_mode"] = json!("web");
+        web["exposure"]["allowed_source_cidrs"] = json!([]);
+        web["exposure"]["denied_source_cidrs"] = json!([]);
+        web["ports"][0]["protocol"] = json!("tcp");
+        web["autoscaling"] = json!({
+            "min_replicas": 0, "max_replicas": 6,
+            "target_cpu_utilization_percent": 70
+        });
+        let web: FlashSpec = serde_json::from_value(web)?;
+        web.validate_request()?;
+        web.validate()?;
+        assert_eq!(
+            web.autoscaling.ok_or("autoscaling")?.idle_timeout_seconds,
+            super::DEFAULT_FLASH_IDLE_TIMEOUT_SECONDS
+        );
         let mut unknown = fixed;
         unknown["autoscaling"] = json!({"min_replicas": 1, "max_replicas": 6, "target_cpu_utilization_percent": 70, "unknown": true});
         assert!(serde_json::from_value::<FlashSpec>(unknown).is_err());
@@ -1423,6 +1481,7 @@ mod tests {
             max_replicas: 6,
             target_cpu_utilization_percent: Some(70),
             target_memory_utilization_percent: None,
+            idle_timeout_seconds: super::DEFAULT_FLASH_IDLE_TIMEOUT_SECONDS,
         });
         spec.validate_request()?;
         spec.validate()?;

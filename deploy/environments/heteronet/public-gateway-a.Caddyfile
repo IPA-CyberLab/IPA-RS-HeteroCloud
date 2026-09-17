@@ -59,7 +59,7 @@ http://heterocloud.mizuame.app {
 }
 
 heterocloud.mizuame.app {
-	tls internal
+	import heterocloud_public_tls
 	import heterocloud_frontend
 }
 
@@ -90,11 +90,7 @@ http://flow.heterocloud.mizuame.app {
 }
 
 flow.heterocloud.mizuame.app {
-	tls {
-		issuer acme {
-			disable_tlsalpn_challenge
-		}
-	}
+	import heterocloud_public_tls
 
 	@internal path /internal /internal/*
 	handle @internal {
@@ -129,11 +125,7 @@ http://registry.heterocloud.mizuame.app {
 }
 
 registry.heterocloud.mizuame.app {
-	tls {
-		issuer acme {
-			disable_tlsalpn_challenge
-		}
-	}
+	import heterocloud_public_tls
 
 	import heterocloud_envoy /api/v2.0/health registry.heterocloud.mizuame.app
 }
@@ -161,11 +153,7 @@ http://s3.heterocloud.mizuame.app {
 }
 
 s3.heterocloud.mizuame.app {
-	tls {
-		issuer acme {
-			disable_tlsalpn_challenge
-		}
-	}
+	import heterocloud_public_tls
 
 	import heterocloud_envoy /api/v1/health/live heterocloud.mizuame.app
 }

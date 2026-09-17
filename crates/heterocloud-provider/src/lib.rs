@@ -101,6 +101,14 @@ pub struct ReconcileRequest {
     pub generation: i64,
     pub name: String,
     pub spec: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<FlashProviderPolicy>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlashProviderPolicy {
+    pub max_weekly_gpu_seconds: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

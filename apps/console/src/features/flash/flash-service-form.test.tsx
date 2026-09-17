@@ -349,15 +349,44 @@ describe("Flash autoscaling and domain publishing", () => {
 
   it("round-trips autoscaling, LB, and unrelated fields", () => {
     const spec = flashSpecFromForm(value, { owner: "test" });
-    expect(spec.autoscaling).toEqual({ min_replicas: 2, max_replicas: 5, target_cpu_utilization_percent: 80, target_memory_utilization_percent: 80 });
+    expect(spec.autoscaling).toEqual({
+      min_replicas: 2,
+      max_replicas: 5,
+      target_cpu_utilization_percent: 80,
+      target_memory_utilization_percent: 80,
+      idle_timeout_seconds: 900,
+    });
     const form = flashFormFromService({ project_id: value.projectId, name: value.name,
       spec: { ...spec, ports: spec.ports.map((port) => ({ ...port, service_port: 30001 })) } });
     expect(flashSpecFromForm({ ...form, name: "renamed" }, spec.metadata)).toEqual(spec);
     expect(flashFormValidationError(form)).toBeNull();
     expect(flashSpecFromForm({ ...form, scaleMode: "fixed" })).not.toHaveProperty("autoscaling");
-    expect(flashSpecFromForm({ ...form, cpuTargetEnabled: false }).autoscaling).toEqual({ min_replicas: 2, max_replicas: 5, target_memory_utilization_percent: 80 });
+    expect(flashSpecFromForm({ ...form, cpuTargetEnabled: false }).autoscaling).toEqual({
+      min_replicas: 2,
+      max_replicas: 5,
+      target_memory_utilization_percent: 80,
+      idle_timeout_seconds: 900,
+    });
     const legacy = { ...spec, autoscaling: undefined, exposure: { ...spec.exposure, endpoint_mode: undefined }, ports: [] };
     expect(flashFormFromService({ project_id: "p", name: "n", spec: legacy })).toMatchObject({ scaleMode: "fixed", endpointMode: "ip" });
+  });
+
+  it("allows web services to scale to zero with a cold-start timeout", () => {
+    const cold = {
+      ...value,
+      endpointMode: "web" as const,
+      minReplicas: 0,
+      replicas: 1,
+      allowedSourceCidrs: "",
+      deniedSourceCidrs: "",
+      idleTimeoutSeconds: 600,
+      ports: [{ name: "http", protocol: "tcp" as const, container_port: 8080 }],
+    };
+    expect(flashFormValidationError(cold)).toBeNull();
+    expect(flashSpecFromForm(cold).autoscaling).toMatchObject({
+      min_replicas: 0,
+      idle_timeout_seconds: 600,
+    });
   });
 
   it.each([

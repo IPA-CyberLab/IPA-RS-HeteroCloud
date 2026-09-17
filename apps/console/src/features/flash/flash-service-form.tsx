@@ -40,6 +40,7 @@ export interface FlashServiceFormValue {
   memoryTargetEnabled: boolean;
   cpuTarget: number;
   memoryTarget: number;
+  idleTimeoutSeconds: number;
   endpointMode: NonNullable<FlashExposure["endpoint_mode"]>;
   cpuMillis: number;
   memoryMib: number;
@@ -74,6 +75,7 @@ export const defaultFlashServiceFormValue: FlashServiceFormValue = {
   memoryTargetEnabled: false,
   cpuTarget: 80,
   memoryTarget: 80,
+  idleTimeoutSeconds: 900,
   endpointMode: "ip",
   cpuMillis: 500,
   memoryMib: 512,
@@ -110,6 +112,7 @@ export const defaultFlashQuotaLimits: FlashQuotaLimits = {
   max_total_cpu_millis: 20_000,
   max_total_memory_mib: 32_768,
   max_total_disk_gib: 100,
+  max_weekly_gpu_seconds: 40_320,
 };
 
 const workspaceCommand = ["/bin/sh", "-c"];
@@ -299,10 +302,11 @@ export function flashFormValidationError(
     return `レプリカは1〜${quota.max_replicas_per_service.toLocaleString("ja-JP")}で入力してください。`;
   }
   if (value.scaleMode === "auto") {
+    const minimum = value.endpointMode === "web" ? 0 : 1;
     if (!Number.isInteger(value.minReplicas) || !Number.isInteger(value.maxReplicas) ||
-        value.minReplicas < 1 || value.maxReplicas < value.minReplicas ||
+        value.minReplicas < minimum || value.maxReplicas < value.minReplicas ||
         value.maxReplicas > quota.max_replicas_per_service) {
-      return `最小・最大レプリカは1〜${quota.max_replicas_per_service}で、最大を最小以上に設定してください。`;
+      return `最小・最大レプリカは${minimum}〜${quota.max_replicas_per_service}で、最大を最小以上に設定してください。`;
     }
     if (value.replicas < value.minReplicas || value.replicas > value.maxReplicas) {
       return "レプリカは最小・最大レプリカの範囲内に設定してください。";
@@ -310,6 +314,9 @@ export function flashFormValidationError(
     if (!value.cpuTargetEnabled && !value.memoryTargetEnabled) return "CPUまたはメモリの目標使用率を選択してください。";
     for (const [enabled, target] of [[value.cpuTargetEnabled, value.cpuTarget], [value.memoryTargetEnabled, value.memoryTarget]] as const) {
       if (enabled && (!Number.isInteger(target) || target < 1 || target > 100)) return "目標使用率は1〜100%で入力してください。";
+    }
+    if (!Number.isInteger(value.idleTimeoutSeconds) || value.idleTimeoutSeconds < 60 || value.idleTimeoutSeconds > 86_400) {
+      return "アイドル時間は60〜86400秒で入力してください。";
     }
   }
   if (value.endpointMode !== "ip" && (value.exposureType !== "public" || value.trafficMode !== "forwarded")) {
@@ -386,6 +393,7 @@ export function flashSpecFromForm(
       max_replicas: value.maxReplicas,
       ...(value.cpuTargetEnabled ? { target_cpu_utilization_percent: value.cpuTarget } : {}),
       ...(value.memoryTargetEnabled ? { target_memory_utilization_percent: value.memoryTarget } : {}),
+      idle_timeout_seconds: value.idleTimeoutSeconds,
     } } : {}),
     cpu_millis: value.cpuMillis,
     memory_mib: value.memoryMib,
@@ -457,6 +465,7 @@ export function flashFormFromService(
     memoryTargetEnabled: service.spec.autoscaling?.target_memory_utilization_percent !== undefined,
     cpuTarget: service.spec.autoscaling?.target_cpu_utilization_percent ?? 80,
     memoryTarget: service.spec.autoscaling?.target_memory_utilization_percent ?? 80,
+    idleTimeoutSeconds: service.spec.autoscaling?.idle_timeout_seconds ?? 900,
     endpointMode: service.spec.exposure.endpoint_mode ?? "ip",
     cpuMillis: service.spec.cpu_millis,
     memoryMib: service.spec.memory_mib,
@@ -666,10 +675,11 @@ export function FlashServiceForm({
                 {([["minReplicas", "最小レプリカ"], ["maxReplicas", "最大レプリカ"]] as const).map(([key, label]) => (
                   <FormField key={key} label={label}>
                     <Input type="number" inputMode="numeric" step={1}
-                      nativeInputAttributes={{ min: 1, max: quota.max_replicas_per_service }}
+                      nativeInputAttributes={{ min: key === "minReplicas" && value.endpointMode === "web" ? 0 : 1, max: quota.max_replicas_per_service }}
                       value={String(value[key])} disabled={disabled}
                       onChange={({ detail }) => {
-                        const next = boundedInteger(detail.value, 1, quota.max_replicas_per_service, value[key]);
+                        const minimum = key === "minReplicas" && value.endpointMode === "web" ? 0 : 1;
+                        const next = boundedInteger(detail.value, minimum, quota.max_replicas_per_service, value[key]);
                         onChange({ ...value, [key]: next, replicas: key === "minReplicas"
                           ? Math.max(value.replicas, next) : Math.min(value.replicas, next) });
                       }} />
@@ -686,6 +696,22 @@ export function FlashServiceForm({
                       onChange={({ detail }) => update(targetKey, boundedInteger(detail.value, 1, 100, value[targetKey]))} />
                   </FormField>
                 ))}
+                {value.minReplicas === 0 ? (
+                  <FormField
+                    label="アイドルから停止するまで (秒)"
+                    description="停止中の最初のリクエストは起動完了まで待機します。最小レプリカを1以上にすると常時起動します。"
+                  >
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      step={30}
+                      nativeInputAttributes={{ min: 60, max: 86_400 }}
+                      value={String(value.idleTimeoutSeconds)}
+                      disabled={disabled}
+                      onChange={({ detail }) => update("idleTimeoutSeconds", boundedInteger(detail.value, 60, 86_400, value.idleTimeoutSeconds))}
+                    />
+                  </FormField>
+                ) : null}
               </div>
             ) : null}
         </SpaceBetween>
@@ -791,6 +817,7 @@ export function FlashServiceForm({
                     ...value,
                     exposureType,
                     endpointMode: exposureType === "internal" ? "ip" : value.endpointMode,
+                    minReplicas: exposureType === "internal" ? Math.max(1, value.minReplicas) : value.minReplicas,
                     trafficMode:
                       exposureType === "internal" ? "forwarded" : value.trafficMode,
                   });
@@ -827,7 +854,12 @@ export function FlashServiceForm({
               onChange={({ detail }) => {
                 if (disabled) return;
                 const endpointMode = detail.selectedId as FlashServiceFormValue["endpointMode"];
-                onChange({ ...value, endpointMode, trafficMode: endpointMode !== "ip" ? "forwarded" : value.trafficMode });
+                onChange({
+                  ...value,
+                  endpointMode,
+                  trafficMode: endpointMode !== "ip" ? "forwarded" : value.trafficMode,
+                  minReplicas: endpointMode === "web" ? value.minReplicas : Math.max(1, value.minReplicas),
+                });
               }} />
           </FormField>
         ) : null}

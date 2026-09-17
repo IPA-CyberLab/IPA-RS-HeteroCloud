@@ -398,6 +398,11 @@ async fn update_owner_quota_defaults(
         .update_resource_quota_defaults(&limits)
         .await
         .map_err(ApiError::from_store)?;
+    state
+        .store
+        .enqueue_flash_quota_reconcile(None)
+        .await
+        .map_err(ApiError::from_store)?;
     schedule_registry_quota_reconcile(Arc::clone(&state), None);
     Ok(Json(limits))
 }
@@ -414,6 +419,11 @@ async fn update_owner_organization_quota(
     let limits = state
         .store
         .set_organization_resource_quota(OrganizationId(organization_id), &limits)
+        .await
+        .map_err(ApiError::from_store)?;
+    state
+        .store
+        .enqueue_flash_quota_reconcile(Some(OrganizationId(organization_id)))
         .await
         .map_err(ApiError::from_store)?;
     schedule_registry_quota_reconcile(
@@ -434,6 +444,11 @@ async fn clear_owner_organization_quota(
     let limits = state
         .store
         .clear_organization_resource_quota(OrganizationId(organization_id))
+        .await
+        .map_err(ApiError::from_store)?;
+    state
+        .store
+        .enqueue_flash_quota_reconcile(Some(OrganizationId(organization_id)))
         .await
         .map_err(ApiError::from_store)?;
     schedule_registry_quota_reconcile(

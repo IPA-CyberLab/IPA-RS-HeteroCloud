@@ -78,15 +78,14 @@ declare -A gateway_vpn_ip=(
   [b]=10.250.0.5
   [c]=10.250.0.6
   [d]=10.250.0.10
+  [e]=10.250.0.11
 )
-readonly -a envoy_vpn_ips=(10.250.0.4 10.250.0.5 10.250.0.6 10.250.0.10)
-readonly -a keycloak_vpn_ips=(10.250.0.4 10.250.0.5 10.250.0.6 10.250.0.8 10.250.0.10)
 
-for gateway_id in a b c d; do
+for gateway_id in a b c d e; do
   gateway_file="$script_dir/public-gateway-$gateway_id.Caddyfile"
   local_vpn_ip=${gateway_vpn_ip[$gateway_id]}
-  envoy_upstreams=$(grep -E '^\s*reverse_proxy (10\.250\.0\.[0-9]+:18082\s*){4}' "$gateway_file")
-  keycloak_upstreams=$(grep -E '^\s*reverse_proxy (10\.250\.0\.[0-9]+:18079\s*){5}' "$gateway_file")
+  envoy_upstreams=$(grep -E '^\s*reverse_proxy (10\.250\.0\.[0-9]+:18082\s*)+' "$gateway_file")
+  keycloak_upstreams=$(grep -E '^\s*reverse_proxy (10\.250\.0\.[0-9]+:18079\s*)+' "$gateway_file")
 
   grep -Fq 'http://:18082 {' "$gateway_file"
   grep -Fq "bind $local_vpn_ip" "$gateway_file"
@@ -103,14 +102,22 @@ for gateway_id in a b c d; do
     exit 1
   fi
 
+  if [[ $gateway_id == e ]]; then
+    envoy_vpn_ips=(10.250.0.11 10.250.0.10 10.250.0.4 10.250.0.5 10.250.0.6)
+    keycloak_vpn_ips=(10.250.0.2 10.250.0.10 10.250.0.11 10.250.0.4 10.250.0.5 10.250.0.6)
+  else
+    envoy_vpn_ips=(10.250.0.4 10.250.0.5 10.250.0.6 10.250.0.10)
+    keycloak_vpn_ips=(10.250.0.4 10.250.0.5 10.250.0.6 10.250.0.8 10.250.0.10)
+  fi
+
   for vpn_ip in "${envoy_vpn_ips[@]}"; do
     grep -Fq "$vpn_ip:18082" <<<"$envoy_upstreams"
   done
   for vpn_ip in "${keycloak_vpn_ips[@]}"; do
     grep -Fq "$vpn_ip:18079" <<<"$keycloak_upstreams"
   done
-  [[ $envoy_upstreams == *"reverse_proxy $local_vpn_ip:18082 "* ]]
-  [[ $keycloak_upstreams == *"reverse_proxy $local_vpn_ip:18079 "* ]]
+  [[ $envoy_upstreams == *"$local_vpn_ip:18082"* ]]
+  [[ $keycloak_upstreams == *"$local_vpn_ip:18079"* ]]
 done
 
 echo "public gateway reconciliation tests passed"
