@@ -251,8 +251,14 @@ async fn deliver(
     if !service_instance_matches_payload(&instance, &payload) {
         return Err(WorkerError::StalePayload);
     }
+    let user_id = if payload.provider == "flash" {
+        store.principal_user_id(payload.principal_id).await?
+    } else {
+        None
+    };
     let signed = target.signer.sign(ProviderContext {
         principal_id: payload.principal_id,
+        user_id,
         organization_id: payload.organization_id,
         project_id: payload.project_id,
         service_instance_id: payload.service_instance_id,
@@ -570,6 +576,7 @@ async fn deliver_principal_context_revocation(
     }
     let signed = signer.sign(ProviderContext {
         principal_id: payload.principal_id,
+        user_id: None,
         organization_id: payload.organization_id,
         project_id: payload.project_id,
         service_instance_id: payload.service_instance_id,
@@ -724,7 +731,7 @@ enum WorkerError {
 mod tests {
     use std::io::{Read, Write};
 
-    use heterocloud_domain::{OrganizationId, PrincipalId, ProjectId, ServiceInstanceId};
+    use heterocloud_domain::{OrganizationId, PrincipalId, ProjectId, ServiceInstanceId, UserId};
     use heterocloud_provider::{
         PRINCIPAL_CONTEXT_REVOKE_ACTION, PrincipalContextId, ProviderContext, ProviderSigner,
     };
@@ -784,6 +791,7 @@ MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
         assert_eq!(flash.endpoint.as_str(), "http://flash.example.test/");
         let context = || ProviderContext {
             principal_id: PrincipalId(PrincipalContextId::from_u128(1)),
+            user_id: Some(UserId(PrincipalContextId::from_u128(5))),
             organization_id: OrganizationId(PrincipalContextId::from_u128(2)),
             project_id: ProjectId(PrincipalContextId::from_u128(3)),
             service_instance_id: ServiceInstanceId(PrincipalContextId::from_u128(4)),
@@ -794,9 +802,15 @@ MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
             flow.signer.sign(context())?.claims.audience,
             "heterocloud-flow"
         );
+        let flash_claims = flash.signer.sign(context())?.claims;
+        assert_eq!(flash_claims.audience, "heterocloud-flash");
         assert_eq!(
-            flash.signer.sign(context())?.claims.audience,
-            "heterocloud-flash"
+            flash_claims.subject,
+            PrincipalContextId::from_u128(1).to_string()
+        );
+        assert_eq!(
+            flash_claims.user_id,
+            Some(UserId(PrincipalContextId::from_u128(5)))
         );
         assert_eq!(
             syouyu.signer.sign(context())?.claims.audience,

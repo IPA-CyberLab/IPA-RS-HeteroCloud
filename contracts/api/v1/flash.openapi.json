@@ -6,6 +6,41 @@
     "description": "Scoped Flash read/create/update contract, not the complete HeteroCloud API. Runtime validation also applies existing image, DNS label, CIDR, environment and process argument constraints."
   },
   "paths": {
+    "/api/v1/flash/gpu-types": {
+      "get": {
+        "summary": "List GPU types visible to the authenticated actor",
+        "description": "Synchronizes FlashGpuDevice inventory from the provider, aggregates accessible devices by type, and never exposes a physical device identity. available is the provider-reported healthy and unleased count. Busy services are accepted and queued by the Flash scheduler.",
+        "responses": {
+          "200": {
+            "description": "Accessible GPU types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/GpuTypeAvailability"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "503": {
+            "description": "Flash provider catalog unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/organizations/{organization_id}/flash/services": {
       "parameters": [
         {
@@ -21,17 +56,44 @@
       "get": {
         "summary": "List Flash services with best-effort live autoscaling status",
         "description": "Requires flash:ListInstances. Optional project filter; currently no pagination limit. Autoscaled services refresh with concurrency four and one absolute two-second provider refresh budget including queue time. Fixed services are unchanged. Provider failure never fails the list: inner status is marked live_status_unavailable and desired/ready counts are absent. Database state and generation are never changed.",
-        "parameters": [{"name": "project_id", "in": "query", "schema": {"type": "string", "format": "uuid"}}],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Services in stored list order; live status may be unavailable",
-            "content": {"application/json": {"schema": {
-              "type": "object", "required": ["items"],
-              "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/FlashServiceRead"}}}
-            }}}
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/FlashServiceRead"
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
-          "401": {"description": "Authentication required"},
-          "403": {"description": "Permission denied"}
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          }
         }
       },
       "post": {
@@ -80,6 +142,9 @@
           },
           "422": {
             "description": "Malformed request body"
+          },
+          "503": {
+            "description": "Flash provider GPU catalog unavailable when gpu_type is requested"
           }
         }
       }
@@ -111,11 +176,23 @@
         "responses": {
           "200": {
             "description": "Service with live or explicitly unavailable autoscaling status",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FlashServiceRead"}}}
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlashServiceRead"
+                }
+              }
+            }
           },
-          "401": {"description": "Authentication required"},
-          "403": {"description": "Permission denied"},
-          "404": {"description": "Service not found"}
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Service not found"
+          }
         }
       },
       "put": {
@@ -164,6 +241,101 @@
           },
           "422": {
             "description": "Malformed request body"
+          },
+          "503": {
+            "description": "Flash provider GPU catalog unavailable when gpu_type is requested"
+          }
+        }
+      }
+    },
+    "/api/v1/owner/gpus": {
+      "get": {
+        "summary": "Synchronize and list physical GPU inventory for the owner console",
+        "description": "Requires the owner host, network, account, and session boundary. Pulls the FlashGpuDevice provider catalog before returning.",
+        "responses": {
+          "200": {
+            "description": "Physical GPU inventory",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/OwnerGpuDevice"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Owner boundary rejected"
+          },
+          "503": {
+            "description": "Flash provider unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/owner/gpus/{gpu_device_id}": {
+      "parameters": [
+        {
+          "name": "gpu_device_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "put": {
+        "summary": "Replace a physical GPU access policy",
+        "description": "Requires owner same-origin and CSRF validation. Pushes the access policy to the provider CRD and refreshes the local catalog. Physical identity and type cannot be changed here.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGpuAccess"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated physical GPU",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerGpuDevice"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid visibility or user assignment"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Owner boundary rejected"
+          },
+          "404": {
+            "description": "GPU not found"
+          },
+          "503": {
+            "description": "Flash provider unavailable"
           }
         }
       }
@@ -173,17 +345,37 @@
     "schemas": {
       "FlashServiceRead": {
         "type": "object",
-        "required": ["id", "state", "generation", "spec", "status"],
+        "required": [
+          "id",
+          "state",
+          "generation",
+          "spec",
+          "status"
+        ],
         "properties": {
-          "id": {"type": "string", "format": "uuid"},
-          "state": {"type": "string", "description": "Persisted lifecycle state, unchanged by live status reads."},
-          "generation": {"type": "integer"},
-          "spec": {"$ref": "#/components/schemas/FlashSpec"},
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string",
+            "description": "Persisted lifecycle state, unchanged by live status reads."
+          },
+          "generation": {
+            "type": "integer"
+          },
+          "spec": {
+            "$ref": "#/components/schemas/FlashSpec"
+          },
           "status": {
             "type": "object",
             "properties": {
-              "operation_id": {"type": "string"},
-              "status": {"$ref": "#/components/schemas/FlashObservedStatus"}
+              "operation_id": {
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/components/schemas/FlashObservedStatus"
+              }
             }
           }
         }
@@ -192,17 +384,60 @@
         "type": "object",
         "description": "Live provider fields when available, otherwise cached fields with an explicit unavailable marker. Counts are never current when live_status_unavailable is true; cached endpoints may be stale.",
         "properties": {
-          "observed_generation": {"type": "integer"},
-          "desired_replicas": {"type": "integer", "minimum": 0},
-          "ready_replicas": {"type": "integer", "minimum": 0},
-          "phase": {"type": "string"},
-          "endpoints": {"type": "array", "items": {"type": "object"}},
-          "live_status_unavailable": {"type": "boolean"}
+          "observed_generation": {
+            "type": "integer"
+          },
+          "desired_replicas": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ready_replicas": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "phase": {
+            "type": "string"
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "live_status_unavailable": {
+            "type": "boolean"
+          }
         },
-        "allOf": [{
-          "if": {"required": ["live_status_unavailable"], "properties": {"live_status_unavailable": {"const": true}}},
-          "then": {"not": {"anyOf": [{"required": ["desired_replicas"]}, {"required": ["ready_replicas"]}]}}
-        }]
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "live_status_unavailable"
+              ],
+              "properties": {
+                "live_status_unavailable": {
+                  "const": true
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "desired_replicas"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "ready_replicas"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ]
       },
       "FlashAutoscaling": {
         "type": "object",
@@ -336,7 +571,10 @@
               ],
               "properties": {
                 "endpoint_mode": {
-                  "enum": ["load_balancer", "web"]
+                  "enum": [
+                    "load_balancer",
+                    "web"
+                  ]
                 }
               }
             },
@@ -353,13 +591,23 @@
           },
           {
             "if": {
-              "required": ["endpoint_mode"],
-              "properties": {"endpoint_mode": {"const": "web"}}
+              "required": [
+                "endpoint_mode"
+              ],
+              "properties": {
+                "endpoint_mode": {
+                  "const": "web"
+                }
+              }
             },
             "then": {
               "properties": {
-                "allowed_source_cidrs": {"maxItems": 0},
-                "denied_source_cidrs": {"maxItems": 0}
+                "allowed_source_cidrs": {
+                  "maxItems": 0
+                },
+                "denied_source_cidrs": {
+                  "maxItems": 0
+                }
               }
             }
           }
@@ -437,22 +685,71 @@
       "FlashSpec": {
         "type": "object",
         "additionalProperties": false,
-        "allOf": [{
-          "if": {
-            "required": ["exposure"],
-            "properties": {"exposure": {
-              "required": ["endpoint_mode"],
-              "properties": {"endpoint_mode": {"const": "web"}}
-            }}
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "exposure"
+              ],
+              "properties": {
+                "exposure": {
+                  "required": [
+                    "endpoint_mode"
+                  ],
+                  "properties": {
+                    "endpoint_mode": {
+                      "const": "web"
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "ports": {
+                  "minItems": 1,
+                  "maxItems": 1,
+                  "items": {
+                    "properties": {
+                      "protocol": {
+                        "const": "tcp"
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
-          "then": {
-            "properties": {"ports": {
-              "minItems": 1,
-              "maxItems": 1,
-              "items": {"properties": {"protocol": {"const": "tcp"}}}
-            }}
+          {
+            "if": {
+              "required": [
+                "gpu_type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "replicas": {
+                  "const": 1
+                },
+                "autoscaling": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "max_replicas": {
+                          "const": 1
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           }
-        }],
+        ],
         "required": [
           "region",
           "image",
@@ -504,12 +801,12 @@
             "minimum": 16,
             "maximum": 1048576
           },
-          "gpu_count": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 1,
-            "default": 0,
-            "description": "Exclusive physical GPUs requested by each VM. GTX 1080 Ti workloads use the native NVIDIA runtime."
+          "gpu_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63,
+            "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+            "description": "Optional canonical GPU type. One exclusive physical GPU is requested. GPU services require replicas=1 and autoscaling.max_replicas=1; users cannot select a physical device."
           },
           "ephemeral_storage_gib": {
             "type": "integer",
@@ -587,6 +884,134 @@
           },
           "spec": {
             "$ref": "#/components/schemas/FlashSpec"
+          }
+        }
+      },
+      "GpuTypeAvailability": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "gpu_type",
+          "display_name",
+          "access",
+          "total",
+          "available"
+        ],
+        "properties": {
+          "gpu_type": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "access": {
+            "type": "string",
+            "enum": [
+              "open",
+              "private"
+            ],
+            "description": "open when at least one accessible device of this type is open; otherwise private."
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "available": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Provider-reported healthy and currently unleased accessible devices. Advisory; busy requests are accepted and queued."
+          }
+        }
+      },
+      "UpdateGpuAccess": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "visibility"
+        ],
+        "properties": {
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "open",
+              "private"
+            ]
+          },
+          "assigned_user_ids": {
+            "type": "array",
+            "default": [],
+            "maxItems": 10000,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        },
+        "description": "assigned_user_ids must be empty for open GPUs and must reference active users for private GPUs. An empty private list intentionally isolates the GPU from every user."
+      },
+      "OwnerGpuDevice": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "management_id",
+          "gpu_type",
+          "display_name",
+          "available",
+          "visibility",
+          "assigned_user_ids",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "management_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "gpu_type": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "open",
+              "private"
+            ]
+          },
+          "assigned_user_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "available": {
+            "type": "boolean",
+            "description": "Provider-reported healthy and currently unleased state."
           }
         }
       }

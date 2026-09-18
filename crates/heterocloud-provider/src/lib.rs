@@ -1,5 +1,5 @@
 use chrono::{Duration, Utc};
-use heterocloud_domain::{OrganizationId, PrincipalId, ProjectId, ServiceInstanceId};
+use heterocloud_domain::{OrganizationId, PrincipalId, ProjectId, ServiceInstanceId, UserId};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -40,6 +40,7 @@ impl ProviderSigner {
             issuer: self.issuer.clone(),
             audience: self.audience.clone(),
             subject: context.principal_id.to_string(),
+            user_id: context.user_id,
             organization_id: context.organization_id,
             project_id: context.project_id,
             service_instance_id: context.service_instance_id,
@@ -60,6 +61,7 @@ impl ProviderSigner {
 #[derive(Clone, Debug)]
 pub struct ProviderContext {
     pub principal_id: PrincipalId,
+    pub user_id: Option<UserId>,
     pub organization_id: OrganizationId,
     pub project_id: ProjectId,
     pub service_instance_id: ServiceInstanceId,
@@ -81,6 +83,8 @@ pub struct ProviderClaims {
     pub audience: String,
     #[serde(rename = "sub")]
     pub subject: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<UserId>,
     pub organization_id: OrganizationId,
     pub project_id: ProjectId,
     pub service_instance_id: ServiceInstanceId,

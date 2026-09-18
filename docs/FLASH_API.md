@@ -25,11 +25,15 @@ remain the provider's responsibility.
 
 ## GPU selection
 
-`spec.gpu_count` is optional and defaults to `0`. The only nonzero value is `1`,
-which assigns one exclusive physical GPU to every replica. Values above one are
-rejected by both the management API and the Flash provider. The provider selects
-the NVIDIA runtime and schedules the replica only on a node that has passed the
-cluster GPU acceptance test. Omitting the field keeps the existing gVisor path.
+`spec.gpu_type` is optional. A canonical type such as
+`nvidia-geforce-gtx-1080-ti` assigns one exclusive physical GPU of that type to
+the service. The API checks open/private access, while provider-reported
+availability remains advisory. A request is accepted when every accessible GPU
+of that type is busy; the Flash scheduler queues it until a lease is available.
+GPU services currently require `replicas: 1` and, when autoscaling is enabled,
+`max_replicas: 1`. Users cannot submit a node, device UUID, or other physical
+identity. Omitting the field keeps the existing gVisor path. Inventory and owner
+contracts are described in [GPU_ACCESS_API.md](GPU_ACCESS_API.md).
 
 ## Quota Reservation
 

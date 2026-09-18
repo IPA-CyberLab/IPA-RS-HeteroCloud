@@ -5,7 +5,7 @@ use heterocloud_domain::{
     FlashProtocol, FlashSpec, FlowSpec, IamPolicy, MAX_FLASH_SERVICE_PORT, MIN_FLASH_SERVICE_PORT,
     Organization, OrganizationId, PolicyDocument, PolicyId, Principal, PrincipalId, PrincipalKind,
     Project, ProjectId, ResourceQuotaLimits, ServiceInstance, ServiceInstanceId, ServiceState,
-    SyouyuSpec, User, UserId, UserStatus,
+    SyouyuSpec, User, UserId, UserStatus, valid_flash_gpu_type,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,6 +21,80 @@ pub const MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE: i64 = MAX_FLOW_ACCESS_CONTEXT_RECOR
 pub const MAX_FLOW_DEVELOPER_CREDENTIALS_PER_SERVICE: i64 = 100;
 pub const MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE: i64 = 100;
 pub const MAX_USER_LOGIN_EVENTS_PER_USER: i64 = 100;
+pub const MAX_GPU_PRIVATE_ASSIGNMENTS: usize = 10_000;
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GpuVisibility {
+    #[default]
+    Open,
+    Private,
+}
+
+impl GpuVisibility {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Private => "private",
+        }
+    }
+}
+
+impl TryFrom<&str> for GpuVisibility {
+    type Error = StoreError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "open" => Ok(Self::Open),
+            "private" => Ok(Self::Private),
+            _ => Err(StoreError::Invariant("unknown GPU visibility")),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GpuDeviceRecord {
+    pub id: Uuid,
+    pub management_id: String,
+    pub gpu_type: String,
+    pub display_name: String,
+    pub visibility: GpuVisibility,
+    pub available: bool,
+    pub assigned_user_ids: Vec<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+struct GpuDeviceConfig<'a> {
+    pub management_id: &'a str,
+    pub gpu_type: &'a str,
+    pub display_name: &'a str,
+    pub visibility: GpuVisibility,
+    pub assigned_user_ids: &'a [Uuid],
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GpuCatalogDevice {
+    pub management_id: String,
+    pub gpu_type: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub visibility: GpuVisibility,
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default)]
+    pub assigned_user_ids: Vec<Uuid>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GpuTypeAvailability {
+    pub gpu_type: String,
+    pub display_name: String,
+    pub access: GpuVisibility,
+    pub total: u32,
+    pub available: u32,
+}
 
 #[derive(Clone)]
 pub struct Store {
@@ -50,6 +124,296 @@ impl Store {
     pub async fn ping(&self) -> Result<(), StoreError> {
         sqlx::query("SELECT 1").execute(&self.pool).await?;
         Ok(())
+    }
+
+    pub async fn list_gpu_devices(&self) -> Result<Vec<GpuDeviceRecord>, StoreError> {
+        let rows = sqlx::query_as::<_, GpuDeviceRow>(
+            "SELECT d.id, d.management_id, d.gpu_type, d.display_name, d.visibility,
+                    d.available,
+                    COALESCE(
+                        array_agg(a.user_id ORDER BY a.user_id)
+                            FILTER (WHERE a.user_id IS NOT NULL),
+                        '{}'::uuid[]
+                    ) AS assigned_user_ids,
+                    d.created_at, d.updated_at
+             FROM gpu_devices d
+             LEFT JOIN gpu_device_user_assignments a ON a.gpu_device_id = d.id
+             GROUP BY d.id
+             ORDER BY lower(d.display_name), d.gpu_type, d.management_id, d.id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(GpuDeviceRecord::try_from).collect()
+    }
+
+    pub async fn gpu_device(&self, id: Uuid) -> Result<Option<GpuDeviceRecord>, StoreError> {
+        sqlx::query_as::<_, GpuDeviceRow>(
+            "SELECT d.id, d.management_id, d.gpu_type, d.display_name, d.visibility,
+                    d.available,
+                    COALESCE(
+                        array_agg(a.user_id ORDER BY a.user_id)
+                            FILTER (WHERE a.user_id IS NOT NULL),
+                        '{}'::uuid[]
+                    ) AS assigned_user_ids,
+                    d.created_at, d.updated_at
+             FROM gpu_devices d
+             LEFT JOIN gpu_device_user_assignments a ON a.gpu_device_id = d.id
+             WHERE d.id = $1
+             GROUP BY d.id",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(GpuDeviceRecord::try_from)
+        .transpose()
+    }
+
+    pub async fn list_accessible_gpu_types(
+        &self,
+        user_id: Option<UserId>,
+    ) -> Result<Vec<GpuTypeAvailability>, StoreError> {
+        let rows = sqlx::query_as::<_, GpuTypeAvailabilityRow>(
+            "SELECT d.gpu_type,
+                    min(d.display_name) AS display_name,
+                    CASE WHEN bool_or(d.visibility = 'open')
+                         THEN 'open' ELSE 'private' END AS access,
+                    count(*)::bigint AS total,
+                    count(*) FILTER (WHERE d.available)::bigint AS available
+             FROM gpu_devices d
+             WHERE d.visibility = 'open'
+                OR ($1::uuid IS NOT NULL AND EXISTS (
+                    SELECT 1 FROM gpu_device_user_assignments a
+                    WHERE a.gpu_device_id = d.id AND a.user_id = $1
+                ))
+             GROUP BY d.gpu_type
+             ORDER BY lower(min(d.display_name)), d.gpu_type",
+        )
+        .bind(user_id.map(|id| id.0))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(GpuTypeAvailability::try_from)
+            .collect()
+    }
+
+    pub async fn sync_gpu_catalog(
+        &self,
+        devices: &[GpuCatalogDevice],
+    ) -> Result<Vec<GpuDeviceRecord>, StoreError> {
+        const MAX_GPU_CATALOG_DEVICES: usize = 4096;
+        if devices.len() > MAX_GPU_CATALOG_DEVICES {
+            return Err(StoreError::RequestRejected(format!(
+                "GPU catalog contains more than {MAX_GPU_CATALOG_DEVICES} devices"
+            )));
+        }
+        let mut devices = devices.to_vec();
+        let mut management_ids = BTreeSet::new();
+        let mut display_names = BTreeMap::new();
+        for device in &devices {
+            if !management_ids.insert(device.management_id.as_str()) {
+                return Err(StoreError::RequestRejected(
+                    "GPU catalog management_id values must be unique".into(),
+                ));
+            }
+            if let Some(existing) = display_names.insert(&device.gpu_type, &device.display_name)
+                && existing != &device.display_name
+            {
+                return Err(StoreError::RequestRejected(
+                    "all devices of one gpu_type must use the same display_name".into(),
+                ));
+            }
+        }
+        drop(management_ids);
+        drop(display_names);
+
+        let mut transaction = self.pool.begin().await?;
+        lock_flash_allocations(&mut transaction).await?;
+        let assigned_user_ids = devices
+            .iter()
+            .flat_map(|device| device.assigned_user_ids.iter().copied())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let active_user_ids = if assigned_user_ids.is_empty() {
+            BTreeSet::new()
+        } else {
+            sqlx::query_scalar::<_, Uuid>(
+                "SELECT id FROM users
+                 WHERE id = ANY($1) AND status = 'active'
+                 ORDER BY id
+                 FOR KEY SHARE",
+            )
+            .bind(&assigned_user_ids)
+            .fetch_all(&mut *transaction)
+            .await?
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+        };
+        for device in &mut devices {
+            device
+                .assigned_user_ids
+                .retain(|user_id| active_user_ids.contains(user_id));
+            device.assigned_user_ids.sort_unstable();
+            device.assigned_user_ids.dedup();
+        }
+        sqlx::query("SELECT id FROM gpu_devices ORDER BY id FOR UPDATE")
+            .fetch_all(&mut *transaction)
+            .await?;
+        let old_rows = sqlx::query_as::<_, GpuCatalogSnapshotRow>(
+            "SELECT d.management_id, d.gpu_type, d.display_name, d.visibility,
+                    COALESCE(
+                        array_agg(a.user_id ORDER BY a.user_id)
+                            FILTER (WHERE a.user_id IS NOT NULL),
+                        '{}'::uuid[]
+                    ) AS assigned_user_ids
+             FROM gpu_devices d
+             LEFT JOIN gpu_device_user_assignments a ON a.gpu_device_id = d.id
+             GROUP BY d.id",
+        )
+        .fetch_all(&mut *transaction)
+        .await?;
+        let old_by_management_id = old_rows
+            .into_iter()
+            .map(|row| (row.management_id.clone(), row))
+            .collect::<BTreeMap<_, _>>();
+        let incoming_by_management_id = devices
+            .iter()
+            .map(|device| (device.management_id.as_str(), device))
+            .collect::<BTreeMap<_, _>>();
+        let mut affected_types = BTreeSet::new();
+        for (management_id, old) in &old_by_management_id {
+            let incoming = incoming_by_management_id
+                .get(management_id.as_str())
+                .copied();
+            match incoming {
+                None => {
+                    affected_types.insert(old.gpu_type.clone());
+                }
+                Some(device)
+                    if old.gpu_type != device.gpu_type
+                        || old.display_name != device.display_name
+                        || old.visibility != device.visibility.as_str()
+                        || old.assigned_user_ids != {
+                            let mut ids = device.assigned_user_ids.clone();
+                            ids.sort_unstable();
+                            ids
+                        } =>
+                {
+                    affected_types.insert(old.gpu_type.clone());
+                    affected_types.insert(device.gpu_type.clone());
+                }
+                Some(_) => {}
+            }
+        }
+        for device in &devices {
+            if !old_by_management_id.contains_key(&device.management_id) {
+                affected_types.insert(device.gpu_type.clone());
+            }
+        }
+        let incoming_ids = devices
+            .iter()
+            .map(|device| device.management_id.clone())
+            .collect::<Vec<_>>();
+        sqlx::query(
+            "DELETE FROM gpu_devices
+             WHERE cardinality($1::text[]) = 0 OR management_id <> ALL($1)",
+        )
+        .bind(&incoming_ids)
+        .execute(&mut *transaction)
+        .await?;
+        for device in &devices {
+            let config = GpuDeviceConfig {
+                management_id: &device.management_id,
+                gpu_type: &device.gpu_type,
+                display_name: &device.display_name,
+                visibility: device.visibility,
+                assigned_user_ids: &device.assigned_user_ids,
+            };
+            validate_gpu_device_config_fields(&mut transaction, &config).await?;
+            let id = sqlx::query_scalar::<_, Uuid>(
+                "INSERT INTO gpu_devices
+                    (id, management_id, gpu_type, display_name, visibility, available)
+                 VALUES ($1, $2, $3, $4, $5, $6)
+                 ON CONFLICT (management_id) DO UPDATE
+                 SET gpu_type = EXCLUDED.gpu_type,
+                     display_name = EXCLUDED.display_name,
+                     visibility = EXCLUDED.visibility,
+                     available = EXCLUDED.available,
+                     updated_at = CASE
+                         WHEN (gpu_devices.gpu_type, gpu_devices.display_name,
+                               gpu_devices.visibility, gpu_devices.available)
+                              IS DISTINCT FROM
+                              (EXCLUDED.gpu_type, EXCLUDED.display_name,
+                               EXCLUDED.visibility, EXCLUDED.available)
+                         THEN now() ELSE gpu_devices.updated_at END
+                 RETURNING id",
+            )
+            .bind(Uuid::now_v7())
+            .bind(&device.management_id)
+            .bind(&device.gpu_type)
+            .bind(&device.display_name)
+            .bind(device.visibility.as_str())
+            .bind(device.available)
+            .fetch_one(&mut *transaction)
+            .await?;
+            replace_gpu_device_assignments(&mut transaction, id, &device.assigned_user_ids).await?;
+        }
+        enqueue_flash_gpu_reconciles(&mut transaction, &affected_types).await?;
+        transaction.commit().await?;
+        self.list_gpu_devices().await
+    }
+
+    pub async fn validate_gpu_access_update(
+        &self,
+        visibility: GpuVisibility,
+        assigned_user_ids: &[Uuid],
+    ) -> Result<(), StoreError> {
+        if visibility == GpuVisibility::Open && !assigned_user_ids.is_empty() {
+            return Err(StoreError::RequestRejected(
+                "open GPUs cannot have private user assignments".into(),
+            ));
+        }
+        if assigned_user_ids.len() > MAX_GPU_PRIVATE_ASSIGNMENTS {
+            return Err(StoreError::RequestRejected(format!(
+                "a GPU can have at most {MAX_GPU_PRIVATE_ASSIGNMENTS} private user assignments"
+            )));
+        }
+        let user_ids = assigned_user_ids.iter().copied().collect::<BTreeSet<_>>();
+        if user_ids.len() != assigned_user_ids.len() {
+            return Err(StoreError::RequestRejected(
+                "assigned_user_ids must not contain duplicates".into(),
+            ));
+        }
+        if !user_ids.is_empty() {
+            let user_ids = user_ids.into_iter().collect::<Vec<_>>();
+            let active_users = sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM users WHERE id = ANY($1) AND status = 'active'",
+            )
+            .bind(&user_ids)
+            .fetch_one(&self.pool)
+            .await?;
+            if usize::try_from(active_users).ok() != Some(user_ids.len()) {
+                return Err(StoreError::RequestRejected(
+                    "assigned_user_ids must reference active users".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn principal_user_id(
+        &self,
+        principal_id: PrincipalId,
+    ) -> Result<Option<UserId>, StoreError> {
+        Ok(sqlx::query_scalar::<_, Uuid>(
+            "SELECT p.user_id FROM principals p
+             JOIN users u ON u.id = p.user_id AND u.status = 'active'
+             WHERE p.id = $1 AND p.enabled = true AND p.user_id IS NOT NULL",
+        )
+        .bind(principal_id.0)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(UserId))
     }
 
     pub async fn list_owner_accounts(&self) -> Result<Vec<OwnerAccountRecord>, StoreError> {
@@ -2000,8 +2364,16 @@ impl Store {
                 lock_flash_allocations(&mut transaction).await?;
                 let quota =
                     resource_quota_in_transaction(&mut transaction, organization_id).await?;
-                prepare_flash_spec(&mut transaction, organization_id, None, None, spec, &quota)
-                    .await
+                prepare_flash_spec(
+                    &mut transaction,
+                    organization_id,
+                    principal_id,
+                    None,
+                    None,
+                    spec,
+                    &quota,
+                )
+                .await
             }
             "syouyu" => {
                 lock_tenant_allocations(&mut transaction, organization_id).await?;
@@ -2037,6 +2409,16 @@ impl Store {
         .fetch_optional(&mut *transaction)
         .await?
         .ok_or(StoreError::NotFound)?;
+        if provider == "flash" {
+            replace_flash_gpu_service_request(
+                &mut transaction,
+                id,
+                organization_id,
+                principal_id,
+                &spec,
+            )
+            .await?;
+        }
         sqlx::query(
             "INSERT INTO outbox_events (id, topic, aggregate_id, payload)
              VALUES ($1, 'service-instance.reconcile', $2, $3)",
@@ -2108,6 +2490,7 @@ impl Store {
                 prepare_flash_spec(
                     &mut transaction,
                     organization_id,
+                    principal_id,
                     Some(id),
                     Some(&existing.spec),
                     spec,
@@ -2149,6 +2532,16 @@ impl Store {
         .bind(generation)
         .fetch_one(&mut *transaction)
         .await?;
+        if provider == "flash" {
+            replace_flash_gpu_service_request(
+                &mut transaction,
+                id,
+                organization_id,
+                principal_id,
+                &row.spec,
+            )
+            .await?;
+        }
         sqlx::query(
             "INSERT INTO outbox_events (id, topic, aggregate_id, payload)
              VALUES ($1, 'service-instance.reconcile', $2, $3)",
@@ -2616,9 +3009,249 @@ async fn lock_flash_allocations(
     Ok(())
 }
 
+async fn validate_gpu_device_config_fields(
+    transaction: &mut Transaction<'_, Postgres>,
+    config: &GpuDeviceConfig<'_>,
+) -> Result<(), StoreError> {
+    if config.management_id.is_empty()
+        || config.management_id.len() > 512
+        || config.management_id.trim() != config.management_id
+        || config.management_id.chars().any(char::is_control)
+    {
+        return Err(StoreError::RequestRejected(
+            "GPU management_id must be a trimmed, non-control string of at most 512 bytes".into(),
+        ));
+    }
+    if !valid_flash_gpu_type(config.gpu_type) {
+        return Err(StoreError::RequestRejected(
+            "GPU gpu_type must be a lowercase DNS label of at most 63 bytes".into(),
+        ));
+    }
+    if config.display_name.is_empty()
+        || config.display_name.len() > 120
+        || config.display_name.trim() != config.display_name
+        || config.display_name.chars().any(char::is_control)
+    {
+        return Err(StoreError::RequestRejected(
+            "GPU display_name must be a trimmed, non-control string of at most 120 bytes".into(),
+        ));
+    }
+    if config.visibility == GpuVisibility::Open && !config.assigned_user_ids.is_empty() {
+        return Err(StoreError::RequestRejected(
+            "open GPUs cannot have private user assignments".into(),
+        ));
+    }
+    if config.assigned_user_ids.len() > MAX_GPU_PRIVATE_ASSIGNMENTS {
+        return Err(StoreError::RequestRejected(format!(
+            "a GPU can have at most {MAX_GPU_PRIVATE_ASSIGNMENTS} private user assignments"
+        )));
+    }
+    let unique_user_ids = config
+        .assigned_user_ids
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if unique_user_ids.len() != config.assigned_user_ids.len() {
+        return Err(StoreError::RequestRejected(
+            "assigned_user_ids must not contain duplicates".into(),
+        ));
+    }
+    if !unique_user_ids.is_empty() {
+        let user_ids = unique_user_ids.iter().copied().collect::<Vec<_>>();
+        let active_users = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM users WHERE id = ANY($1) AND status = 'active'",
+        )
+        .bind(&user_ids)
+        .fetch_one(&mut **transaction)
+        .await?;
+        if usize::try_from(active_users).ok() != Some(user_ids.len()) {
+            return Err(StoreError::RequestRejected(
+                "assigned_user_ids must reference active users".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn replace_gpu_device_assignments(
+    transaction: &mut Transaction<'_, Postgres>,
+    gpu_device_id: Uuid,
+    user_ids: &[Uuid],
+) -> Result<(), StoreError> {
+    let existing = sqlx::query_scalar::<_, Uuid>(
+        "SELECT user_id FROM gpu_device_user_assignments
+         WHERE gpu_device_id = $1 ORDER BY user_id",
+    )
+    .bind(gpu_device_id)
+    .fetch_all(&mut **transaction)
+    .await?;
+    let mut requested = user_ids.to_vec();
+    requested.sort_unstable();
+    if existing == requested {
+        return Ok(());
+    }
+    sqlx::query("DELETE FROM gpu_device_user_assignments WHERE gpu_device_id = $1")
+        .bind(gpu_device_id)
+        .execute(&mut **transaction)
+        .await?;
+    for user_id in requested {
+        sqlx::query(
+            "INSERT INTO gpu_device_user_assignments (gpu_device_id, user_id)
+             VALUES ($1, $2)",
+        )
+        .bind(gpu_device_id)
+        .bind(user_id)
+        .execute(&mut **transaction)
+        .await?;
+    }
+    sqlx::query("UPDATE gpu_devices SET updated_at = now() WHERE id = $1")
+        .bind(gpu_device_id)
+        .execute(&mut **transaction)
+        .await?;
+    Ok(())
+}
+
+async fn enqueue_flash_gpu_reconciles(
+    transaction: &mut Transaction<'_, Postgres>,
+    gpu_types: &BTreeSet<String>,
+) -> Result<u64, StoreError> {
+    if gpu_types.is_empty() {
+        return Ok(0);
+    }
+    let gpu_types = gpu_types.iter().cloned().collect::<Vec<_>>();
+    let rows = sqlx::query_as::<_, FlashGpuReconcileRow>(
+        "SELECT s.id, s.organization_id, s.project_id, s.generation,
+                (
+                    SELECT p.id FROM principals p
+                    WHERE p.id = c.requested_by_principal_id
+                      AND p.organization_id = s.organization_id
+                ) AS principal_id
+         FROM flash_gpu_service_requests c
+         JOIN service_instances s ON s.id = c.service_instance_id
+         WHERE c.gpu_type = ANY($1) AND s.state <> 'deleting'
+         ORDER BY s.id",
+    )
+    .bind(&gpu_types)
+    .fetch_all(&mut **transaction)
+    .await?;
+    let mut enqueued = 0_u64;
+    for row in rows {
+        let Some(principal_id) = row.principal_id else {
+            continue;
+        };
+        sqlx::query(
+            "INSERT INTO outbox_events (id, topic, aggregate_id, payload)
+             VALUES ($1, 'service-instance.reconcile', $2, $3)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(row.id)
+        .bind(serde_json::json!({
+            "service_instance_id": ServiceInstanceId(row.id),
+            "organization_id": OrganizationId(row.organization_id),
+            "project_id": ProjectId(row.project_id),
+            "principal_id": PrincipalId(principal_id),
+            "provider": "flash",
+            "generation": row.generation,
+        }))
+        .execute(&mut **transaction)
+        .await?;
+        enqueued = enqueued.saturating_add(1);
+    }
+    Ok(enqueued)
+}
+
+async fn principal_user_id(
+    transaction: &mut Transaction<'_, Postgres>,
+    organization_id: OrganizationId,
+    principal_id: PrincipalId,
+) -> Result<Option<Uuid>, StoreError> {
+    sqlx::query_scalar::<_, Option<Uuid>>(
+        "SELECT p.user_id FROM principals p
+         LEFT JOIN users u ON u.id = p.user_id
+         WHERE p.id = $1 AND p.organization_id = $2 AND p.enabled = true
+           AND (p.user_id IS NULL OR u.status = 'active')",
+    )
+    .bind(principal_id.0)
+    .bind(organization_id.0)
+    .fetch_optional(&mut **transaction)
+    .await?
+    .ok_or(StoreError::Invariant("authorized principal is missing"))
+}
+
+async fn validate_flash_gpu_access(
+    transaction: &mut Transaction<'_, Postgres>,
+    organization_id: OrganizationId,
+    principal_id: PrincipalId,
+    requested: &FlashSpec,
+) -> Result<(), StoreError> {
+    let Some(gpu_type) = requested.gpu_type.as_deref() else {
+        return Ok(());
+    };
+    let user_id = principal_user_id(transaction, organization_id, principal_id).await?;
+    let accessible_devices = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*)
+         FROM gpu_devices d
+         WHERE d.gpu_type = $1
+           AND (
+               d.visibility = 'open'
+               OR ($2::uuid IS NOT NULL AND EXISTS (
+                   SELECT 1 FROM gpu_device_user_assignments a
+                   WHERE a.gpu_device_id = d.id AND a.user_id = $2
+               ))
+           )",
+    )
+    .bind(gpu_type)
+    .bind(user_id)
+    .fetch_one(&mut **transaction)
+    .await?;
+    if accessible_devices == 0 {
+        return Err(StoreError::RequestRejected(format!(
+            "GPU type {gpu_type} does not exist or is not accessible to the authenticated principal"
+        )));
+    }
+    Ok(())
+}
+
+async fn replace_flash_gpu_service_request(
+    transaction: &mut Transaction<'_, Postgres>,
+    service_instance_id: ServiceInstanceId,
+    organization_id: OrganizationId,
+    principal_id: PrincipalId,
+    spec: &Value,
+) -> Result<(), StoreError> {
+    let requested: FlashSpec = serde_json::from_value(spec.clone())?;
+    let Some(gpu_type) = requested.gpu_type.as_deref() else {
+        sqlx::query("DELETE FROM flash_gpu_service_requests WHERE service_instance_id = $1")
+            .bind(service_instance_id.0)
+            .execute(&mut **transaction)
+            .await?;
+        return Ok(());
+    };
+    let user_id = principal_user_id(transaction, organization_id, principal_id).await?;
+    sqlx::query(
+        "INSERT INTO flash_gpu_service_requests
+            (service_instance_id, gpu_type,
+             requested_by_principal_id, requested_by_user_id)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (service_instance_id) DO UPDATE
+         SET gpu_type = EXCLUDED.gpu_type,
+             requested_by_principal_id = EXCLUDED.requested_by_principal_id,
+             requested_by_user_id = EXCLUDED.requested_by_user_id,
+             updated_at = now()",
+    )
+    .bind(service_instance_id.0)
+    .bind(gpu_type)
+    .bind(principal_id.0)
+    .bind(user_id)
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
+}
+
 async fn prepare_flash_spec(
     transaction: &mut Transaction<'_, Postgres>,
     organization_id: OrganizationId,
+    principal_id: PrincipalId,
     excluded_service_id: Option<ServiceInstanceId>,
     existing_spec: Option<&Value>,
     spec: Value,
@@ -2628,6 +3261,7 @@ async fn prepare_flash_spec(
     requested
         .validate_request()
         .map_err(|error| StoreError::RequestRejected(error.to_string()))?;
+    validate_flash_gpu_access(transaction, organization_id, principal_id, &requested).await?;
     if requested.reserved_replicas() > quota.flash.max_replicas_per_service {
         return Err(StoreError::RequestRejected(format!(
             "Flash replica limit exceeded: {} requested, limit is {} per service",
@@ -2953,6 +3587,80 @@ struct FlashQuotaReconcileRow {
     project_id: Uuid,
     generation: i64,
     principal_id: Uuid,
+}
+
+#[derive(sqlx::FromRow)]
+struct FlashGpuReconcileRow {
+    id: Uuid,
+    organization_id: Uuid,
+    project_id: Uuid,
+    generation: i64,
+    principal_id: Option<Uuid>,
+}
+
+#[derive(sqlx::FromRow)]
+struct GpuDeviceRow {
+    id: Uuid,
+    management_id: String,
+    gpu_type: String,
+    display_name: String,
+    visibility: String,
+    available: bool,
+    assigned_user_ids: Vec<Uuid>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct GpuCatalogSnapshotRow {
+    management_id: String,
+    gpu_type: String,
+    display_name: String,
+    visibility: String,
+    assigned_user_ids: Vec<Uuid>,
+}
+
+impl TryFrom<GpuDeviceRow> for GpuDeviceRecord {
+    type Error = StoreError;
+
+    fn try_from(row: GpuDeviceRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: row.id,
+            management_id: row.management_id,
+            gpu_type: row.gpu_type,
+            display_name: row.display_name,
+            visibility: GpuVisibility::try_from(row.visibility.as_str())?,
+            available: row.available,
+            assigned_user_ids: row.assigned_user_ids,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct GpuTypeAvailabilityRow {
+    gpu_type: String,
+    display_name: String,
+    access: String,
+    total: i64,
+    available: i64,
+}
+
+impl TryFrom<GpuTypeAvailabilityRow> for GpuTypeAvailability {
+    type Error = StoreError;
+
+    fn try_from(row: GpuTypeAvailabilityRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            gpu_type: row.gpu_type,
+            display_name: row.display_name,
+            access: GpuVisibility::try_from(row.access.as_str())?,
+            total: u32::try_from(row.total)
+                .map_err(|_| StoreError::Invariant("GPU device count exceeds u32"))?,
+            available: u32::try_from(row.available)
+                .map_err(|_| StoreError::Invariant("GPU availability exceeds u32"))?,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize)]

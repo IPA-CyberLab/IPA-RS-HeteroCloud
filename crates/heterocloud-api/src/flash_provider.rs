@@ -6,6 +6,7 @@ use heterocloud_domain::{
     OrganizationId, PrincipalId, ProjectId, ServiceInstance, ServiceInstanceId, ServiceState,
 };
 use heterocloud_provider::{ProviderContext, ProviderSigner};
+use heterocloud_store::{GpuCatalogDevice, GpuVisibility};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -23,6 +24,10 @@ const STATUS_ACTION: &str = "flash.status.get";
 const LIVE_STATUS_BUDGET: Duration = Duration::from_secs(2);
 const LIVE_STATUS_CONCURRENCY: usize = 4;
 const MAX_LIVE_STATUS_BYTES: usize = 64 * 1024;
+const GPU_CATALOG_ACTION: &str = "flash.gpus.catalog.list";
+const GPU_ACCESS_UPDATE_ACTION: &str = "flash.gpus.access.update";
+const GPU_CATALOG_BUDGET: Duration = Duration::from_secs(3);
+const MAX_GPU_CATALOG_BYTES: usize = 512 * 1024;
 
 pub type ProviderWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -59,6 +64,65 @@ impl FlashProviderProxy {
             ));
         }
         Ok(response.json().await?)
+    }
+
+    pub async fn list_gpu_catalog(&self) -> Result<Vec<GpuCatalogDevice>, FlashProviderError> {
+        let signed = self.sign_administrative(GPU_CATALOG_ACTION)?;
+        let url = self.endpoint.join("internal/v1/gpus")?;
+        let mut response = self
+            .client
+            .get(url)
+            .bearer_auth(signed)
+            .timeout(GPU_CATALOG_BUDGET)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(FlashProviderError::ProviderStatus(
+                response.status().as_u16(),
+            ));
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if chunk.len() > MAX_GPU_CATALOG_BYTES.saturating_sub(body.len()) {
+                return Err(FlashProviderError::InvalidGpuCatalog);
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let catalog: FlashGpuCatalog =
+            serde_json::from_slice(&body).map_err(|_| FlashProviderError::InvalidGpuCatalog)?;
+        Ok(catalog.items)
+    }
+
+    pub async fn update_gpu_access(
+        &self,
+        management_id: &str,
+        gpu_type: &str,
+        display_name: &str,
+        visibility: GpuVisibility,
+        assigned_user_ids: &[uuid::Uuid],
+    ) -> Result<(), FlashProviderError> {
+        let signed = self.sign_administrative(GPU_ACCESS_UPDATE_ACTION)?;
+        let url = self.endpoint.join("internal/v1/gpus/access")?;
+        let response = self
+            .client
+            .put(url)
+            .bearer_auth(signed)
+            .timeout(GPU_CATALOG_BUDGET)
+            .json(&FlashGpuAccessUpdate {
+                management_id,
+                gpu_type,
+                display_name,
+                visibility,
+                assigned_user_ids,
+            })
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(FlashProviderError::ProviderStatus(
+                response.status().as_u16(),
+            ));
+        }
+        Ok(())
     }
 
     pub async fn get_status(
@@ -148,6 +212,7 @@ impl FlashProviderProxy {
             .signer
             .sign(ProviderContext {
                 principal_id: context.principal_id,
+                user_id: context.user_id,
                 organization_id: context.organization_id,
                 project_id: context.project_id,
                 service_instance_id: context.service_instance_id,
@@ -156,6 +221,36 @@ impl FlashProviderProxy {
             })?
             .token)
     }
+
+    fn sign_administrative(&self, action: &str) -> Result<String, FlashProviderError> {
+        Ok(self
+            .signer
+            .sign(ProviderContext {
+                principal_id: PrincipalId(uuid::Uuid::nil()),
+                user_id: None,
+                organization_id: OrganizationId(uuid::Uuid::nil()),
+                project_id: ProjectId(uuid::Uuid::nil()),
+                service_instance_id: ServiceInstanceId(uuid::Uuid::nil()),
+                action: action.into(),
+                generation: 1,
+            })?
+            .token)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FlashGpuCatalog {
+    items: Vec<GpuCatalogDevice>,
+}
+
+#[derive(Serialize)]
+struct FlashGpuAccessUpdate<'a> {
+    management_id: &'a str,
+    gpu_type: &'a str,
+    display_name: &'a str,
+    visibility: GpuVisibility,
+    assigned_user_ids: &'a [uuid::Uuid],
 }
 
 pub async fn refresh_autoscaled_status(
@@ -220,6 +315,7 @@ async fn refresh_status_before(
     }
     let context = FlashProviderContext {
         principal_id,
+        user_id: None,
         organization_id: instance.organization_id,
         project_id: instance.project_id,
         service_instance_id: instance.id,
@@ -238,6 +334,7 @@ async fn refresh_status_before(
 #[derive(Clone, Copy, Debug)]
 pub struct FlashProviderContext {
     pub principal_id: PrincipalId,
+    pub user_id: Option<heterocloud_domain::UserId>,
     pub organization_id: OrganizationId,
     pub project_id: ProjectId,
     pub service_instance_id: ServiceInstanceId,
@@ -312,6 +409,8 @@ pub enum FlashProviderError {
     ProviderStatus(u16),
     #[error("Flash provider live status is malformed or has a different observed generation")]
     InvalidLiveStatus,
+    #[error("Flash provider GPU catalog is malformed or too large")]
+    InvalidGpuCatalog,
     #[error(transparent)]
     Header(#[from] http::header::InvalidHeaderValue),
     #[error(transparent)]
@@ -632,6 +731,85 @@ MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
                 ready: true,
             }]
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn gpu_catalog_and_access_update_use_scoped_administrative_actions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let user_id = Uuid::from_u128(71);
+        let mock = mock_provider(
+            StatusCode::OK,
+            json!({"items": [{
+                "management_id": "uc-k8sp5/GPU-a",
+                "gpu_type": "nvidia-geforce-gtx-1080-ti",
+                "display_name": "NVIDIA GeForce GTX 1080 Ti",
+                "available": true,
+                "visibility": "private",
+                "assigned_user_ids": [user_id]
+            }]})
+            .to_string(),
+            Duration::ZERO,
+        )
+        .await?;
+        let catalog = mock.proxy.list_gpu_catalog().await?;
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].management_id, "uc-k8sp5/GPU-a");
+        assert_eq!(catalog[0].visibility, GpuVisibility::Private);
+        assert!(catalog[0].available);
+        assert_eq!(catalog[0].assigned_user_ids, vec![user_id]);
+        assert_eq!(
+            serde_json::to_value(FlashGpuAccessUpdate {
+                management_id: "uc-k8sp5/GPU-a",
+                gpu_type: "nvidia-geforce-gtx-1080-ti",
+                display_name: "NVIDIA GeForce GTX 1080 Ti",
+                visibility: GpuVisibility::Private,
+                assigned_user_ids: &[],
+            })?,
+            json!({
+                "management_id": "uc-k8sp5/GPU-a",
+                "gpu_type": "nvidia-geforce-gtx-1080-ti",
+                "display_name": "NVIDIA GeForce GTX 1080 Ti",
+                "visibility": "private",
+                "assigned_user_ids": []
+            })
+        );
+        mock.proxy
+            .update_gpu_access(
+                "uc-k8sp5/GPU-a",
+                "nvidia-geforce-gtx-1080-ti",
+                "NVIDIA GeForce GTX 1080 Ti",
+                GpuVisibility::Private,
+                &[],
+            )
+            .await?;
+
+        let requests = mock.requests.lock().map_err(|_| "request lock poisoned")?;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].0, Method::GET);
+        assert_eq!(requests[0].1.path(), "/internal/v1/gpus");
+        assert_eq!(requests[1].0, Method::PUT);
+        assert_eq!(requests[1].1.path(), "/internal/v1/gpus/access");
+        for ((_, _, headers), expected_action) in requests
+            .iter()
+            .zip([GPU_CATALOG_ACTION, GPU_ACCESS_UPDATE_ACTION])
+        {
+            let token = headers
+                .get(http::header::AUTHORIZATION)
+                .ok_or("missing authorization")?
+                .to_str()?
+                .strip_prefix("Bearer ")
+                .ok_or("not bearer")?;
+            let payload = token.split('.').nth(1).ok_or("missing JWT payload")?;
+            let claims: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload)?)?;
+            assert_eq!(claims["action"], expected_action);
+            assert_eq!(claims["sub"], Uuid::nil().to_string());
+            assert_eq!(claims["organization_id"], Uuid::nil().to_string());
+            assert_eq!(claims["project_id"], Uuid::nil().to_string());
+            assert_eq!(claims["service_instance_id"], Uuid::nil().to_string());
+            assert_eq!(claims["generation"], 1);
+            assert!(claims.get("user_id").is_none());
+        }
         Ok(())
     }
 }

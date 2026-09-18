@@ -31,7 +31,7 @@ use heterocloud_domain::{
 use heterocloud_iam::{AuthorizationRequest, Decision, authorize, semantics_digest};
 use heterocloud_store::{
     AuditEvent, AuthorizationContext, DeveloperCredentialMint, DeveloperCredentialMintOutcome,
-    FlowDeveloperCredentialRecord, MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE,
+    FlowDeveloperCredentialRecord, GpuVisibility, MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE,
     MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE, MAX_REALTIME_METRIC_HISTORY_SAMPLES,
     MAX_USER_LOGIN_EVENTS_PER_USER, NewFlowAccessContext, NewFlowDeveloperCredential, OidcUser,
     RealtimeMetricCollectionTarget, RegisterWithInvitation, SessionUser, Store,
@@ -110,6 +110,11 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route("/auth/logout", post(logout))
         .route("/owner/quotas", get(owner_quota_overview))
         .route("/owner/accounts", get(list_owner_accounts))
+        .route("/owner/gpus", get(list_owner_gpus))
+        .route(
+            "/owner/gpus/{gpu_device_id}",
+            axum::routing::put(update_owner_gpu_access),
+        )
         .route(
             "/owner/accounts/{user_id}/logins",
             get(list_owner_account_logins),
@@ -162,6 +167,7 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             "/organizations/{organization_id}/flash/services",
             get(list_flash_services).post(create_flash_service),
         )
+        .route("/flash/gpu-types", get(list_accessible_gpu_types))
         .route(
             "/organizations/{organization_id}/flash/quota",
             get(get_flash_quota),
@@ -359,6 +365,91 @@ async fn list_owner_accounts(
         .await
         .map_err(ApiError::from_store)?;
     Ok(Json(json!({ "items": items })))
+}
+
+async fn list_owner_gpus(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &jar, peer, false).await?;
+    let items = sync_gpu_catalog_from_provider(&state).await?;
+    Ok(Json(json!({ "items": items })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateGpuAccessRequest {
+    visibility: GpuVisibility,
+    #[serde(default)]
+    assigned_user_ids: Vec<Uuid>,
+}
+
+async fn update_owner_gpu_access(
+    State(state): State<Arc<AppState>>,
+    Path(gpu_device_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
+    Json(request): Json<UpdateGpuAccessRequest>,
+) -> Result<Json<heterocloud_store::GpuDeviceRecord>, ApiError> {
+    require_owner(&state, &headers, &jar, peer, true).await?;
+    state
+        .store
+        .validate_gpu_access_update(request.visibility, &request.assigned_user_ids)
+        .await
+        .map_err(ApiError::from_store)?;
+    let device = state
+        .store
+        .gpu_device(gpu_device_id)
+        .await
+        .map_err(ApiError::from_store)?
+        .ok_or(ApiError::NotFound)?;
+    let provider = state
+        .flash_provider
+        .as_deref()
+        .ok_or(ApiError::FlashProviderUnavailable)?;
+    provider
+        .update_gpu_access(
+            &device.management_id,
+            &device.gpu_type,
+            &device.display_name,
+            request.visibility,
+            &request.assigned_user_ids,
+        )
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = %error, "Flash GPU access update failed");
+            ApiError::FlashProviderUnavailable
+        })?;
+    let devices = sync_gpu_catalog_from_provider(&state).await?;
+    let updated = devices
+        .into_iter()
+        .find(|candidate| candidate.id == gpu_device_id)
+        .ok_or(ApiError::NotFound)?;
+    Ok(Json(updated))
+}
+
+async fn sync_gpu_catalog_from_provider(
+    state: &AppState,
+) -> Result<Vec<heterocloud_store::GpuDeviceRecord>, ApiError> {
+    let provider = state
+        .flash_provider
+        .as_deref()
+        .ok_or(ApiError::FlashProviderUnavailable)?;
+    let catalog = provider.list_gpu_catalog().await.map_err(|error| {
+        tracing::warn!(error = %error, "Flash GPU catalog synchronization failed");
+        ApiError::FlashProviderUnavailable
+    })?;
+    match state.store.sync_gpu_catalog(&catalog).await {
+        Ok(devices) => Ok(devices),
+        Err(heterocloud_store::StoreError::RequestRejected(message)) => {
+            tracing::warn!(error = %message, "Flash GPU catalog validation failed");
+            Err(ApiError::FlashProviderUnavailable)
+        }
+        Err(error) => Err(ApiError::from_store(error)),
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -1602,6 +1693,29 @@ struct FlashListQuery {
     project_id: Option<Uuid>,
 }
 
+async fn list_accessible_gpu_types(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    sync_gpu_catalog_from_provider(&state).await?;
+    let user_id = match &actor {
+        AuthenticatedActor::User(session) => Some(session.user.user.id),
+        AuthenticatedActor::ApiKey { principal_id, .. } => state
+            .store
+            .principal_user_id(*principal_id)
+            .await
+            .map_err(ApiError::from_store)?,
+    };
+    let items = state
+        .store
+        .list_accessible_gpu_types(user_id)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(json!({ "items": items })))
+}
+
 async fn get_flash_quota(
     State(state): State<Arc<AppState>>,
     Path(organization_id): Path<Uuid>,
@@ -1677,6 +1791,9 @@ async fn create_flash_service(
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     validate_name(&request.name)?;
     validate_flash_spec(&request.spec)?;
+    if request.spec.gpu_type.is_some() {
+        sync_gpu_catalog_from_provider(&state).await?;
+    }
     let authorization = authorize_actor(
         &state,
         &actor,
@@ -1744,6 +1861,9 @@ async fn update_flash_service(
     flash_service(&state, organization_id, service_instance_id).await?;
     validate_name(&request.name)?;
     validate_flash_spec(&request.spec)?;
+    if request.spec.gpu_type.is_some() {
+        sync_gpu_catalog_from_provider(&state).await?;
+    }
     let authorization = authorize_actor(
         &state,
         &actor,
@@ -2499,6 +2619,7 @@ fn flash_provider_context(
 ) -> FlashProviderContext {
     FlashProviderContext {
         principal_id,
+        user_id: None,
         organization_id: instance.organization_id,
         project_id: instance.project_id,
         service_instance_id: instance.id,
@@ -4320,7 +4441,7 @@ mod tests {
             autoscaling: None,
             cpu_millis: 500,
             memory_mib: 512,
-            gpu_count: 0,
+            gpu_type: None,
             ephemeral_storage_gib: 10,
             ports: vec![FlashPort {
                 name: "game-udp".into(),
