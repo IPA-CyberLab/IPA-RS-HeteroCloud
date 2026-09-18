@@ -21,6 +21,28 @@ export function flashProviderStatus(
     : status;
 }
 
+export function flashGpuQueueMessage(status: FlashServiceStatus): string | null {
+  const providerStatus = flashProviderStatus(status);
+  const rawPhase = providerStatus.gpu_scheduling?.phase;
+  const message =
+    typeof providerStatus.message === "string" ? providerStatus.message : "";
+  const queued =
+    rawPhase === "queued" ||
+    rawPhase === "retry" ||
+    /queued|waiting for .*gpu|returned to the queue/i.test(message);
+  if (!queued) return null;
+  if (rawPhase === "retry" || /lost|retry/i.test(message)) {
+    return "GPU割り当てを再試行しています。空き次第、自動で開始します。";
+  }
+  return "利用可能なGPUを待っています。空き次第、自動で開始します。";
+}
+
+export function flashDisplayState(
+  service: Pick<FlashService, "state" | "status">,
+): FlashService["state"] | "queued" {
+  return flashGpuQueueMessage(service.status) ? "queued" : service.state;
+}
+
 function endpointAddress(endpoint: FlashServiceEndpoint): string | null {
   const transport = ["tcp", "udp"].includes(endpoint.protocol?.toLowerCase() ?? "");
   if (endpoint.url && !transport) return endpoint.url;

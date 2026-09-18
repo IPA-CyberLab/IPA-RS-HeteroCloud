@@ -192,6 +192,64 @@ describe("HeteroCloudApiClient", () => {
     ]);
   });
 
+  it("GPUカタログを物理IDなしの利用者APIから取得し、Ownerはアクセスだけを更新する", async () => {
+    const gpuId = "0198a121-ffbd-70c2-a3c8-c65516d7b8fb";
+    const ownerGpu = {
+      id: gpuId,
+      management_id: "uc-k8sp5/gpu-0",
+      gpu_type: "nvidia-geforce-gtx-1080-ti",
+      display_name: "NVIDIA GeForce GTX 1080 Ti",
+      available: true,
+      visibility: "private",
+      assigned_user_ids: [session.user.id],
+      created_at: "2026-09-18T00:00:00Z",
+      updated_at: "2026-09-18T01:00:00Z",
+    } as const;
+    const fetcher = vi.fn(
+      async (input: string | URL | Request) => {
+        const path = String(input);
+        if (path.endsWith("/auth/session")) return jsonResponse(session);
+        if (path.endsWith("/flash/gpu-types")) {
+          return jsonResponse({
+            items: [
+              {
+                gpu_type: "nvidia-geforce-gtx-1080-ti",
+                display_name: "NVIDIA GeForce GTX 1080 Ti",
+                access: "open",
+                total: 2,
+                available: 1,
+              },
+            ],
+          });
+        }
+        if (path.endsWith("/owner/gpus")) {
+          return jsonResponse({ items: [ownerGpu] });
+        }
+        return jsonResponse(ownerGpu);
+      },
+    ) as unknown as typeof fetch;
+    const client = new HeteroCloudApiClient("/api/v1", fetcher);
+
+    await client.auth.session();
+    await client.flash.gpuTypes();
+    const ownerGpus = await client.owner.gpus.list();
+    await client.owner.gpus.update(gpuId, {
+      visibility: "private",
+      assigned_user_ids: [session.user.id],
+    });
+
+    expect(vi.mocked(fetcher).mock.calls[1][0]).toBe("/api/v1/flash/gpu-types");
+    expect(vi.mocked(fetcher).mock.calls[2][0]).toBe("/api/v1/owner/gpus");
+    expect(ownerGpus.items[0].available).toBe(true);
+    const [updateUrl, updateOptions] = vi.mocked(fetcher).mock.calls[3];
+    expect(updateUrl).toBe(`/api/v1/owner/gpus/${gpuId}`);
+    expect(updateOptions?.method).toBe("PUT");
+    expect(JSON.parse(String(updateOptions?.body))).toEqual({
+      visibility: "private",
+      assigned_user_ids: [session.user.id],
+    });
+  });
+
   it("Flowの管理API契約を使う", async () => {
     const serviceId = "0198a121-ffbd-70c2-a3c8-c65516d7b8fb";
     const service = {

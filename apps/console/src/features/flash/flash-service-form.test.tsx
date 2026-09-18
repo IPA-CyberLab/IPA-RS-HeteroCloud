@@ -1,13 +1,15 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { FlashQuotaLimits, RegistryImage } from "@/lib/api-types";
+import type { FlashGpuType, FlashQuotaLimits, RegistryImage } from "@/lib/api-types";
 import {
   defaultFlashQuotaLimits,
   defaultFlashServiceFormValue,
   FlashServiceForm,
   flashFormValidationError,
   flashFormFromService,
+  flashFormWithGpuType,
+  flashGpuTypeOptions,
   flashRegistryImageOptions,
   flashSpecFromForm,
   parseFlashDestinationCidrs,
@@ -20,7 +22,15 @@ vi.mock("@/components/shared/resource-selectors", () => ({
   ProjectSelector: () => <div>Project selector</div>,
 }));
 
-function FormHarness({ quota, initial = {} }: { quota?: FlashQuotaLimits; initial?: Partial<FlashServiceFormValue> }) {
+function FormHarness({
+  quota,
+  initial = {},
+  gpuTypes = [],
+}: {
+  quota?: FlashQuotaLimits;
+  initial?: Partial<FlashServiceFormValue>;
+  gpuTypes?: FlashGpuType[];
+}) {
   const [value, setValue] = useState<FlashServiceFormValue>({
     ...defaultFlashServiceFormValue,
     projectId: "project-1",
@@ -35,10 +45,11 @@ function FormHarness({ quota, initial = {} }: { quota?: FlashQuotaLimits; initia
         onChange={setValue}
         onSubmit={(event) => event.preventDefault()}
         quota={quota}
+        gpuTypes={gpuTypes}
       >
         <button type="submit">保存</button>
       </FlashServiceForm>
-      <output data-testid="gpu-count">{value.gpuCount}</output>
+      <output data-testid="gpu-type">{value.gpuType}</output>
     </>
   );
 }
@@ -58,6 +69,23 @@ const untaggedRegistryImage: RegistryImage = {
   tag: null,
   digest: "sha256:fedcba9876543210",
 };
+
+const gpuTypes: FlashGpuType[] = [
+  {
+    gpu_type: "nvidia-geforce-gtx-1080-ti",
+    display_name: "NVIDIA GeForce GTX 1080 Ti",
+    access: "open",
+    total: 2,
+    available: 1,
+  },
+  {
+    gpu_type: "nvidia-a100",
+    display_name: "NVIDIA A100",
+    access: "private",
+    total: 1,
+    available: 0,
+  },
+];
 
 function RegistryImageFormHarness() {
   const [value, setValue] = useState<FlashServiceFormValue>({
@@ -89,7 +117,9 @@ describe("FlashServiceForm", () => {
     expect(screen.getByRole("spinbutton", { name: "レプリカ" })).toHaveValue(1);
     expect(screen.getByRole("spinbutton", { name: "CPU" })).toHaveValue(500);
     expect(screen.getByRole("spinbutton", { name: "メモリ" })).toHaveValue(512);
-    expect(screen.getByText("使用しない")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /GPU種類.*GPUなし/ }),
+    ).toHaveTextContent("GPUなし");
     expect(screen.getByRole("button", { name: /udpのプロトコル/ })).toHaveTextContent("UDP");
     expect(screen.queryByRole("spinbutton", { name: "サービスポート" })).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "CPU" })).toHaveAttribute("max", "4000");
@@ -141,26 +171,84 @@ describe("FlashServiceForm", () => {
     ).toBeNull();
   });
 
-  it("GPUをVMあたり1基だけ要求して編集時にも保持する", () => {
-    render(<FormHarness initial={{ gpuCount: 1 }} />);
-    expect(screen.getByText("1 GPU")).toBeInTheDocument();
-    expect(screen.getByTestId("gpu-count")).toHaveTextContent("1");
+  it("物理GPUを公開せず種類だけを要求して編集時にも保持する", () => {
+    render(
+      <FormHarness
+        initial={{ gpuType: "nvidia-geforce-gtx-1080-ti" }}
+        gpuTypes={gpuTypes}
+      />,
+    );
+    expect(
+      screen.getByRole("button", {
+        name: /GPU種類.*NVIDIA GeForce GTX 1080 Ti/,
+      }),
+    ).toHaveTextContent("NVIDIA GeForce GTX 1080 Ti");
+    expect(screen.getByTestId("gpu-type")).toHaveTextContent(
+      "nvidia-geforce-gtx-1080-ti",
+    );
+
+    expect(flashGpuTypeOptions(gpuTypes)).toMatchObject([
+      { value: "", label: "GPUなし" },
+      {
+        value: "nvidia-geforce-gtx-1080-ti",
+        labelTag: "Open",
+        description: "空き 1 / 2",
+      },
+      {
+        value: "nvidia-a100",
+        labelTag: "Private",
+        description: "空き 0 / 1・開始まで待機",
+      },
+    ]);
+    expect(flashGpuTypeOptions(gpuTypes)[2]).not.toHaveProperty("disabled");
 
     const spec = flashSpecFromForm({
       ...defaultFlashServiceFormValue,
       projectId: "project-1",
       name: "gpu-service",
       image: "example/cuda:v1",
-      gpuCount: 1,
+      gpuType: "nvidia-geforce-gtx-1080-ti",
     });
-    expect(spec.gpu_count).toBe(1);
+    expect(spec.gpu_type).toBe("nvidia-geforce-gtx-1080-ti");
+    expect(spec).not.toHaveProperty("gpu_count");
     const form = flashFormFromService({
       project_id: "project-1",
       name: "gpu-service",
       spec: { ...spec, ports: spec.ports.map((port) => ({ ...port, service_port: 30_001 })) },
     });
-    expect(form.gpuCount).toBe(1);
-    expect(flashSpecFromForm(form).gpu_count).toBe(1);
+    expect(form.gpuType).toBe("nvidia-geforce-gtx-1080-ti");
+    expect(flashSpecFromForm(form).gpu_type).toBe(
+      "nvidia-geforce-gtx-1080-ti",
+    );
+
+    const adjusted = flashFormWithGpuType(
+      {
+        ...defaultFlashServiceFormValue,
+        projectId: "project-1",
+        name: "gpu-service",
+        image: "example/cuda:v1",
+        replicas: 5,
+        minReplicas: 2,
+        maxReplicas: 8,
+      },
+      "nvidia-geforce-gtx-1080-ti",
+    );
+    expect(adjusted).toMatchObject({
+      gpuType: "nvidia-geforce-gtx-1080-ti",
+      replicas: 1,
+      minReplicas: 1,
+      maxReplicas: 1,
+    });
+    expect(
+      flashFormValidationError({ ...adjusted, replicas: 2 }),
+    ).toBe("GPUを使用するサービスのレプリカは1にしてください。");
+    expect(
+      flashFormValidationError({
+        ...adjusted,
+        scaleMode: "auto",
+        maxReplicas: 2,
+      }),
+    ).toBe("GPUを使用するサービスの最大レプリカは1にしてください。");
   });
 
   it("Flash Registryと直接入力からコンテナイメージを指定できる", () => {

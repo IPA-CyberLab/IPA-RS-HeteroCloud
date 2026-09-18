@@ -130,6 +130,34 @@ export interface OwnerAccount {
   login_count: number;
 }
 
+export type GpuAccess = "open" | "private";
+
+/** GPU種類ごとの利用者向け集約。物理GPUの識別情報は含めない。 */
+export interface FlashGpuType {
+  gpu_type: string;
+  display_name: string;
+  access: GpuAccess;
+  total: number;
+  available: number;
+}
+
+export interface OwnerGpu {
+  id: string;
+  management_id: string;
+  gpu_type: string;
+  display_name: string;
+  available: boolean;
+  visibility: GpuAccess;
+  assigned_user_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpdateOwnerGpuAccessRequest {
+  visibility: GpuAccess;
+  assigned_user_ids: string[];
+}
+
 export interface RegistryCredential {
   id: string;
   name: string;
@@ -365,7 +393,7 @@ export interface FlashServiceSpec {
   autoscaling?: FlashAutoscaling;
   cpu_millis: number;
   memory_mib: number;
-  gpu_count?: number;
+  gpu_type?: string;
   ephemeral_storage_gib: number;
   ports: FlashPort[];
   exposure: FlashExposure;
@@ -399,6 +427,18 @@ export interface FlashServiceStatus {
   available_replicas?: number;
   runtime_class?: string;
   message?: string;
+  gpu_scheduling?: {
+    phase:
+      | "queued"
+      | "reserved"
+      | "running"
+      | "retry"
+      | "cancelled"
+      | "released"
+      | "rejected";
+    gpu_type?: string;
+    display_name?: string;
+  };
   endpoints?: FlashServiceEndpoint[] | Record<string, unknown>;
 }
 

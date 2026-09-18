@@ -126,6 +126,15 @@ async function mockApi(page: Page) {
     if (path === `/organizations/${organizationId}/realtime/services`) {
       return json(route, { items: [service] });
     }
+    if (path === `/organizations/${organizationId}/flash/services`) {
+      return json(route, { items: [] });
+    }
+    if (path === `/organizations/${organizationId}/registry/images`) {
+      return json(route, { items: [] });
+    }
+    if (path === `/organizations/${organizationId}/syouyu/buckets`) {
+      return json(route, { items: [] });
+    }
     if (path === `/organizations/${organizationId}/realtime/services/${serviceId}/metrics`) {
       return json(route, metrics);
     }
@@ -184,8 +193,15 @@ test("概要から Flow 詳細まで操作でき、グラフと接続先を表�
   const browserErrors = collectBrowserErrors(page);
   await page.goto("/overview");
 
-  await expect(page.getByRole("heading", { name: "コンソールホーム" })).toBeVisible();
-  await expect(page.getByText("HeteroCloud Lab のリソース、稼働状況、最近の操作です。")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "何を構築しますか？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "主要サービス" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "状態サマリー" })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "コンソールホームからサービスを検索" })).toBeVisible();
+  await expectNoPageOverflow(page);
+  await page.screenshot({
+    path: testInfo.outputPath("console-home.png"),
+    fullPage: true,
+  });
   await page.getByRole("link", { name: "Flow", exact: true }).first().click();
   await expect(page).toHaveURL(/\/flow\/services$/);
   await expect(page.getByRole("heading", { name: "Flow", exact: true })).toBeVisible();
@@ -233,5 +249,25 @@ test("モバイルでもナビゲーションと Flow 一覧を操作できる",
       fullPage: true,
     });
   }
+  expect(browserErrors).toEqual([]);
+});
+
+test("モバイルのコンソールホームでもサービスを探せる", async ({ page, isMobile }, testInfo) => {
+  test.skip(!isMobile, "モバイル表示の検証");
+  const browserErrors = collectBrowserErrors(page);
+  await page.goto("/overview");
+
+  await expect(page.getByRole("heading", { name: "何を構築しますか？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "主要サービス" })).toBeVisible();
+  const search = page.getByRole("combobox", {
+    name: "コンソールホームからサービスを検索",
+  });
+  await search.fill("Registry");
+  await expect(page.getByRole("option", { name: /Flash Registry/ })).toBeVisible();
+  await expectNoPageOverflow(page);
+  await page.screenshot({
+    path: testInfo.outputPath("console-home-mobile.png"),
+    fullPage: true,
+  });
   expect(browserErrors).toEqual([]);
 });

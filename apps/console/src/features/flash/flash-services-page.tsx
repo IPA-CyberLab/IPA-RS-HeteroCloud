@@ -18,6 +18,7 @@ import { useActiveOrganization } from "@/features/organizations/organization-con
 import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { FlashService } from "@/lib/api-types";
 import {
+  flashGpuTypesQueryOptions,
   flashQuotaQueryOptions,
   flashServicesQueryOptions,
   projectsQueryOptions,
@@ -33,6 +34,8 @@ import {
 } from "./flash-service-form";
 import {
   flashExposureLabel,
+  flashDisplayState,
+  flashGpuQueueMessage,
   flashServiceEndpoints,
   readyReplicas,
   requestedReplicas,
@@ -52,6 +55,10 @@ export function FlashServicesPage() {
   );
   const registryImages = useQuery({
     ...registryImagesQueryOptions(organizationId),
+    enabled: createOpen,
+  });
+  const gpuTypes = useQuery({
+    ...flashGpuTypesQueryOptions(),
     enabled: createOpen,
   });
   const createService = useMutation({
@@ -104,8 +111,15 @@ export function FlashServicesPage() {
       {
         accessorKey: "state",
         header: "状態",
-        cell: ({ getValue }) => (
-          <StatusBadge status={getValue<FlashService["state"]>()} />
+        cell: ({ row }) => (
+          <SpaceBetween size="xxs">
+            <StatusBadge status={flashDisplayState(row.original)} />
+            {flashGpuQueueMessage(row.original.status) ? (
+              <Box variant="small" color="text-body-secondary">
+                空き次第、自動で開始
+              </Box>
+            ) : null}
+          </SpaceBetween>
         ),
       },
       {
@@ -261,6 +275,14 @@ export function FlashServicesPage() {
             registryImages.isError
               ? "error"
               : registryImages.isPending
+                ? "loading"
+                : "finished"
+          }
+          gpuTypes={gpuTypes.data?.items}
+          gpuTypesStatus={
+            gpuTypes.isError
+              ? "error"
+              : gpuTypes.isPending
                 ? "loading"
                 : "finished"
           }

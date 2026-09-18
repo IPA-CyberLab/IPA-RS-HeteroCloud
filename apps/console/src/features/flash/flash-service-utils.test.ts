@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { FlashServiceStatus } from "@/lib/api-types";
-import { flashServiceEndpoints, requestedReplicas, readyReplicas, flashScaleLabel } from "./flash-service-utils";
+import {
+  flashDisplayState,
+  flashGpuQueueMessage,
+  flashServiceEndpoints,
+  requestedReplicas,
+  readyReplicas,
+  flashScaleLabel,
+} from "./flash-service-utils";
 import { defaultFlashServiceFormValue, flashSpecFromForm } from "./flash-service-form";
 
 describe("web endpoint display", () => {
@@ -107,4 +114,27 @@ it("separates configured scaling from provider requested replicas", () => {
   const unavailable = { status: { desired_replicas: 4, ready_replicas: 3, live_status_unavailable: true } };
   expect(requestedReplicas({ spec, status: unavailable })).toBeNull();
   expect(readyReplicas({ status: unavailable })).toBeNull();
+});
+
+it("GPU待機中のprovider messageを利用者向けqueued状態へ変換する", () => {
+  const status: FlashServiceStatus = {
+    status: {
+      phase: "provisioning",
+      gpu_scheduling: {
+        phase: "queued",
+        gpu_type: "nvidia-geforce-gtx-1080-ti",
+        display_name: "NVIDIA GeForce GTX 1080 Ti",
+      },
+      message: "queued for a visible healthy GPU of the requested type",
+    },
+  };
+  expect(flashGpuQueueMessage(status)).toBe(
+    "利用可能なGPUを待っています。空き次第、自動で開始します。",
+  );
+  expect(
+    flashDisplayState({ state: "provisioning", status }),
+  ).toBe("queued");
+  expect(
+    flashDisplayState({ state: "ready", status: { message: "running" } }),
+  ).toBe("ready");
 });

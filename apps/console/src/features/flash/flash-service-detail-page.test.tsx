@@ -182,4 +182,50 @@ describe("FlashServiceDetailPage", () => {
       expect.any(AbortSignal),
     );
   });
+
+  it("GPUキュー待機を表示してコンテナ未作成中のWeb Shellを無効にする", async () => {
+    vi.mocked(api.flash.services.get).mockResolvedValue({
+      ...service,
+      state: "provisioning",
+      spec: {
+        ...service.spec,
+        replicas: 1,
+        gpu_type: "nvidia-geforce-gtx-1080-ti",
+      },
+      status: {
+        status: {
+          phase: "provisioning",
+          gpu_scheduling: {
+            phase: "queued",
+            gpu_type: "nvidia-geforce-gtx-1080-ti",
+            display_name: "NVIDIA GeForce GTX 1080 Ti",
+          },
+          ready_replicas: 0,
+          desired_replicas: 1,
+          message: "queued for a visible healthy GPU of the requested type",
+        },
+      },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={[`/flash/services/${service.id}`]}>
+          <Routes>
+            <Route path="/flash/services/:serviceId" element={<FlashServiceDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("GPUジョブは待機中です")).toBeInTheDocument();
+    expect(screen.getByText("GPU待機中")).toBeInTheDocument();
+    expect(
+      screen.getByText("利用可能なGPUを待っています。空き次第、自動で開始します。"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Web Shell" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "編集" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "削除" })).toBeEnabled();
+  });
 });

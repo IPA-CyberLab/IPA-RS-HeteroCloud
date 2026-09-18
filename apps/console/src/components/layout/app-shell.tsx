@@ -6,9 +6,14 @@ import TopNavigation, {
   type TopNavigationProps,
 } from "@cloudscape-design/components/top-navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { navigationItems, routeTitles } from "@/components/layout/navigation";
+import {
+  rememberServiceVisit,
+  serviceForPath,
+} from "@/components/layout/service-catalog";
+import { ServiceSearch } from "@/components/layout/service-search";
 import { useSession } from "@/features/auth/session";
 import { useActiveOrganization } from "@/features/organizations/organization-context";
 import { api, getApiErrorMessage } from "@/lib/api-client";
@@ -32,7 +37,13 @@ function routeTitle(pathname: string) {
 
 function breadcrumbs(pathname: string, ownerConsole: boolean) {
   if (ownerConsole) {
-    return [{ text: "HeteroCloud Owner", href: "/overview" }, { text: "全アカウント管理", href: pathname }];
+    return [
+      { text: "HeteroCloud Owner", href: "/overview" },
+      {
+        text: pathname === "/overview" ? "全アカウント管理" : routeTitle(pathname),
+        href: pathname,
+      },
+    ];
   }
   const items = [{ text: "HeteroCloud", href: "/overview" }];
   if (pathname.startsWith("/iam/")) {
@@ -61,6 +72,11 @@ export function AppShell() {
   const session = useSession().data!;
   const { activeOrganization, memberships, setActiveOrganizationId } =
     useActiveOrganization();
+
+  useEffect(() => {
+    const service = serviceForPath(location.pathname);
+    if (service) rememberServiceVisit(service.id);
+  }, [location.pathname]);
 
   const logout = useMutation({
     mutationFn: api.auth.logout,
@@ -143,6 +159,14 @@ export function AppShell() {
               navigate("/overview");
             },
           }}
+          search={
+            session.owner_console ? undefined : (
+              <ServiceSearch
+                ariaLabel="HeteroCloudサービスを検索"
+                placeholder="サービスを検索 (例: Flash)"
+              />
+            )
+          }
           utilities={session.owner_console ? [accountUtility] : [organizationUtility, accountUtility]}
           i18nStrings={{
             overflowMenuTriggerText: "その他",

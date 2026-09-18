@@ -92,6 +92,11 @@ const OwnerQuotasPage = lazy(() =>
     default: module.OwnerQuotasPage,
   })),
 );
+const OwnerGpusPage = lazy(() =>
+  import("@/features/operator/gpus-page").then((module) => ({
+    default: module.OwnerGpusPage,
+  })),
+);
 
 function LazyPage({ children }: { children: React.ReactNode }) {
   return (
@@ -259,6 +264,16 @@ export function App() {
                   <OwnerRoute>
                     <LazyPage>
                       <OwnerQuotasPage />
+                    </LazyPage>
+                  </OwnerRoute>
+                }
+              />
+              <Route
+                path="/owner/gpus"
+                element={
+                  <OwnerRoute>
+                    <LazyPage>
+                      <OwnerGpusPage />
                     </LazyPage>
                   </OwnerRoute>
                 }

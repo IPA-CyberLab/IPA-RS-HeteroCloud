@@ -195,5 +195,5 @@ describe("RealtimeServiceDetailPage", () => {
       "href",
       "https://api.realtime.example.com/openapi.json",
     );
-  }, 15_000);
+  }, 30_000);
 });

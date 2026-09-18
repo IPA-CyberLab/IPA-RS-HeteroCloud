@@ -160,6 +160,27 @@ export function flashServicesQueryOptions(organizationId: string) {
   });
 }
 
+/** Keep the GPU catalog endpoint behind this adapter so its wire shape stays local. */
+export function flashGpuTypesQueryOptions() {
+  return queryOptions({
+    queryKey: ["flash", "gpu-types"],
+    queryFn: ({ signal }) => api.flash.gpuTypes(signal),
+    staleTime: 15_000,
+  });
+}
+
+export const ownerGpusQueryOptions = queryOptions({
+  queryKey: ["owner", "gpus"],
+  queryFn: ({ signal }) => api.owner.gpus.list(signal),
+  staleTime: 5_000,
+});
+
+export const ownerAccountsQueryOptions = queryOptions({
+  queryKey: ["owner", "accounts"],
+  queryFn: ({ signal }) => api.owner.accounts.list(signal),
+  staleTime: 30_000,
+});
+
 export function flashQuotaQueryOptions(organizationId: string) {
   return queryOptions({
     queryKey: ["organizations", organizationId, "flash", "quota"],

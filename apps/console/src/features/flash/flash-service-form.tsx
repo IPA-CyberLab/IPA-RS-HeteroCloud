@@ -15,6 +15,7 @@ import { ProjectSelector } from "@/components/shared/resource-selectors";
 import type {
   FlashExposure,
   FlashEgressMode,
+  FlashGpuType,
   FlashPortInput,
   FlashPortProtocol,
   FlashQuotaLimits,
@@ -44,7 +45,7 @@ export interface FlashServiceFormValue {
   endpointMode: NonNullable<FlashExposure["endpoint_mode"]>;
   cpuMillis: number;
   memoryMib: number;
-  gpuCount: 0 | 1;
+  gpuType: string;
   ephemeralStorageGib: number;
   ports: FlashPortInput[];
   exposureType: FlashExposure["type"];
@@ -79,7 +80,7 @@ export const defaultFlashServiceFormValue: FlashServiceFormValue = {
   endpointMode: "ip",
   cpuMillis: 500,
   memoryMib: 512,
-  gpuCount: 0,
+  gpuType: "",
   ephemeralStorageGib: 10,
   ports: [
     {
@@ -186,6 +187,51 @@ export function flashRegistryImageOptions(registryImages: RegistryImage[]) {
       labelTag: formatImageSize(image.size_bytes),
       filteringTags: [image.reference],
     }));
+}
+
+export function flashGpuTypeOptions(
+  gpuTypes: FlashGpuType[],
+  selectedGpuType = "",
+) {
+  const options = [
+    {
+      value: "",
+      label: "GPUなし",
+      description: "CPUのみで実行",
+    },
+    ...gpuTypes.map((gpu) => ({
+      value: gpu.gpu_type,
+      label: gpu.display_name,
+      description: `空き ${gpu.available.toLocaleString("ja-JP")} / ${gpu.total.toLocaleString("ja-JP")}${gpu.available < 1 ? "・開始まで待機" : ""}`,
+      labelTag: gpu.access === "open" ? "Open" : "Private",
+    })),
+  ];
+  if (
+    selectedGpuType &&
+    !gpuTypes.some((gpu) => gpu.gpu_type === selectedGpuType)
+  ) {
+    options.push({
+      value: selectedGpuType,
+      label: selectedGpuType,
+      description: "現在のサービスで使用中（カタログ対象外）",
+      labelTag: "使用中",
+    });
+  }
+  return options;
+}
+
+export function flashFormWithGpuType(
+  value: FlashServiceFormValue,
+  gpuType: string,
+): FlashServiceFormValue {
+  if (!gpuType) return { ...value, gpuType: "" };
+  return {
+    ...value,
+    gpuType,
+    replicas: 1,
+    minReplicas: Math.min(value.minReplicas, 1),
+    maxReplicas: 1,
+  };
 }
 
 export function parseFlashEnvironment(value: string): {
@@ -301,12 +347,18 @@ export function flashFormValidationError(
   if (!Number.isInteger(value.replicas) || value.replicas < 1 || value.replicas > quota.max_replicas_per_service) {
     return `レプリカは1〜${quota.max_replicas_per_service.toLocaleString("ja-JP")}で入力してください。`;
   }
+  if (value.gpuType && value.replicas !== 1) {
+    return "GPUを使用するサービスのレプリカは1にしてください。";
+  }
   if (value.scaleMode === "auto") {
     const minimum = value.endpointMode === "web" ? 0 : 1;
     if (!Number.isInteger(value.minReplicas) || !Number.isInteger(value.maxReplicas) ||
         value.minReplicas < minimum || value.maxReplicas < value.minReplicas ||
         value.maxReplicas > quota.max_replicas_per_service) {
       return `最小・最大レプリカは${minimum}〜${quota.max_replicas_per_service}で、最大を最小以上に設定してください。`;
+    }
+    if (value.gpuType && value.maxReplicas !== 1) {
+      return "GPUを使用するサービスの最大レプリカは1にしてください。";
     }
     if (value.replicas < value.minReplicas || value.replicas > value.maxReplicas) {
       return "レプリカは最小・最大レプリカの範囲内に設定してください。";
@@ -397,7 +449,7 @@ export function flashSpecFromForm(
     } } : {}),
     cpu_millis: value.cpuMillis,
     memory_mib: value.memoryMib,
-    ...(value.gpuCount === 1 ? { gpu_count: 1 } : {}),
+    ...(value.gpuType ? { gpu_type: value.gpuType } : {}),
     ephemeral_storage_gib: value.ephemeralStorageGib,
     ports: value.ports,
     exposure: {
@@ -469,7 +521,7 @@ export function flashFormFromService(
     endpointMode: service.spec.exposure.endpoint_mode ?? "ip",
     cpuMillis: service.spec.cpu_millis,
     memoryMib: service.spec.memory_mib,
-    gpuCount: service.spec.gpu_count === 1 ? 1 : 0,
+    gpuType: service.spec.gpu_type ?? "",
     ephemeralStorageGib: service.spec.ephemeral_storage_gib,
     ports: service.spec.ports.map(({ name, protocol, container_port }) => ({
       name,
@@ -501,6 +553,8 @@ export function FlashServiceForm({
   projectLocked,
   registryImages = [],
   registryImagesStatus = "finished",
+  gpuTypes = [],
+  gpuTypesStatus = "finished",
   quota = defaultFlashQuotaLimits,
   children,
 }: {
@@ -511,6 +565,8 @@ export function FlashServiceForm({
   projectLocked?: boolean;
   registryImages?: RegistryImage[];
   registryImagesStatus?: "loading" | "error" | "finished";
+  gpuTypes?: FlashGpuType[];
+  gpuTypesStatus?: "loading" | "error" | "finished";
   quota?: FlashQuotaLimits;
   children: ReactNode;
 }) {
@@ -545,6 +601,13 @@ export function FlashServiceForm({
   const registryImageOptions = flashRegistryImageOptions(registryImages);
   const selectedRegistryImage =
     registryImageOptions.find((option) => option.value === value.image) ?? null;
+  const gpuTypeOptions = flashGpuTypeOptions(gpuTypes, value.gpuType);
+  const selectedGpuType =
+    gpuTypeOptions.find((option) => option.value === value.gpuType) ?? gpuTypeOptions[0];
+  const selectedGpuCatalogEntry = gpuTypes.find(
+    (gpu) => gpu.gpu_type === value.gpuType,
+  );
+  const replicaLimit = value.gpuType ? 1 : quota.max_replicas_per_service;
 
   return (
     <form onSubmit={onSubmit}>
@@ -629,22 +692,26 @@ export function FlashServiceForm({
           </FormField>
           <FormField
             label={value.scaleMode === "auto" ? "初期レプリカ" : "レプリカ"}
-            constraintText={`1〜${quota.max_replicas_per_service.toLocaleString("ja-JP")}（アカウント上限）`}
+            constraintText={
+              value.gpuType
+                ? "GPU利用時は1に固定"
+                : `1〜${quota.max_replicas_per_service.toLocaleString("ja-JP")}（アカウント上限）`
+            }
           >
             <Input
               type="number"
               inputMode="numeric"
               step={1}
-              nativeInputAttributes={{ min: 1, max: quota.max_replicas_per_service }}
+              nativeInputAttributes={{ min: 1, max: replicaLimit }}
               value={String(value.replicas)}
-              disabled={disabled}
+              disabled={disabled || Boolean(value.gpuType)}
               onChange={({ detail }) =>
                 update(
                   "replicas",
                   boundedInteger(
                     detail.value,
                     1,
-                    quota.max_replicas_per_service,
+                    replicaLimit,
                     value.replicas,
                   ),
                 )
@@ -665,7 +732,7 @@ export function FlashServiceForm({
                   ...value,
                   scaleMode,
                   minReplicas: Math.min(value.minReplicas, value.replicas),
-                  maxReplicas: Math.min(quota.max_replicas_per_service, Math.max(value.maxReplicas, value.replicas)),
+                  maxReplicas: Math.min(replicaLimit, Math.max(value.maxReplicas, value.replicas)),
                 });
               }}
             />
@@ -675,11 +742,11 @@ export function FlashServiceForm({
                 {([["minReplicas", "最小レプリカ"], ["maxReplicas", "最大レプリカ"]] as const).map(([key, label]) => (
                   <FormField key={key} label={label}>
                     <Input type="number" inputMode="numeric" step={1}
-                      nativeInputAttributes={{ min: key === "minReplicas" && value.endpointMode === "web" ? 0 : 1, max: quota.max_replicas_per_service }}
-                      value={String(value[key])} disabled={disabled}
+                      nativeInputAttributes={{ min: key === "minReplicas" && value.endpointMode === "web" ? 0 : 1, max: replicaLimit }}
+                      value={String(value[key])} disabled={disabled || (Boolean(value.gpuType) && key === "maxReplicas")}
                       onChange={({ detail }) => {
                         const minimum = key === "minReplicas" && value.endpointMode === "web" ? 0 : 1;
-                        const next = boundedInteger(detail.value, minimum, quota.max_replicas_per_service, value[key]);
+                        const next = boundedInteger(detail.value, minimum, replicaLimit, value[key]);
                         onChange({ ...value, [key]: next, replicas: key === "minReplicas"
                           ? Math.max(value.replicas, next) : Math.min(value.replicas, next) });
                       }} />
@@ -789,16 +856,28 @@ export function FlashServiceForm({
             />
           </FormField>
           <FormField
-            label="GPU"
-            description="対応ノードでは1 VMにつきGPUを1基専有します。"
+            label="GPU種類"
+            description={
+              selectedGpuCatalogEntry?.available === 0
+                ? "現在空きはありません。リクエストは受け付けられ、GPUが空き次第自動で開始します。"
+                : "1 VMにつき1基を専有します。同じ種類の物理GPUはスケジューラーが自動で割り当てます。"
+            }
           >
-            <Toggle
-              checked={value.gpuCount === 1}
+            <Select
+              ariaLabel="GPU種類"
+              selectedAriaLabel="選択済み"
+              selectedOption={selectedGpuType}
+              options={gpuTypeOptions}
+              statusType={gpuTypesStatus}
+              loadingText="利用可能なGPUを読み込んでいます"
+              errorText="GPU一覧を取得できません"
+              empty="利用可能なGPUはありません"
               disabled={disabled}
-              onChange={({ detail }) => update("gpuCount", detail.checked ? 1 : 0)}
-            >
-              {value.gpuCount === 1 ? "1 GPU" : "使用しない"}
-            </Toggle>
+              onChange={({ detail }) => {
+                const gpuType = detail.selectedOption.value ?? "";
+                onChange(flashFormWithGpuType(value, gpuType));
+              }}
+            />
           </FormField>
         </ColumnLayout>
         <ColumnLayout columns={2}>

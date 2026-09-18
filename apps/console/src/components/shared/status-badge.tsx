@@ -5,6 +5,7 @@ import StatusIndicator, {
 const labels: Record<string, string> = {
   active: "有効",
   pending: "準備中",
+  queued: "GPU待機中",
   suspended: "停止中",
   deleting: "削除中",
   error: "エラー",
@@ -31,6 +32,7 @@ const types: Record<string, StatusIndicatorProps.Type> = {
   success: "success",
   allow: "success",
   pending: "pending",
+  queued: "pending",
   provisioning: "in-progress",
   updating: "in-progress",
   invited: "info",

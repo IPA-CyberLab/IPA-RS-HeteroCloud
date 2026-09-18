@@ -26,6 +26,7 @@ import { useActiveOrganization } from "@/features/organizations/organization-con
 import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { FlashPort } from "@/lib/api-types";
 import {
+  flashGpuTypesQueryOptions,
   flashQuotaQueryOptions,
   flashServiceQueryOptions,
   projectsQueryOptions,
@@ -46,6 +47,8 @@ import {
 } from "./flash-web-shell";
 import {
   flashExposureLabel,
+  flashDisplayState,
+  flashGpuQueueMessage,
   flashProviderStatus,
   flashProtocolLabel,
   flashServiceEndpoints,
@@ -97,6 +100,10 @@ export function FlashServiceDetailPage() {
   const [editForm, setEditForm] = useState<FlashServiceFormValue | null>(null);
   const registryImages = useQuery({
     ...registryImagesQueryOptions(organizationId),
+    enabled: editOpen,
+  });
+  const gpuTypes = useQuery({
+    ...flashGpuTypesQueryOptions(),
     enabled: editOpen,
   });
   const containers = useQuery({
@@ -173,8 +180,9 @@ export function FlashServiceDetailPage() {
     item.project_id;
   const disabled = item.state === "deleting";
   const providerStatus = flashProviderStatus(item.status);
-  const statusMessage =
-    typeof providerStatus.message === "string" ? providerStatus.message : null;
+  const gpuQueueMessage = flashGpuQueueMessage(item.status);
+  const statusMessage = gpuQueueMessage ??
+    (typeof providerStatus.message === "string" ? providerStatus.message : null);
   const validationError = editForm
     ? flashFormValidationError(editForm, quota.data)
     : null;
@@ -226,7 +234,7 @@ export function FlashServiceDetailPage() {
             />
             <Button
               iconName="script"
-              disabled={disabled}
+              disabled={disabled || Boolean(gpuQueueMessage)}
               onClick={() => {
                 setShellPod(null);
                 setShellSession(0);
@@ -270,7 +278,14 @@ export function FlashServiceDetailPage() {
           ))}
         </ColumnLayout>
       </Container>
-      {statusMessage ? <Alert type={item.state === "error" ? "error" : "info"}>{statusMessage}</Alert> : null}
+      {statusMessage ? (
+        <Alert
+          type={item.state === "error" ? "error" : "info"}
+          header={gpuQueueMessage ? "GPUジョブは待機中です" : undefined}
+        >
+          {statusMessage}
+        </Alert>
+      ) : null}
       <Container header={<Header variant="h2">エンドポイント</Header>}>
         <FlashEndpoints endpoints={endpoints} />
       </Container>
@@ -324,7 +339,7 @@ export function FlashServiceDetailPage() {
           <KeyValuePairs
             columns={2}
             items={[
-              { label: "状態", value: <StatusBadge status={item.state} /> },
+              { label: "状態", value: <StatusBadge status={flashDisplayState(item)} /> },
               { label: "プロジェクト", value: projectName },
               { label: "リージョン", value: item.spec.region },
               { label: "スケーリング", value: flashScaleLabel(item.spec) },
@@ -334,7 +349,13 @@ export function FlashServiceDetailPage() {
               ].filter(Boolean).join(" / ") }] : []),
               { label: "CPU", value: `${formatNumber(item.spec.cpu_millis)} millicores` },
               { label: "メモリ", value: `${formatNumber(item.spec.memory_mib)} MiB` },
-              { label: "GPU", value: item.spec.gpu_count === 1 ? "1 GPU" : "なし" },
+              {
+                label: "GPU",
+                value:
+                  providerStatus.gpu_scheduling?.display_name ??
+                  item.spec.gpu_type ??
+                  "なし",
+              },
               { label: "ディスク上限（イメージ込み）", value: `${formatNumber(item.spec.ephemeral_storage_gib)} GiB` },
               { label: "更新日時", value: formatDateTime(item.updated_at) },
             ]}
@@ -485,6 +506,14 @@ export function FlashServiceDetailPage() {
               registryImages.isError
                 ? "error"
                 : registryImages.isPending
+                  ? "loading"
+                  : "finished"
+            }
+            gpuTypes={gpuTypes.data?.items}
+            gpuTypesStatus={
+              gpuTypes.isError
+                ? "error"
+                : gpuTypes.isPending
                   ? "loading"
                   : "finished"
             }

@@ -32,6 +32,7 @@ test(`Flash autoscaling and ${endpointMode} edit on desktop and mobile`, async (
     };
     else if (path.endsWith("/projects")) body = { items: [{ id: "project-test", organization_id: "org-test", slug: "test", name: "Test", created_at: timestamp }] };
     else if (path.endsWith("/flash/quota")) body = { max_services: 100, max_replicas_per_service: 100, max_cpu_millis_per_vm: 4000, max_memory_mib_per_vm: 8128, max_disk_gib_per_vm: 10, max_total_replicas: 100, max_total_cpu_millis: 20000, max_total_memory_mib: 32768, max_total_disk_gib: 100 };
+    else if (path.endsWith("/flash/gpu-types")) body = { items: [{ gpu_type: "nvidia-geforce-gtx-1080-ti", display_name: "NVIDIA GeForce GTX 1080 Ti", access: "open", total: 2, available: 2 }] };
     else if (path.endsWith("/flash/services/flash-test")) {
       if (route.request().method() !== "GET") saved = route.request().postDataJSON();
       body = saved ? { ...service, ...saved } : service;
@@ -103,3 +104,48 @@ test(`Flash autoscaling and ${endpointMode} edit on desktop and mobile`, async (
   expect(errors).toEqual([]);
 });
 }
+
+
+test("Flash作成ではGPU種類だけを選び、レプリカを1に固定する", async ({ page, isMobile }, testInfo) => {
+  test.skip(Boolean(isMobile), "デスクトップのGPU選択を検証");
+  const timestamp = "2026-09-18T00:00:00Z";
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let body: unknown;
+    if (path.endsWith("/auth/session")) body = {
+      user: { id: "user-test", email: "test@example.test", display_name: "Test", status: "active", created_at: timestamp },
+      memberships: [{ organization_id: "org-test", organization_slug: "test", organization_name: "Test", principal_id: "principal-test", role: "owner" }], csrf_token: "test-token",
+    };
+    else if (path.endsWith("/projects")) body = { items: [{ id: "project-test", organization_id: "org-test", slug: "test", name: "Test", created_at: timestamp }] };
+    else if (path.endsWith("/flash/quota")) body = { max_services: 100, max_replicas_per_service: 100, max_cpu_millis_per_vm: 4000, max_memory_mib_per_vm: 8128, max_disk_gib_per_vm: 10, max_total_replicas: 100, max_total_cpu_millis: 20000, max_total_memory_mib: 32768, max_total_disk_gib: 100, max_weekly_gpu_seconds: 40320 };
+    else if (path.endsWith("/flash/services")) body = { items: [] };
+    else if (path.endsWith("/registry/images")) body = { items: [] };
+    else if (path.endsWith("/flash/gpu-types")) body = { items: [
+      { gpu_type: "nvidia-geforce-gtx-1080-ti", display_name: "NVIDIA GeForce GTX 1080 Ti", access: "open", total: 2, available: 1 },
+      { gpu_type: "nvidia-a100", display_name: "NVIDIA A100", access: "private", total: 1, available: 0 },
+    ] };
+    else return route.fulfill({ status: 404, json: { error: { code: "unhandled", message: path } } });
+    return route.fulfill({ json: body });
+  });
+
+  await page.goto("/flash/services");
+  await page.getByRole("button", { name: "サービスを作成" }).click();
+  const dialog = page.getByRole("dialog", { name: "Flashサービスを作成" });
+  await dialog.getByRole("button", { name: /GPU種類.*GPUなし/ }).click();
+  const queuedGpu = page.getByRole("option", {
+    name: /NVIDIA A100.*Private.*空き 0 \/ 1.*開始まで待機/,
+  });
+  await expect(queuedGpu).not.toHaveAttribute("aria-disabled", "true");
+  await queuedGpu.click();
+
+  await expect(dialog.getByRole("button", { name: /GPU種類.*NVIDIA A100/ })).toBeVisible();
+  await expect(
+    dialog.getByText("現在空きはありません。リクエストは受け付けられ、GPUが空き次第自動で開始します。"),
+  ).toBeVisible();
+  await expect(dialog.getByRole("spinbutton", { name: "レプリカ" })).toHaveValue("1");
+  await expect(dialog.getByRole("spinbutton", { name: "レプリカ" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "自動" }).click();
+  await expect(dialog.getByRole("spinbutton", { name: "最大レプリカ" })).toHaveValue("1");
+  await expect(dialog.getByRole("spinbutton", { name: "最大レプリカ" })).toBeDisabled();
+  await page.screenshot({ path: testInfo.outputPath("flash-gpu-type.png"), fullPage: true });
+});

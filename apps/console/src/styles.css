@@ -33,6 +33,40 @@ body {
   outline-offset: 2px;
 }
 
+.console-home__hero {
+  overflow: hidden;
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 85% 15%, rgb(48 157 116 / 35%), transparent 32%),
+    linear-gradient(125deg, #101820 0%, #16382d 58%, #1f5b47 100%);
+  color: #fff;
+  box-shadow: 0 8px 24px rgb(15 29 24 / 18%);
+}
+
+.console-home__hero-content {
+  width: min(100%, 760px);
+  padding: 36px 40px 40px;
+}
+
+.console-home__hero h1 {
+  margin: 8px 0;
+  color: inherit;
+  font-size: clamp(2rem, 5vw, 3.2rem);
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+}
+
+.console-home__hero p {
+  margin: 0 0 24px;
+  color: #d5e8e0;
+  font-size: 1rem;
+  line-height: 1.65;
+}
+
+.console-home__search {
+  width: min(100%, 620px);
+}
+
 .auth-shell {
   min-height: 100vh;
   background: #f2f3f3;
@@ -69,6 +103,14 @@ body {
 @media (max-width: 767px) {
   .mobile-hidden {
     display: none;
+  }
+
+  .console-home__hero {
+    border-radius: 10px;
+  }
+
+  .console-home__hero-content {
+    padding: 28px 20px 30px;
   }
 }
 

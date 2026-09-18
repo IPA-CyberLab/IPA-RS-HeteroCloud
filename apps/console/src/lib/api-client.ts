@@ -15,6 +15,7 @@ import type {
   CreateSyouyuCredentialRequest,
   ErrorEnvelope,
   FlashQuotaLimits,
+  FlashGpuType,
   FlashService,
   FlashContainerList,
   IamPolicy,
@@ -22,6 +23,7 @@ import type {
   LoginRequest,
   Organization,
   OwnerAccount,
+  OwnerGpu,
   OwnerQuotaOverview,
   Principal,
   Project,
@@ -46,6 +48,7 @@ import type {
   SyouyuQuotaLimits,
   SyouyuUsage,
   UpdateSyouyuBucketRequest,
+  UpdateOwnerGpuAccessRequest,
   UpdateRealtimeServiceRequest,
   UpdateFlashServiceRequest,
   UserLoginEvent,
@@ -279,6 +282,15 @@ export class HeteroCloudApiClient {
           `/owner/quotas/organizations/${encodeURIComponent(organizationId)}`,
           { method: "DELETE" },
         ),
+    },
+    gpus: {
+      list: (signal?: AbortSignal) =>
+        this.request<CollectionResponse<OwnerGpu>>("/owner/gpus", { signal }),
+      update: (gpuId: string, input: UpdateOwnerGpuAccessRequest) =>
+        this.request<OwnerGpu>(`/owner/gpus/${encodeURIComponent(gpuId)}`, {
+          method: "PUT",
+          body: input,
+        }),
     },
   };
 
@@ -561,6 +573,10 @@ export class HeteroCloudApiClient {
   };
 
   readonly flash = {
+    gpuTypes: (signal?: AbortSignal) =>
+      this.request<CollectionResponse<FlashGpuType>>("/flash/gpu-types", {
+        signal,
+      }),
     quota: (organizationId: string, signal?: AbortSignal) =>
       this.request<FlashQuotaLimits>(
         organizationPath(organizationId, "flash/quota"),
