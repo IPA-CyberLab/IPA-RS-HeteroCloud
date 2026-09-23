@@ -60,14 +60,21 @@ service-account principal and API key in the IAM console, bind only the
 required `realtime:*`, `flash:*`, or `syouyu:*` actions, and keep the secret out
 of shell history and source control:
 
+For guided installation, open **CLI setup** (`/cli`) in your HeteroCloud
+console and choose **ChatGPTでセットアップ**. The launcher prepares a desktop-app
+prompt for the current console origin and organization. It covers OS and CPU
+detection, checksum verification, PATH installation, and initial configuration;
+API keys are never embedded in the launch URL. The same prompt can be copied
+when the desktop-app protocol is unavailable.
+
 Install the matching archive and adjacent checksum from the
 [latest release](https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/releases/latest).
-For Linux x64, extract `heterocloud-v0.1.75-linux-x64.tar.gz`, verify it with
+For Linux x64, extract `heterocloud-v0.1.76-linux-x64.tar.gz`, verify it with
 `sha256sum -c`, then install the binary:
 
 ```sh
-sha256sum -c heterocloud-v0.1.75-linux-x64.tar.gz.sha256
-tar -xzf heterocloud-v0.1.75-linux-x64.tar.gz
+sha256sum -c heterocloud-v0.1.76-linux-x64.tar.gz.sha256
+tar -xzf heterocloud-v0.1.76-linux-x64.tar.gz
 sudo install -m 0755 heterocloud /usr/local/bin/heterocloud
 heterocloud --version
 ```
@@ -75,12 +82,12 @@ heterocloud --version
 The release publishes native x64 and ARM64 builds for all three supported
 operating systems:
 
-- `heterocloud-v0.1.75-linux-x64.tar.gz`
-- `heterocloud-v0.1.75-linux-arm64.tar.gz`
-- `heterocloud-v0.1.75-macos-x64.tar.gz`
-- `heterocloud-v0.1.75-macos-arm64.tar.gz`
-- `heterocloud-v0.1.75-windows-x64.zip`
-- `heterocloud-v0.1.75-windows-arm64.zip`
+- `heterocloud-v0.1.76-linux-x64.tar.gz`
+- `heterocloud-v0.1.76-linux-arm64.tar.gz`
+- `heterocloud-v0.1.76-macos-x64.tar.gz`
+- `heterocloud-v0.1.76-macos-arm64.tar.gz`
+- `heterocloud-v0.1.76-windows-x64.zip`
+- `heterocloud-v0.1.76-windows-arm64.zip`
 
 Linux archives are statically linked so they do not depend on the host's glibc
 version.

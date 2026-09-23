@@ -108,7 +108,9 @@ export function AppShell() {
   const contentType =
     location.pathname === "/overview"
       ? "dashboard"
-      : location.pathname === "/settings" || location.pathname.startsWith("/owner/")
+      : location.pathname === "/settings" ||
+          location.pathname === "/cli" ||
+          location.pathname.startsWith("/owner/")
         ? "form"
         : "table";
 

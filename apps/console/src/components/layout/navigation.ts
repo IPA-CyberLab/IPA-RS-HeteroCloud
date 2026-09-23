@@ -5,6 +5,11 @@ const baseNavigationItems: SideNavigationProps.Item[] = [
   { type: "divider" },
   {
     type: "section",
+    text: "開発ツール",
+    items: [{ type: "link", text: "CLIセットアップ", href: "/cli" }],
+  },
+  {
+    type: "section",
     text: "Flash",
     items: [
       { type: "link", text: "サービス", href: "/flash/services" },
@@ -58,6 +63,7 @@ export const routeTitles: Record<string, string> = {
   "/syouyu/buckets": "Syouyu",
   "/audit-logs": "監査ログ",
   "/settings": "設定",
+  "/cli": "CLIセットアップ",
   "/owner/quotas": "全アカウント管理",
   "/owner/gpus": "GPU管理",
   "/owner/cost-management": "コスト管理",

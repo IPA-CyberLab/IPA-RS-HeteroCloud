@@ -87,6 +87,11 @@ const SettingsPage = lazy(() =>
     default: module.SettingsPage,
   })),
 );
+const CliSetupPage = lazy(() =>
+  import("@/features/cli/cli-setup-page").then((module) => ({
+    default: module.CliSetupPage,
+  })),
+);
 const OwnerQuotasPage = lazy(() =>
   import("@/features/operator/quotas-page").then((module) => ({
     default: module.OwnerQuotasPage,
@@ -273,6 +278,14 @@ export function App() {
                 element={
                   <LazyPage>
                     <SettingsPage />
+                  </LazyPage>
+                }
+              />
+              <Route
+                path="/cli"
+                element={
+                  <LazyPage>
+                    <CliSetupPage />
                   </LazyPage>
                 }
               />
