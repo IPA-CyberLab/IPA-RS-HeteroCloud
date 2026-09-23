@@ -62,18 +62,28 @@ of shell history and source control:
 
 Install the matching archive and adjacent checksum from the
 [latest release](https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/releases/latest).
-For Linux x64, extract `heterocloud-v0.1.74-linux-x64.tar.gz`, verify it with
+For Linux x64, extract `heterocloud-v0.1.75-linux-x64.tar.gz`, verify it with
 `sha256sum -c`, then install the binary:
 
 ```sh
-sha256sum -c heterocloud-v0.1.74-linux-x64.tar.gz.sha256
-tar -xzf heterocloud-v0.1.74-linux-x64.tar.gz
+sha256sum -c heterocloud-v0.1.75-linux-x64.tar.gz.sha256
+tar -xzf heterocloud-v0.1.75-linux-x64.tar.gz
 sudo install -m 0755 heterocloud /usr/local/bin/heterocloud
 heterocloud --version
 ```
 
-The same release publishes `heterocloud-v0.1.74-macos-arm64.tar.gz` and
-`heterocloud-v0.1.74-windows-x64.zip` builds.
+The release publishes native x64 and ARM64 builds for all three supported
+operating systems:
+
+- `heterocloud-v0.1.75-linux-x64.tar.gz`
+- `heterocloud-v0.1.75-linux-arm64.tar.gz`
+- `heterocloud-v0.1.75-macos-x64.tar.gz`
+- `heterocloud-v0.1.75-macos-arm64.tar.gz`
+- `heterocloud-v0.1.75-windows-x64.zip`
+- `heterocloud-v0.1.75-windows-arm64.zip`
+
+Linux archives are statically linked so they do not depend on the host's glibc
+version.
 
 ```sh
 install -m 0700 -d "$HOME/.config/heterocloud"
@@ -85,6 +95,7 @@ unset HETEROCLOUD_API_KEY
 
 export HETEROCLOUD_ORGANIZATION_ID=0198a118-073f-79e4-9ca4-0c1c2501c031
 export HETEROCLOUD_API_KEY_FILE="$HOME/.config/heterocloud/api-key"
+export HETEROCLOUD_ENDPOINT=https://cloud.example.com
 
 heterocloud flow create --file examples/cli/flow.json
 heterocloud flash list --output table
@@ -94,8 +105,9 @@ heterocloud syouyu get 0198a118-073f-79e4-9ca4-0c1c2501c031
 Create and update commands accept `-` for stdin and wait until the service is
 ready. Delete requires `--yes` and waits until the resource is absent. Use
 `--no-wait` for automation that monitors the returned state separately. The
-API origin must use HTTPS unless `--allow-insecure-http` is explicitly enabled
-for a private lab. JSON manifests for each service are under
+API origin has no built-in default: set `HETEROCLOUD_ENDPOINT` or pass
+`--endpoint` for every service command. It must use HTTPS unless
+`--allow-insecure-http` is explicitly enabled for a private lab. JSON manifests for each service are under
 [`examples/cli`](examples/cli). Flash autoscaling, endpoint modes, quota reservation,
 weekly CPU/memory/GPU runtime metering, cost-management views, and the scoped
 OpenAPI schema are documented in [Flash API](docs/FLASH_API.md).

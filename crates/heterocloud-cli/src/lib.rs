@@ -29,14 +29,9 @@ const MAX_BASE_DOMAIN_LENGTH: usize = 230;
     about = "Operate HeteroCloud managed services"
 )]
 pub struct Cli {
-    /// HeteroCloud console origin.
-    #[arg(
-        long,
-        global = true,
-        env = "HETEROCLOUD_ENDPOINT",
-        default_value = "https://heterocloud.mizuame.app"
-    )]
-    pub endpoint: String,
+    /// HeteroCloud API and console origin. Required for service commands.
+    #[arg(long, global = true, env = "HETEROCLOUD_ENDPOINT", value_name = "URL")]
+    pub endpoint: Option<String>,
 
     /// Service-account API key. Prefer HETEROCLOUD_API_KEY or --api-key-file.
     #[arg(
@@ -254,6 +249,8 @@ pub enum CliError {
     DnsConvergenceTimeout { seconds: u64, failures: usize },
     #[error("service commands require HETEROCLOUD_API_KEY or --api-key-file")]
     MissingApiKey,
+    #[error("service commands require HETEROCLOUD_ENDPOINT or --endpoint")]
+    MissingEndpoint,
     #[error("service commands require HETEROCLOUD_ORGANIZATION_ID or --organization-id")]
     MissingOrganization,
     #[error("invalid API endpoint: {0}")]
@@ -333,7 +330,7 @@ pub async fn execute(cli: Cli) -> Result<(), CliError> {
                 services::ServiceKind::Flow,
                 args,
                 services::ApiSettings {
-                    endpoint,
+                    endpoint: endpoint.ok_or(CliError::MissingEndpoint)?,
                     api_key: load_api_key(api_key, api_key_file.as_deref())?,
                     organization_id: organization_id.ok_or(CliError::MissingOrganization)?,
                     wait_timeout_seconds,
@@ -348,7 +345,7 @@ pub async fn execute(cli: Cli) -> Result<(), CliError> {
                 services::ServiceKind::Flash,
                 args,
                 services::ApiSettings {
-                    endpoint,
+                    endpoint: endpoint.ok_or(CliError::MissingEndpoint)?,
                     api_key: load_api_key(api_key, api_key_file.as_deref())?,
                     organization_id: organization_id.ok_or(CliError::MissingOrganization)?,
                     wait_timeout_seconds,
@@ -363,7 +360,7 @@ pub async fn execute(cli: Cli) -> Result<(), CliError> {
                 services::ServiceKind::Syouyu,
                 args,
                 services::ApiSettings {
-                    endpoint,
+                    endpoint: endpoint.ok_or(CliError::MissingEndpoint)?,
                     api_key: load_api_key(api_key, api_key_file.as_deref())?,
                     organization_id: organization_id.ok_or(CliError::MissingOrganization)?,
                     wait_timeout_seconds,

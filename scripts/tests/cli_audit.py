@@ -304,6 +304,9 @@ def run_suite(a):
     # Shared global-option behavior, isolated from any inherited real credentials.
     base = ["--endpoint", a.origin, "--allow-insecure-http", "--organization-id", ORG]
     good = [reply({"items": [service("flow")]})]
+    a.run("endpoint:missing", ["flow", "list"],
+          defaults=["--api-key", KEY, "--organization-id", ORG],
+          rc=1, contains="require HETEROCLOUD_ENDPOINT", methods=[])
     a.run("auth:missing", ["flow", "list"], defaults=base, rc=1, contains="require HETEROCLOUD_API_KEY", methods=[])
     a.run("organization:missing", ["flow", "list"], defaults=["--endpoint", a.origin, "--api-key", KEY],
           rc=1, contains="require HETEROCLOUD_ORGANIZATION_ID", methods=[])

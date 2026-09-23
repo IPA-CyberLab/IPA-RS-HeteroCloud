@@ -159,11 +159,38 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
+        include:
+          - runner: ubuntu-24.04
+            asset_os: linux
+            asset_arch: x64
+            rust_target: x86_64-unknown-linux-musl
+            archive: tar
+          - runner: ubuntu-24.04-arm
+            asset_os: linux
+            asset_arch: arm64
+            rust_target: aarch64-unknown-linux-musl
+            archive: tar
+          - runner: macos-15-intel
+            asset_os: macos
+            asset_arch: x64
+            rust_target: x86_64-apple-darwin
+            archive: tar
+          - runner: macos-15
+            asset_os: macos
+            asset_arch: arm64
+            rust_target: aarch64-apple-darwin
+            archive: tar
+          - runner: windows-2025
+            asset_os: windows
+            asset_arch: x64
+            rust_target: x86_64-pc-windows-msvc
+            archive: zip
+          - runner: windows-11-vs2026-arm
+            asset_os: windows
+            asset_arch: arm64
+            rust_target: aarch64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -179,29 +206,56 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.96.1
+          targets: ${{ matrix.rust_target }}
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo build --release --locked -p heterocloud-cli
+      - name: Prepare portable Linux target
+        if: matrix.asset_os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+
+      - name: Build CLI
+        run: >-
+          cargo build --release --locked -p heterocloud-cli
+          --target ${{ matrix.rust_target }}
+
+      - name: Reject a dynamically linked Linux CLI
+        if: matrix.asset_os == 'linux'
+        shell: bash
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+        run: |
+          binary="target/${RUST_TARGET}/release/heterocloud"
+          readelf --file-header "$binary"
+          if readelf --program-headers "$binary" | grep -q 'INTERP'; then
+            echo 'Linux CLI must not depend on the runner glibc.' >&2
+            exit 1
+          fi
 
       - name: Exercise CLI command contracts
-        if: runner.os == 'Linux'
+        if: matrix.asset_os == 'linux'
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
         run: >-
           python3 scripts/tests/cli_audit.py
-          --binary target/release/heterocloud
+          --binary target/${RUST_TARGET}/release/heterocloud
           --report /tmp/heterocloud-cli-audit.json
 
       - name: Upload Unix CLI
-        if: runner.os != 'Windows'
+        if: matrix.archive == 'tar'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          ASSET_OS: ${{ matrix.asset_os }}
+          ASSET_ARCH: ${{ matrix.asset_arch }}
+          RUST_TARGET: ${{ matrix.rust_target }}
         run: |
-          os=$(printf '%s' "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')
-          arch=$(printf '%s' "$RUNNER_ARCH" | tr '[:upper:]' '[:lower:]')
-          asset="heterocloud-${RELEASE_TAG}-${os}-${arch}.tar.gz"
-          tar -C target/release -czf "$asset" heterocloud
+          asset="heterocloud-${RELEASE_TAG}-${ASSET_OS}-${ASSET_ARCH}.tar.gz"
+          binary_dir="target/${RUST_TARGET}/release"
+          tar -C "$binary_dir" -czf "$asset" heterocloud
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "$asset" >"${asset}.sha256"
           else
@@ -210,15 +264,17 @@ jobs:
           gh release upload "$RELEASE_TAG" "$asset" "${asset}.sha256"
 
       - name: Upload Windows CLI
-        if: runner.os == 'Windows'
+        if: matrix.archive == 'zip'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          ASSET_ARCH: ${{ matrix.asset_arch }}
+          RUST_TARGET: ${{ matrix.rust_target }}
         run: |
-          $arch = $env:RUNNER_ARCH.ToLowerInvariant()
-          $asset = "heterocloud-$env:RELEASE_TAG-windows-$arch.zip"
-          Compress-Archive -Path target/release/heterocloud.exe -DestinationPath $asset
+          $asset = "heterocloud-$env:RELEASE_TAG-windows-$env:ASSET_ARCH.zip"
+          $binary = "target/$env:RUST_TARGET/release/heterocloud.exe"
+          Compress-Archive -Path $binary -DestinationPath $asset
           $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
           "$hash  $asset" | Set-Content -NoNewline "$asset.sha256"
           gh release upload $env:RELEASE_TAG $asset "$asset.sha256"
