@@ -96,7 +96,8 @@ class Audit:
                          "--wait-timeout-seconds", "1"]
 
     def run(self, name, args, *, api=False, responses=None, rc=0, contains=None,
-            methods=None, check=None, stdin="", env=None, timeout=12, defaults=None):
+            methods=None, authorizations=None, check=None, stdin="", env=None,
+            timeout=12, defaults=None):
         self.server.state = {"requests": [], "responses": responses or [reply({})]}
         log = Path(self.env["AUDIT_LOG"])
         log.write_text("")
@@ -124,9 +125,11 @@ class Audit:
             failures.append(f"missing output: {contains}")
         if methods is not None and [r["method"] for r in requests] != methods:
             failures.append(f"expected request methods {methods}")
-        for request in requests:
-            if request["authorization"] != "Bearer " + KEY:
-                failures.append("incorrect dummy bearer header")
+        for index, request in enumerate(requests):
+            expected_authorization = (authorizations[index] if authorizations is not None
+                                      else "Bearer " + KEY)
+            if request["authorization"] != expected_authorization:
+                failures.append("incorrect bearer header")
             if request["user_agent"] != "heterocloud-cli/" + self.version:
                 failures.append("incorrect user agent")
         if check:
@@ -210,6 +213,7 @@ def run_suite(a):
                     pending.append(path + [command])
     expected = {tuple([kind, cmd]) for kind in KINDS for cmd in ("list", "get", "create", "update", "delete")}
     expected |= {("dns", cmd) for cmd in ("records", "verify", "reconcile")}
+    expected |= {("auth", cmd) for cmd in ("login", "status", "logout")}
     require(expected <= {tuple(p) for p in discovered}, "command inventory changed")
     a.run("version", ["--version"], contains="heterocloud " + a.version)
     a.run("short-version", ["-V"], contains="heterocloud " + a.version)
@@ -217,6 +221,58 @@ def run_suite(a):
     a.run("help-command", ["help", "flow", "create"], contains="--no-wait")
     a.run("missing-command", [], rc=2, contains="Usage:")
     a.run("unknown-command", ["not-a-command"], rc=2, contains="unrecognized")
+
+    cli_token = "hcu_0123456789abcdef_" + "x" * 43
+    identity = {
+        "user": {"email": "audit@example.test", "display_name": "CLI Audit"},
+        "organization": {
+            "organization_id": ORG,
+            "organization_slug": "audit",
+            "organization_name": "CLI Audit",
+        },
+        "expires_at": "2026-10-23T00:00:00Z",
+    }
+    device = {
+        "device_code": "hcd_" + "d" * 43,
+        "user_code": "ABCD-EFGH-JKLM",
+        "verification_uri": a.origin + "/cli/authorize",
+        "verification_uri_complete": a.origin + "/cli/authorize?user_code=ABCD-EFGH-JKLM",
+        "expires_in": 600,
+        "interval": 1,
+    }
+    issued = identity | {"access_token": cli_token, "token_type": "Bearer", "expires_in": 2592000}
+    credential_path = a.tmp / ".config" / "heterocloud" / "credentials.json"
+
+    def login_check(out, err, requests, children, elapsed):
+        require([request["path"] for request in requests] == [
+            "/api/v1/auth/cli/device", "/api/v1/auth/cli/token", "/api/v1/auth/cli/session"
+        ], "CLI login used the wrong API paths")
+        require(requests[0]["body"] == {"organization_id": ORG},
+                "CLI login omitted organization")
+        require(requests[1]["body"] == {"device_code": device["device_code"]},
+                "CLI login changed the device code")
+        require(credential_path.is_file(), "CLI login did not save credentials")
+        require(credential_path.stat().st_mode & 0o777 == 0o600,
+                "CLI credential file mode is not 0600")
+        stored = json.loads(credential_path.read_text())
+        require(stored["active_endpoint"] == a.origin + "/", "saved endpoint differs")
+        require(stored["profiles"][a.origin + "/"]["organization_id"] == ORG,
+                "saved organization differs")
+        require(cli_token not in out + err, "CLI token leaked to terminal output")
+
+    a.run("auth:login", ["auth", "login", "--no-browser"],
+          defaults=["--endpoint", a.origin, "--allow-insecure-http", "--organization-id", ORG],
+          responses=[reply(device), reply(issued), reply(identity)],
+          methods=["POST", "POST", "GET"],
+          authorizations=[None, None, "Bearer " + cli_token],
+          contains="Signed in as", check=login_check)
+    a.run("auth:status", ["auth", "status", "--allow-insecure-http"], defaults=[],
+          responses=[reply(identity)], methods=["GET"],
+          authorizations=["Bearer " + cli_token], contains="audit@example.test")
+    a.run("auth:logout", ["auth", "logout", "--allow-insecure-http"], defaults=[],
+          responses=[reply({}, status=204)], methods=["POST"],
+          authorizations=["Bearer " + cli_token], contains="Signed out")
+    require(not credential_path.exists(), "CLI logout did not remove local credentials")
 
     for kind, suffix in KINDS.items():
         obj = service(kind)
@@ -307,7 +363,8 @@ def run_suite(a):
     a.run("endpoint:missing", ["flow", "list"],
           defaults=["--api-key", KEY, "--organization-id", ORG],
           rc=1, contains="require HETEROCLOUD_ENDPOINT", methods=[])
-    a.run("auth:missing", ["flow", "list"], defaults=base, rc=1, contains="require HETEROCLOUD_API_KEY", methods=[])
+    a.run("auth:missing", ["flow", "list"], defaults=base, rc=1,
+          contains="no CLI login is saved", methods=[])
     a.run("organization:missing", ["flow", "list"], defaults=["--endpoint", a.origin, "--api-key", KEY],
           rc=1, contains="require HETEROCLOUD_ORGANIZATION_ID", methods=[])
     for mode in ("600", "400", "644", "link", "missing"):

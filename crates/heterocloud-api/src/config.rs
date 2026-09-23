@@ -151,6 +151,13 @@ pub struct Config {
 
     #[arg(
         long,
+        env = "HETEROCLOUD_CLI_TOKEN_TTL_SECONDS",
+        default_value_t = 2_592_000
+    )]
+    pub cli_token_ttl_seconds: u64,
+
+    #[arg(
+        long,
         env = "HETEROCLOUD_DATABASE_MAX_CONNECTIONS",
         default_value_t = 30
     )]
@@ -257,6 +264,7 @@ pub struct RuntimeConfig {
     pub trusted_proxy_networks: Vec<IpNet>,
     pub secure_cookie: bool,
     pub session_ttl: Duration,
+    pub cli_token_ttl: Duration,
     pub csrf_key: SecretString,
     pub flow_access_signer: FlowAccessSigner,
     pub flow_public_endpoints: Vec<Url>,
@@ -409,6 +417,7 @@ impl Config {
             trusted_proxy_networks: self.trusted_proxy_networks.clone(),
             secure_cookie: self.secure_cookie,
             session_ttl: Duration::from_secs(self.session_ttl_seconds.clamp(300, 86_400)),
+            cli_token_ttl: Duration::from_secs(self.cli_token_ttl_seconds.clamp(3_600, 7_776_000)),
             csrf_key,
             flow_access_signer: FlowAccessSigner::new(
                 self.flow_access_issuer.clone(),

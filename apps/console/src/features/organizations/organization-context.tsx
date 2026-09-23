@@ -6,8 +6,9 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import { ErrorState } from "@/components/shared/error-state";
+import { clearAuthReturnPath } from "@/features/auth/auth-return";
 import { useSession } from "@/features/auth/session";
 import type { Membership } from "@/lib/api-types";
 
@@ -30,6 +31,7 @@ function readStoredOrganizationId(): string | null {
 }
 
 export function OrganizationProvider({ children }: { children?: ReactNode }) {
+  const location = useLocation();
   const session = useSession().data;
   const memberships = session?.memberships ?? [];
   const [selectedId, setSelectedId] = useState<string | null>(
@@ -50,6 +52,10 @@ export function OrganizationProvider({ children }: { children?: ReactNode }) {
       // Storage can be disabled; selection still remains valid for this tab.
     }
   }, [activeOrganization]);
+
+  useEffect(() => {
+    if (location.pathname !== "/") clearAuthReturnPath();
+  }, [location.pathname]);
 
   const value = useMemo<OrganizationContextValue | null>(
     () =>

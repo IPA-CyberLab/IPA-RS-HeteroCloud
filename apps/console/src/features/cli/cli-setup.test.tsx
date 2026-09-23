@@ -20,7 +20,9 @@ describe("CLI setup launcher", () => {
     expect(prompt).toContain("Linux/macOS/Windows の x64/ARM64");
     expect(prompt).toContain("SHA-256");
     expect(prompt).toContain("heterocloud --version");
-    expect(prompt).toContain("APIキーをチャット");
+    expect(prompt).toContain("heterocloud auth login");
+    expect(prompt).toContain("heterocloud auth status");
+    expect(prompt).toContain("APIキーを要求・生成・表示しない");
     expect(prompt).not.toContain("heterocloud.mizuame.app");
   });
 

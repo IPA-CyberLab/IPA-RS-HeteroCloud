@@ -1,6 +1,7 @@
 import type {
   AuditEvent,
   BindingResponse,
+  CliDeviceAuthorization,
   CollectionResponse,
   CreateBindingRequest,
   CreateFlashServiceRequest,
@@ -246,6 +247,18 @@ export class HeteroCloudApiClient {
         method: "POST",
       });
       this.csrfToken = null;
+    },
+    cliDevice: {
+      get: (userCode: string, signal?: AbortSignal) =>
+        this.request<CliDeviceAuthorization>(
+          `/auth/cli/device/${encodeURIComponent(userCode)}`,
+          { signal },
+        ),
+      approve: (userCode: string) =>
+        this.request<void>("/auth/cli/device/approve", {
+          method: "POST",
+          body: { user_code: userCode },
+        }),
     },
   };
 

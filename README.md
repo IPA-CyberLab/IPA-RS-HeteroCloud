@@ -55,26 +55,23 @@ separate [data-plane access contract](contracts/flow-access/v1/README.md).
 ## Service CLI
 
 The `heterocloud` binary manages Flow services, Flash containers, and Syouyu
-buckets through the same IAM-authorized API used by the console. Create a
-service-account principal and API key in the IAM console, bind only the
-required `realtime:*`, `flash:*`, or `syouyu:*` actions, and keep the secret out
-of shell history and source control:
+buckets through the same IAM-authorized API used by the console.
 
 For guided installation, open **CLI setup** (`/cli`) in your HeteroCloud
 console and choose **ChatGPTでセットアップ**. The launcher prepares a desktop-app
 prompt for the current console origin and organization. It covers OS and CPU
-detection, checksum verification, PATH installation, and initial configuration;
-API keys are never embedded in the launch URL. The same prompt can be copied
-when the desktop-app protocol is unavailable.
+detection, checksum verification, PATH installation, browser login, and an
+authenticated status check. Secrets are never embedded in the launch URL. The
+same prompt can be copied when the desktop-app protocol is unavailable.
 
 Install the matching archive and adjacent checksum from the
 [latest release](https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/releases/latest).
-For Linux x64, extract `heterocloud-v0.1.76-linux-x64.tar.gz`, verify it with
+For Linux x64, extract `heterocloud-v0.1.77-linux-x64.tar.gz`, verify it with
 `sha256sum -c`, then install the binary:
 
 ```sh
-sha256sum -c heterocloud-v0.1.76-linux-x64.tar.gz.sha256
-tar -xzf heterocloud-v0.1.76-linux-x64.tar.gz
+sha256sum -c heterocloud-v0.1.77-linux-x64.tar.gz.sha256
+tar -xzf heterocloud-v0.1.77-linux-x64.tar.gz
 sudo install -m 0755 heterocloud /usr/local/bin/heterocloud
 heterocloud --version
 ```
@@ -82,38 +79,41 @@ heterocloud --version
 The release publishes native x64 and ARM64 builds for all three supported
 operating systems:
 
-- `heterocloud-v0.1.76-linux-x64.tar.gz`
-- `heterocloud-v0.1.76-linux-arm64.tar.gz`
-- `heterocloud-v0.1.76-macos-x64.tar.gz`
-- `heterocloud-v0.1.76-macos-arm64.tar.gz`
-- `heterocloud-v0.1.76-windows-x64.zip`
-- `heterocloud-v0.1.76-windows-arm64.zip`
+- `heterocloud-v0.1.77-linux-x64.tar.gz`
+- `heterocloud-v0.1.77-linux-arm64.tar.gz`
+- `heterocloud-v0.1.77-macos-x64.tar.gz`
+- `heterocloud-v0.1.77-macos-arm64.tar.gz`
+- `heterocloud-v0.1.77-windows-x64.zip`
+- `heterocloud-v0.1.77-windows-arm64.zip`
 
 Linux archives are statically linked so they do not depend on the host's glibc
 version.
 
 ```sh
-install -m 0700 -d "$HOME/.config/heterocloud"
-umask 077
-read -r -s HETEROCLOUD_API_KEY
-printf '%s' "$HETEROCLOUD_API_KEY" \
-  > "$HOME/.config/heterocloud/api-key"
-unset HETEROCLOUD_API_KEY
-
-export HETEROCLOUD_ORGANIZATION_ID=0198a118-073f-79e4-9ca4-0c1c2501c031
-export HETEROCLOUD_API_KEY_FILE="$HOME/.config/heterocloud/api-key"
 export HETEROCLOUD_ENDPOINT=https://cloud.example.com
+export HETEROCLOUD_ORGANIZATION_ID=0198a118-073f-79e4-9ca4-0c1c2501c031
+
+heterocloud auth login
+heterocloud auth status
 
 heterocloud flow create --file examples/cli/flow.json
 heterocloud flash list --output table
 heterocloud syouyu get 0198a118-073f-79e4-9ca4-0c1c2501c031
 ```
 
+`auth login` opens the selected HeteroCloud origin, completes its configured
+Keycloak login, and asks for an explicit CLI approval. The resulting
+organization-bound token is stored with mode `0600` on Linux/macOS and a
+current-user ACL on Windows. Run `heterocloud auth logout` to revoke it.
+Service-account API keys remain available for non-interactive automation via
+`HETEROCLOUD_API_KEY_FILE`; bind only the required `realtime:*`, `flash:*`, or
+`syouyu:*` actions and keep the key out of shell history and source control.
+
 Create and update commands accept `-` for stdin and wait until the service is
 ready. Delete requires `--yes` and waits until the resource is absent. Use
 `--no-wait` for automation that monitors the returned state separately. The
-API origin has no built-in default: set `HETEROCLOUD_ENDPOINT` or pass
-`--endpoint` for every service command. It must use HTTPS unless
+first login requires an API origin. Later commands use the saved origin unless
+`HETEROCLOUD_ENDPOINT` or `--endpoint` selects another profile. It must use HTTPS unless
 `--allow-insecure-http` is explicitly enabled for a private lab. JSON manifests for each service are under
 [`examples/cli`](examples/cli). Flash autoscaling, endpoint modes, quota reservation,
 weekly CPU/memory/GPU runtime metering, cost-management views, and the scoped

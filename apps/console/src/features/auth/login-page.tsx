@@ -5,12 +5,13 @@ import Header from "@cloudscape-design/components/header";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import TopNavigation from "@cloudscape-design/components/top-navigation";
 import { Navigate } from "react-router-dom";
+import { readAuthReturnPath } from "@/features/auth/auth-return";
 import { useSession } from "@/features/auth/session";
 
 export function LoginPage() {
   const session = useSession();
 
-  if (session.data) return <Navigate to="/overview" replace />;
+  if (session.data) return <Navigate to={readAuthReturnPath() ?? "/overview"} replace />;
 
   return (
     <div className="auth-shell">

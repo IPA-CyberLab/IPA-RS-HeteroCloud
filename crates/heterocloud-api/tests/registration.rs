@@ -9,7 +9,7 @@ use heterocloud_api::flow_access::FlowAccessSigner;
 use heterocloud_api::{app, config::RuntimeConfig, routes::AppState};
 use heterocloud_domain::OrganizationId;
 use heterocloud_store::{BootstrapAdmin, OidcUser, RegisterWithInvitation, Store, StoreError};
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 use tower::ServiceExt;
@@ -70,7 +70,7 @@ async fn registration_checks_invitation_before_hashing_and_consumes_it_once()
         .await?;
 
     let weak_password_response = register_request(
-        state,
+        state.clone(),
         json!({
             "invitation_code": "valid-invitation",
             "email": "weak-password@example.test",
@@ -207,6 +207,129 @@ async fn registration_checks_invitation_before_hashing_and_consumes_it_once()
     assert_eq!(login_events.len(), 1);
     assert_eq!(login_events[0].authentication_method, "oidc");
 
+    let browser_token = "browser-session-for-cli-approval";
+    let browser_token_hash = heterocloud_auth::token_hash(browser_token);
+    store
+        .create_session(
+            owner.user.id,
+            &browser_token_hash,
+            Utc::now() + Duration::hours(1),
+            Some("203.0.113.43"),
+            "local",
+        )
+        .await?;
+    let browser_csrf = heterocloud_auth::csrf_token(
+        browser_token,
+        &SecretString::from("test-csrf-key-at-least-32-bytes"),
+    )?;
+    let device_response = app(state.clone(), None)
+        .oneshot(
+            Request::post("/api/v1/auth/cli/device")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&json!({
+                    "organization_id": membership.organization_id,
+                }))?))?,
+        )
+        .await?;
+    assert_eq!(device_response.status(), StatusCode::OK);
+    let device: Value =
+        serde_json::from_slice(&to_bytes(device_response.into_body(), 1024 * 1024).await?)?;
+    assert_eq!(
+        device["verification_uri"],
+        format!("{PUBLIC_ORIGIN}/cli/authorize")
+    );
+    assert!(
+        device["verification_uri_complete"]
+            .as_str()
+            .is_some_and(|value| value.starts_with(PUBLIC_ORIGIN))
+    );
+    let user_code = device["user_code"].as_str().ok_or("missing user code")?;
+    let device_code = device["device_code"]
+        .as_str()
+        .ok_or("missing device code")?;
+
+    let inspect_response = app(state.clone(), None)
+        .oneshot(
+            Request::get(format!("/api/v1/auth/cli/device/{user_code}"))
+                .header(header::COOKIE, format!("hc_session={browser_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(inspect_response.status(), StatusCode::OK);
+
+    let approve_response = app(state.clone(), None)
+        .oneshot(
+            Request::post("/api/v1/auth/cli/device/approve")
+                .header(header::ORIGIN, PUBLIC_ORIGIN)
+                .header(header::COOKIE, format!("hc_session={browser_token}"))
+                .header("x-heterocloud-csrf", browser_csrf.expose_secret())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&json!({
+                    "user_code": user_code,
+                }))?))?,
+        )
+        .await?;
+    assert_eq!(approve_response.status(), StatusCode::NO_CONTENT);
+
+    let token_response = app(state.clone(), None)
+        .oneshot(
+            Request::post("/api/v1/auth/cli/token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&json!({
+                    "device_code": device_code,
+                }))?))?,
+        )
+        .await?;
+    assert_eq!(token_response.status(), StatusCode::OK);
+    let issued: Value =
+        serde_json::from_slice(&to_bytes(token_response.into_body(), 1024 * 1024).await?)?;
+    let access_token = issued["access_token"]
+        .as_str()
+        .ok_or("missing access token")?;
+    assert!(access_token.starts_with("hcu_"));
+    assert_eq!(
+        issued["organization"]["organization_id"],
+        membership.organization_id.to_string()
+    );
+
+    let status_response = app(state.clone(), None)
+        .oneshot(
+            Request::get("/api/v1/auth/cli/session")
+                .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(status_response.status(), StatusCode::OK);
+
+    let service_response = app(state.clone(), None)
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/organizations/{}/flash/services",
+                membership.organization_id
+            ))
+            .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
+            .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(service_response.status(), StatusCode::OK);
+
+    let logout_response = app(state.clone(), None)
+        .oneshot(
+            Request::post("/api/v1/auth/cli/logout")
+                .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(logout_response.status(), StatusCode::NO_CONTENT);
+    let revoked_response = app(state, None)
+        .oneshot(
+            Request::get("/api/v1/auth/cli/session")
+                .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(revoked_response.status(), StatusCode::UNAUTHORIZED);
+
     Ok(())
 }
 
@@ -246,6 +369,7 @@ async fn test_state() -> Result<Option<(Store, Arc<AppState>)>, Box<dyn Error>> 
             trusted_proxy_networks: Vec::new(),
             secure_cookie: false,
             session_ttl: StdDuration::from_secs(3600),
+            cli_token_ttl: StdDuration::from_secs(30 * 24 * 60 * 60),
             csrf_key: SecretString::from("test-csrf-key-at-least-32-bytes"),
             flow_access_signer: FlowAccessSigner::new(
                 "heterocloud",

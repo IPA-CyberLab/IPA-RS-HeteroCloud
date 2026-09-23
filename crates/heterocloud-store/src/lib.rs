@@ -871,6 +871,17 @@ impl Store {
         expires_at: DateTime<Utc>,
     ) -> Result<Uuid, StoreError> {
         let id = Uuid::now_v7();
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query("DELETE FROM cli_device_authorizations WHERE expires_at <= now()")
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query(
+            "DELETE FROM cli_access_tokens
+             WHERE expires_at <= now() - interval '7 days'
+                OR revoked_at <= now() - interval '7 days'",
+        )
+        .execute(&mut *transaction)
+        .await?;
         let result = sqlx::query(
             "INSERT INTO invitations
                 (id, code_hash, created_by, organization_id, max_uses, expires_at)
@@ -883,11 +894,13 @@ impl Store {
         .bind(created_by.0)
         .bind(organization_id.0)
         .bind(expires_at)
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await?;
         if result.rows_affected() != 1 {
+            transaction.rollback().await?;
             return Err(StoreError::NotFound);
         }
+        transaction.commit().await?;
         Ok(id)
     }
 
@@ -1116,6 +1129,271 @@ impl Store {
             .bind(token_hash.as_slice())
             .execute(&self.pool)
             .await?;
+        Ok(())
+    }
+
+    pub async fn create_cli_device_authorization(
+        &self,
+        device_code_hash: &[u8; 32],
+        user_code_hash: &[u8; 32],
+        organization_id: OrganizationId,
+        interval_seconds: i32,
+        expires_at: DateTime<Utc>,
+    ) -> Result<Uuid, StoreError> {
+        let id = Uuid::now_v7();
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query("DELETE FROM cli_device_authorizations WHERE expires_at <= now()")
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query(
+            "DELETE FROM cli_access_tokens
+             WHERE expires_at <= now() - interval '7 days'
+                OR revoked_at <= now() - interval '7 days'",
+        )
+        .execute(&mut *transaction)
+        .await?;
+        let result = sqlx::query(
+            "INSERT INTO cli_device_authorizations
+                (id, device_code_hash, user_code_hash, organization_id,
+                 interval_seconds, expires_at)
+             SELECT $1, $2, $3, o.id, $5, $6
+             FROM organizations o
+             WHERE o.id = $4",
+        )
+        .bind(id)
+        .bind(device_code_hash.as_slice())
+        .bind(user_code_hash.as_slice())
+        .bind(organization_id.0)
+        .bind(interval_seconds)
+        .bind(expires_at)
+        .execute(&mut *transaction)
+        .await?;
+        if result.rows_affected() != 1 {
+            transaction.rollback().await?;
+            return Err(StoreError::NotFound);
+        }
+        transaction.commit().await?;
+        Ok(id)
+    }
+
+    pub async fn cli_device_authorization_by_user_code(
+        &self,
+        user_code_hash: &[u8; 32],
+    ) -> Result<Option<CliDeviceAuthorization>, StoreError> {
+        sqlx::query_as::<_, CliDeviceAuthorizationRow>(
+            "SELECT d.id, d.organization_id, o.slug AS organization_slug,
+                    o.name AS organization_name, d.status, d.expires_at
+             FROM cli_device_authorizations d
+             JOIN organizations o ON o.id = d.organization_id
+             WHERE d.user_code_hash = $1",
+        )
+        .bind(user_code_hash.as_slice())
+        .fetch_optional(&self.pool)
+        .await?
+        .map(CliDeviceAuthorization::try_from)
+        .transpose()
+    }
+
+    pub async fn approve_cli_device_authorization(
+        &self,
+        user_code_hash: &[u8; 32],
+        user_id: UserId,
+    ) -> Result<CliDeviceApprovalOutcome, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        let row = sqlx::query_as::<_, (Uuid, Uuid, String, DateTime<Utc>)>(
+            "SELECT id, organization_id, status, expires_at
+             FROM cli_device_authorizations
+             WHERE user_code_hash = $1
+             FOR UPDATE",
+        )
+        .bind(user_code_hash.as_slice())
+        .fetch_optional(&mut *transaction)
+        .await?;
+        let Some((id, organization_id, status, expires_at)) = row else {
+            transaction.rollback().await?;
+            return Ok(CliDeviceApprovalOutcome::NotFound);
+        };
+        if expires_at <= Utc::now() {
+            transaction.rollback().await?;
+            return Ok(CliDeviceApprovalOutcome::Expired);
+        }
+        if status != "pending" {
+            transaction.rollback().await?;
+            return Ok(CliDeviceApprovalOutcome::InvalidState);
+        }
+        let is_member = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (
+                 SELECT 1 FROM organization_memberships
+                 WHERE organization_id = $1 AND user_id = $2
+             )",
+        )
+        .bind(organization_id)
+        .bind(user_id.0)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if !is_member {
+            transaction.rollback().await?;
+            return Ok(CliDeviceApprovalOutcome::Forbidden);
+        }
+        sqlx::query(
+            "UPDATE cli_device_authorizations
+             SET status = 'approved', approved_user_id = $2, approved_at = now()
+             WHERE id = $1",
+        )
+        .bind(id)
+        .bind(user_id.0)
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(CliDeviceApprovalOutcome::Approved)
+    }
+
+    pub async fn exchange_cli_device_authorization(
+        &self,
+        device_code_hash: &[u8; 32],
+        access_token_prefix: &str,
+        access_token_hash: &[u8; 32],
+        access_token_expires_at: DateTime<Utc>,
+    ) -> Result<CliDeviceExchangeOutcome, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        let row = sqlx::query_as::<_, CliDeviceExchangeRow>(
+            "SELECT id, organization_id, approved_user_id, status,
+                    interval_seconds, expires_at, last_polled_at
+             FROM cli_device_authorizations
+             WHERE device_code_hash = $1
+             FOR UPDATE",
+        )
+        .bind(device_code_hash.as_slice())
+        .fetch_optional(&mut *transaction)
+        .await?;
+        let Some(row) = row else {
+            transaction.rollback().await?;
+            return Ok(CliDeviceExchangeOutcome::InvalidDeviceCode);
+        };
+        let now = Utc::now();
+        if row.expires_at <= now {
+            transaction.rollback().await?;
+            return Ok(CliDeviceExchangeOutcome::Expired);
+        }
+        if row.status == "denied" {
+            transaction.rollback().await?;
+            return Ok(CliDeviceExchangeOutcome::Denied);
+        }
+        if row.status == "consumed" {
+            transaction.rollback().await?;
+            return Ok(CliDeviceExchangeOutcome::InvalidDeviceCode);
+        }
+        if row.last_polled_at.is_some_and(|last| {
+            last + chrono::Duration::seconds(i64::from(row.interval_seconds)) > now
+        }) {
+            transaction.rollback().await?;
+            return Ok(CliDeviceExchangeOutcome::SlowDown);
+        }
+        sqlx::query("UPDATE cli_device_authorizations SET last_polled_at = $2 WHERE id = $1")
+            .bind(row.id)
+            .bind(now)
+            .execute(&mut *transaction)
+            .await?;
+        if row.status == "pending" {
+            transaction.commit().await?;
+            return Ok(CliDeviceExchangeOutcome::Pending);
+        }
+        if row.status != "approved" {
+            transaction.rollback().await?;
+            return Err(StoreError::Invariant(
+                "unknown CLI device authorization state",
+            ));
+        }
+        let user_id = row.approved_user_id.ok_or(StoreError::Invariant(
+            "approved CLI device authorization has no user",
+        ))?;
+        let still_a_member = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (
+                 SELECT 1 FROM organization_memberships
+                 WHERE organization_id = $1 AND user_id = $2
+             )",
+        )
+        .bind(row.organization_id)
+        .bind(user_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if !still_a_member {
+            transaction.rollback().await?;
+            return Ok(CliDeviceExchangeOutcome::Denied);
+        }
+        let token_id = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO cli_access_tokens
+                (id, user_id, organization_id, prefix, token_hash, expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(token_id)
+        .bind(user_id)
+        .bind(row.organization_id)
+        .bind(access_token_prefix)
+        .bind(access_token_hash.as_slice())
+        .bind(access_token_expires_at)
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "UPDATE cli_device_authorizations
+             SET status = 'consumed', consumed_at = now()
+             WHERE id = $1",
+        )
+        .bind(row.id)
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(CliDeviceExchangeOutcome::Issued {
+            token_id,
+            user_id: UserId(user_id),
+            organization_id: OrganizationId(row.organization_id),
+            expires_at: access_token_expires_at,
+        })
+    }
+
+    pub async fn authenticate_cli_access_token(
+        &self,
+        prefix: &str,
+        token_hash: &[u8; 32],
+    ) -> Result<Option<CliAccessTokenPrincipal>, StoreError> {
+        let row = sqlx::query_as::<_, CliAccessTokenRow>(
+            "UPDATE cli_access_tokens t
+             SET last_used_at = now()
+             FROM users u, organization_memberships m
+             WHERE t.prefix = $1 AND t.token_hash = $2
+               AND t.revoked_at IS NULL AND t.expires_at > now()
+               AND u.id = t.user_id AND u.status = 'active'
+               AND m.user_id = t.user_id AND m.organization_id = t.organization_id
+             RETURNING t.id, t.user_id, t.organization_id, t.expires_at",
+        )
+        .bind(prefix)
+        .bind(token_hash.as_slice())
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let user = self
+            .session_user(UserId(row.user_id))
+            .await?
+            .ok_or(StoreError::Invariant("CLI token refers to a missing user"))?;
+        Ok(Some(CliAccessTokenPrincipal {
+            token_id: row.id,
+            user,
+            organization_id: OrganizationId(row.organization_id),
+            expires_at: row.expires_at,
+        }))
+    }
+
+    pub async fn revoke_cli_access_token(&self, token_id: Uuid) -> Result<(), StoreError> {
+        sqlx::query(
+            "UPDATE cli_access_tokens SET revoked_at = now()
+             WHERE id = $1 AND revoked_at IS NULL",
+        )
+        .bind(token_id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -3552,6 +3830,100 @@ pub struct Membership {
 pub struct SessionUser {
     pub user: User,
     pub memberships: Vec<Membership>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CliDeviceAuthorization {
+    pub id: Uuid,
+    pub organization_id: OrganizationId,
+    pub organization_slug: String,
+    pub organization_name: String,
+    pub status: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CliDeviceApprovalOutcome {
+    Approved,
+    NotFound,
+    Expired,
+    InvalidState,
+    Forbidden,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CliDeviceExchangeOutcome {
+    Pending,
+    SlowDown,
+    Expired,
+    Denied,
+    InvalidDeviceCode,
+    Issued {
+        token_id: Uuid,
+        user_id: UserId,
+        organization_id: OrganizationId,
+        expires_at: DateTime<Utc>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct CliAccessTokenPrincipal {
+    pub token_id: Uuid,
+    pub user: SessionUser,
+    pub organization_id: OrganizationId,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CliDeviceAuthorizationRow {
+    id: Uuid,
+    organization_id: Uuid,
+    organization_slug: String,
+    organization_name: String,
+    status: String,
+    expires_at: DateTime<Utc>,
+}
+
+impl TryFrom<CliDeviceAuthorizationRow> for CliDeviceAuthorization {
+    type Error = StoreError;
+
+    fn try_from(row: CliDeviceAuthorizationRow) -> Result<Self, Self::Error> {
+        if !matches!(
+            row.status.as_str(),
+            "pending" | "approved" | "denied" | "consumed"
+        ) {
+            return Err(StoreError::Invariant(
+                "unknown CLI device authorization state",
+            ));
+        }
+        Ok(Self {
+            id: row.id,
+            organization_id: OrganizationId(row.organization_id),
+            organization_slug: row.organization_slug,
+            organization_name: row.organization_name,
+            status: row.status,
+            expires_at: row.expires_at,
+        })
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct CliDeviceExchangeRow {
+    id: Uuid,
+    organization_id: Uuid,
+    approved_user_id: Option<Uuid>,
+    status: String,
+    interval_seconds: i32,
+    expires_at: DateTime<Utc>,
+    last_polled_at: Option<DateTime<Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CliAccessTokenRow {
+    id: Uuid,
+    user_id: Uuid,
+    organization_id: Uuid,
+    expires_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -31,7 +31,8 @@ use heterocloud_domain::{
 };
 use heterocloud_iam::{AuthorizationRequest, Decision, authorize, semantics_digest};
 use heterocloud_store::{
-    AuditEvent, AuthorizationContext, DeveloperCredentialMint, DeveloperCredentialMintOutcome,
+    AuditEvent, AuthorizationContext, CliAccessTokenPrincipal, CliDeviceApprovalOutcome,
+    CliDeviceExchangeOutcome, DeveloperCredentialMint, DeveloperCredentialMintOutcome,
     FlowDeveloperCredentialRecord, GpuVisibility, MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE,
     MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE, MAX_REALTIME_METRIC_HISTORY_SAMPLES,
     MAX_USER_LOGIN_EVENTS_PER_USER, NewFlowAccessContext, NewFlowDeveloperCredential, OidcUser,
@@ -69,6 +70,8 @@ use crate::{
 
 const SESSION_COOKIE: &str = "hc_session";
 const CSRF_HEADER: &str = "x-heterocloud-csrf";
+const CLI_DEVICE_AUTHORIZATION_TTL_SECONDS: i64 = 600;
+const CLI_DEVICE_POLL_INTERVAL_SECONDS: i32 = 5;
 
 struct PeerAddress(Option<SocketAddr>);
 
@@ -109,6 +112,18 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route("/auth/oidc/callback", get(oidc_callback))
         .route("/auth/session", get(session))
         .route("/auth/logout", post(logout))
+        .route("/auth/cli/device", post(create_cli_device_authorization))
+        .route("/auth/cli/token", post(exchange_cli_device_authorization))
+        .route(
+            "/auth/cli/device/{user_code}",
+            get(get_cli_device_authorization),
+        )
+        .route(
+            "/auth/cli/device/approve",
+            post(approve_cli_device_authorization),
+        )
+        .route("/auth/cli/session", get(cli_session))
+        .route("/auth/cli/logout", post(cli_logout))
         .route("/owner/quotas", get(owner_quota_overview))
         .route("/owner/cost-management", get(owner_cost_management))
         .route("/owner/accounts", get(list_owner_accounts))
@@ -1310,6 +1325,328 @@ async fn logout(
     Ok((jar.remove(removal), StatusCode::NO_CONTENT))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CliDeviceAuthorizationRequest {
+    organization_id: Uuid,
+}
+
+#[derive(Serialize)]
+struct CliDeviceAuthorizationResponse {
+    device_code: String,
+    user_code: String,
+    verification_uri: String,
+    verification_uri_complete: String,
+    expires_in: i64,
+    interval: i32,
+}
+
+async fn create_cli_device_authorization(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<CliDeviceAuthorizationRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let device_secret = generate_token().map_err(|_| ApiError::Internal)?;
+    let device_code = format!("hcd_{}", device_secret.expose_secret());
+    let user_code = generate_cli_user_code()?;
+    let device_code_hash = token_hash(&device_code);
+    let user_code_hash = token_hash(&user_code);
+    let expires_at = Utc::now() + ChronoDuration::seconds(CLI_DEVICE_AUTHORIZATION_TTL_SECONDS);
+    state
+        .store
+        .create_cli_device_authorization(
+            &device_code_hash,
+            &user_code_hash,
+            OrganizationId(request.organization_id),
+            CLI_DEVICE_POLL_INTERVAL_SECONDS,
+            expires_at,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+
+    let mut verification_uri = state.config.public_origin.clone();
+    verification_uri.set_path("/cli/authorize");
+    verification_uri.set_query(None);
+    verification_uri.set_fragment(None);
+    let mut verification_uri_complete = verification_uri.clone();
+    verification_uri_complete
+        .query_pairs_mut()
+        .append_pair("user_code", &user_code);
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(CliDeviceAuthorizationResponse {
+            device_code,
+            user_code,
+            verification_uri: verification_uri.to_string(),
+            verification_uri_complete: verification_uri_complete.to_string(),
+            expires_in: CLI_DEVICE_AUTHORIZATION_TTL_SECONDS,
+            interval: CLI_DEVICE_POLL_INTERVAL_SECONDS,
+        }),
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CliDeviceTokenRequest {
+    device_code: SecretString,
+}
+
+async fn exchange_cli_device_authorization(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<CliDeviceTokenRequest>,
+) -> Result<Response, ApiError> {
+    let raw_device_code = request.device_code.expose_secret();
+    if !valid_cli_device_code(raw_device_code) {
+        return Ok(cli_device_token_error(
+            "invalid_grant",
+            "The device code is invalid or has already been used.",
+        ));
+    }
+    let token_prefix = Uuid::new_v4().simple().to_string()[..16].to_owned();
+    let token_secret = generate_token().map_err(|_| ApiError::Internal)?;
+    let access_token = format!("hcu_{token_prefix}_{}", token_secret.expose_secret());
+    let access_token_hash = token_hash(&access_token);
+    let expires_at = Utc::now()
+        + ChronoDuration::from_std(state.config.cli_token_ttl).map_err(|_| ApiError::Internal)?;
+    let outcome = state
+        .store
+        .exchange_cli_device_authorization(
+            &token_hash(raw_device_code),
+            &token_prefix,
+            &access_token_hash,
+            expires_at,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    let (user_id, organization_id, expires_at) = match outcome {
+        CliDeviceExchangeOutcome::Pending => {
+            return Ok(cli_device_token_error(
+                "authorization_pending",
+                "Authorization is still pending in the browser.",
+            ));
+        }
+        CliDeviceExchangeOutcome::SlowDown => {
+            return Ok(cli_device_token_error(
+                "slow_down",
+                "Polling is too frequent.",
+            ));
+        }
+        CliDeviceExchangeOutcome::Expired => {
+            return Ok(cli_device_token_error(
+                "expired_token",
+                "The device authorization has expired.",
+            ));
+        }
+        CliDeviceExchangeOutcome::Denied => {
+            return Ok(cli_device_token_error(
+                "access_denied",
+                "The device authorization was denied.",
+            ));
+        }
+        CliDeviceExchangeOutcome::InvalidDeviceCode => {
+            return Ok(cli_device_token_error(
+                "invalid_grant",
+                "The device code is invalid or has already been used.",
+            ));
+        }
+        CliDeviceExchangeOutcome::Issued {
+            user_id,
+            organization_id,
+            expires_at,
+            ..
+        } => (user_id, organization_id, expires_at),
+    };
+    let session_user = state
+        .store
+        .session_user(user_id)
+        .await
+        .map_err(ApiError::from_store)?
+        .ok_or(ApiError::Internal)?;
+    let membership = session_user
+        .memberships
+        .iter()
+        .find(|membership| membership.organization_id == organization_id)
+        .ok_or(ApiError::Internal)?;
+    let expires_in = (expires_at - Utc::now()).num_seconds().max(0);
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(json!({
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "expires_in": expires_in,
+            "expires_at": expires_at,
+            "user": session_user.user,
+            "organization": membership,
+        })),
+    )
+        .into_response())
+}
+
+async fn get_cli_device_authorization(
+    State(state): State<Arc<AppState>>,
+    Path(user_code): Path<String>,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, ApiError> {
+    let authenticated = authenticated_session(&state, &jar).await?;
+    let user_code = normalize_cli_user_code(&user_code)?;
+    let authorization = state
+        .store
+        .cli_device_authorization_by_user_code(&token_hash(&user_code))
+        .await
+        .map_err(ApiError::from_store)?
+        .ok_or(ApiError::NotFound)?;
+    if authorization.expires_at <= Utc::now() {
+        return Err(ApiError::BadRequest(
+            "The CLI authorization request has expired.".into(),
+        ));
+    }
+    if authorization.status != "pending" {
+        return Err(ApiError::Conflict);
+    }
+    let membership = authenticated
+        .user
+        .memberships
+        .iter()
+        .find(|membership| membership.organization_id == authorization.organization_id)
+        .ok_or(ApiError::Forbidden)?;
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(json!({
+            "user_code": user_code,
+            "organization": membership,
+            "expires_at": authorization.expires_at,
+        })),
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApproveCliDeviceAuthorizationRequest {
+    user_code: String,
+}
+
+async fn approve_cli_device_authorization(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<ApproveCliDeviceAuthorizationRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let authenticated = authenticated_mutation(&state, &headers, &jar).await?;
+    let user_code = normalize_cli_user_code(&request.user_code)?;
+    match state
+        .store
+        .approve_cli_device_authorization(&token_hash(&user_code), authenticated.user.user.id)
+        .await
+        .map_err(ApiError::from_store)?
+    {
+        CliDeviceApprovalOutcome::Approved => Ok(StatusCode::NO_CONTENT),
+        CliDeviceApprovalOutcome::NotFound => Err(ApiError::NotFound),
+        CliDeviceApprovalOutcome::Expired => Err(ApiError::BadRequest(
+            "The CLI authorization request has expired.".into(),
+        )),
+        CliDeviceApprovalOutcome::InvalidState => Err(ApiError::Conflict),
+        CliDeviceApprovalOutcome::Forbidden => Err(ApiError::Forbidden),
+    }
+}
+
+async fn cli_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let authenticated = authenticated_cli_access_token(&state, &headers).await?;
+    let membership = authenticated
+        .user
+        .memberships
+        .iter()
+        .find(|membership| membership.organization_id == authenticated.organization_id)
+        .ok_or(ApiError::Forbidden)?;
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(json!({
+            "user": authenticated.user.user,
+            "organization": membership,
+            "expires_at": authenticated.expires_at,
+        })),
+    ))
+}
+
+async fn cli_logout(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let authenticated = authenticated_cli_access_token(&state, &headers).await?;
+    state
+        .store
+        .revoke_cli_access_token(authenticated.token_id)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn generate_cli_user_code() -> Result<String, ApiError> {
+    let secret = generate_token().map_err(|_| ApiError::Internal)?;
+    let characters = secret
+        .expose_secret()
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(12)
+        .map(|character| character.to_ascii_uppercase())
+        .collect::<String>();
+    if characters.len() != 12 {
+        return Err(ApiError::Internal);
+    }
+    Ok(format!(
+        "{}-{}-{}",
+        &characters[0..4],
+        &characters[4..8],
+        &characters[8..12]
+    ))
+}
+
+fn normalize_cli_user_code(value: &str) -> Result<String, ApiError> {
+    let characters = value
+        .trim()
+        .chars()
+        .filter(|character| *character != '-')
+        .map(|character| character.to_ascii_uppercase())
+        .collect::<String>();
+    if characters.len() != 12
+        || !characters
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric())
+    {
+        return Err(ApiError::BadRequest(
+            "Invalid CLI authorization code.".into(),
+        ));
+    }
+    Ok(format!(
+        "{}-{}-{}",
+        &characters[0..4],
+        &characters[4..8],
+        &characters[8..12]
+    ))
+}
+
+fn valid_cli_device_code(value: &str) -> bool {
+    value.strip_prefix("hcd_").is_some_and(|secret| {
+        secret.len() >= 32
+            && secret.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            })
+    })
+}
+
+fn cli_device_token_error(code: &'static str, description: &'static str) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(json!({
+            "error": code,
+            "error_description": description,
+        })),
+    )
+        .into_response()
+}
+
 async fn list_organizations(
     State(state): State<Arc<AppState>>,
     jar: CookieJar,
@@ -1851,6 +2188,7 @@ async fn list_accessible_gpu_types(
     sync_gpu_catalog_from_provider(&state).await?;
     let user_id = match &actor {
         AuthenticatedActor::User(session) => Some(session.user.user.id),
+        AuthenticatedActor::CliToken(token) => Some(token.user.user.id),
         AuthenticatedActor::ApiKey { principal_id, .. } => state
             .store
             .principal_user_id(*principal_id)
@@ -3838,6 +4176,7 @@ struct AuthenticatedSession {
 
 enum AuthenticatedActor {
     User(AuthenticatedSession),
+    CliToken(CliAccessTokenPrincipal),
     ApiKey {
         organization_id: OrganizationId,
         principal_id: PrincipalId,
@@ -4042,6 +4381,11 @@ async fn authenticated_actor(
         let token = authorization
             .strip_prefix("Bearer ")
             .ok_or(ApiError::Unauthorized)?;
+        if token.starts_with("hcu_") {
+            return authenticated_cli_access_token_value(state, token)
+                .await
+                .map(AuthenticatedActor::CliToken);
+        }
         let prefix = parse_api_key_prefix(token)?;
         let digest = token_hash(token);
         let principal = state
@@ -4149,6 +4493,22 @@ async fn authorize_actor(
                 json!({ "actor": "user" }),
             )
         }
+        AuthenticatedActor::CliToken(token) => {
+            if token.organization_id != organization_id {
+                return Err(ApiError::Forbidden);
+            }
+            let context = state
+                .store
+                .authorization_context(token.user.user.id, organization_id)
+                .await
+                .map_err(ApiError::from_store)?
+                .ok_or(ApiError::Forbidden)?;
+            (
+                context,
+                Some(token.user.user.id),
+                json!({ "actor": "cli_oauth_token", "token_id": token.token_id }),
+            )
+        }
         AuthenticatedActor::ApiKey {
             organization_id: key_organization_id,
             principal_id,
@@ -4248,6 +4608,51 @@ fn parse_api_key_prefix(token: &str) -> Result<&str, ApiError> {
     let prefix = segments.next().ok_or(ApiError::Unauthorized)?;
     let secret = segments.next().ok_or(ApiError::Unauthorized)?;
     if prefix.len() != 16 || secret.len() < 32 {
+        return Err(ApiError::Unauthorized);
+    }
+    Ok(prefix)
+}
+
+async fn authenticated_cli_access_token(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<CliAccessTokenPrincipal, ApiError> {
+    let authorization = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or(ApiError::Unauthorized)?;
+    let token = authorization
+        .strip_prefix("Bearer ")
+        .ok_or(ApiError::Unauthorized)?;
+    authenticated_cli_access_token_value(state, token).await
+}
+
+async fn authenticated_cli_access_token_value(
+    state: &AppState,
+    token: &str,
+) -> Result<CliAccessTokenPrincipal, ApiError> {
+    let prefix = parse_cli_access_token_prefix(token)?;
+    state
+        .store
+        .authenticate_cli_access_token(prefix, &token_hash(token))
+        .await
+        .map_err(ApiError::from_store)?
+        .ok_or(ApiError::Unauthorized)
+}
+
+fn parse_cli_access_token_prefix(token: &str) -> Result<&str, ApiError> {
+    let value = token.strip_prefix("hcu_").ok_or(ApiError::Unauthorized)?;
+    let prefix = value.get(..16).ok_or(ApiError::Unauthorized)?;
+    let secret = value
+        .get(16..)
+        .and_then(|value| value.strip_prefix('_'))
+        .ok_or(ApiError::Unauthorized)?;
+    if secret.len() < 32
+        || !prefix
+            .chars()
+            .chain(secret.chars())
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
         return Err(ApiError::Unauthorized);
     }
     Ok(prefix)
@@ -4482,13 +4887,13 @@ mod tests {
         INVITATION_MAX_TTL_HOURS, RealtimeMetricHistoryRange, RealtimeMetricHistoryResponse,
         SESSION_COOKIE, deserialize_stored_flow_spec, flash_collection_resource,
         flash_service_resource, flow_permission_iam_action, owner_network_boundary_allows,
-        parse_api_key_prefix, parse_flow_developer_credential_prefix, request_source_ip,
-        required_syouyu_idempotency_key, summarize_flash_usage,
-        syouyu_compensation_idempotency_key, syouyu_credential_response, valid_kubernetes_name,
-        validate_developer_credential_expiry, validate_developer_credential_name,
-        validate_flash_spec, validate_flow_access_target, validate_flow_access_ttl,
-        validate_flow_permissions, validate_flow_spec, validate_invitation_ttl,
-        validate_list_limit, validate_slug,
+        parse_api_key_prefix, parse_cli_access_token_prefix,
+        parse_flow_developer_credential_prefix, request_source_ip, required_syouyu_idempotency_key,
+        summarize_flash_usage, syouyu_compensation_idempotency_key, syouyu_credential_response,
+        valid_kubernetes_name, validate_developer_credential_expiry,
+        validate_developer_credential_name, validate_flash_spec, validate_flow_access_target,
+        validate_flow_access_ttl, validate_flow_permissions, validate_flow_spec,
+        validate_invitation_ttl, validate_list_limit, validate_slug,
     };
 
     #[test]
@@ -4876,6 +5281,16 @@ mod tests {
         let token = "hc_0123456789abcdef_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG";
         assert_eq!(parse_api_key_prefix(token).ok(), Some("0123456789abcdef"));
         assert!(parse_api_key_prefix("not-a-key").is_err());
+    }
+
+    #[test]
+    fn cli_token_prefix_uses_a_fixed_length_boundary() {
+        let token = format!("hcu_0123456789abc_de_{}", "A".repeat(43));
+        assert_eq!(
+            parse_cli_access_token_prefix(&token).ok(),
+            Some("0123456789abc_de")
+        );
+        assert!(parse_cli_access_token_prefix("hcu_short_secret").is_err());
     }
 
     #[test]

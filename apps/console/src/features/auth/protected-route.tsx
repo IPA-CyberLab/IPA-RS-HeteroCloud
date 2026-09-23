@@ -1,6 +1,7 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { ErrorState } from "@/components/shared/error-state";
 import { PageLoading } from "@/components/shared/page-loading";
+import { rememberAuthReturnPath } from "@/features/auth/auth-return";
 import { useSession } from "@/features/auth/session";
 
 export function ProtectedRoute() {
@@ -24,6 +25,7 @@ export function ProtectedRoute() {
   }
 
   if (!session.data) {
+    rememberAuthReturnPath(`${location.pathname}${location.search}${location.hash}`);
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 

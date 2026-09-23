@@ -5,6 +5,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { PageLoading } from "@/components/shared/page-loading";
 import { ProtectedRoute } from "@/features/auth/protected-route";
 import { LoginPage } from "@/features/auth/login-page";
+import { readAuthReturnPath } from "@/features/auth/auth-return";
 import { RegisterPage } from "@/features/auth/register-page";
 import { OrganizationProvider } from "@/features/organizations/organization-context";
 import { createQueryClient } from "@/lib/query-client";
@@ -92,6 +93,11 @@ const CliSetupPage = lazy(() =>
     default: module.CliSetupPage,
   })),
 );
+const CliAuthorizePage = lazy(() =>
+  import("@/features/cli/cli-authorize-page").then((module) => ({
+    default: module.CliAuthorizePage,
+  })),
+);
 const OwnerQuotasPage = lazy(() =>
   import("@/features/operator/quotas-page").then((module) => ({
     default: module.OwnerQuotasPage,
@@ -134,6 +140,10 @@ function OverviewRoute() {
   );
 }
 
+function PostLoginRoute() {
+  return <Navigate to={readAuthReturnPath() ?? "/overview"} replace />;
+}
+
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -144,7 +154,7 @@ export function App() {
           <Route element={<ProtectedRoute />}>
             <Route element={<OrganizationProvider />}>
               <Route element={<AppShell />}>
-              <Route index element={<Navigate to="/overview" replace />} />
+              <Route index element={<PostLoginRoute />} />
               <Route
                 path="/overview"
                 element={<OverviewRoute />}
@@ -286,6 +296,14 @@ export function App() {
                 element={
                   <LazyPage>
                     <CliSetupPage />
+                  </LazyPage>
+                }
+              />
+              <Route
+                path="/cli/authorize"
+                element={
+                  <LazyPage>
+                    <CliAuthorizePage />
                   </LazyPage>
                 }
               />

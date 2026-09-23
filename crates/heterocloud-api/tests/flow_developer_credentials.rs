@@ -449,6 +449,7 @@ async fn test_state() -> Result<
             trusted_proxy_networks: Vec::new(),
             secure_cookie: false,
             session_ttl: StdDuration::from_secs(3600),
+            cli_token_ttl: StdDuration::from_secs(30 * 24 * 60 * 60),
             csrf_key,
             flow_access_signer: FlowAccessSigner::new(
                 "heterocloud",

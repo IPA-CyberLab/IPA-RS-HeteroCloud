@@ -23,6 +23,12 @@ export interface Session {
   owner_console: boolean;
 }
 
+export interface CliDeviceAuthorization {
+  user_code: string;
+  organization: Membership;
+  expires_at: string;
+}
+
 export interface FlowQuotaLimits {
   max_services: number;
   max_rooms_per_service: number;

@@ -29,9 +29,10 @@ export function buildCliSetupPrompt({
 2. アーカイブと同名の .sha256 をダウンロードし、SHA-256 が一致した場合だけ展開してください。
 3. heterocloud（Windowsでは heterocloud.exe）を PATH 上へ配置してください。ユーザー領域で導入できない場合だけ、理由を説明して通常のOS権限昇格を求めてください。
 4. HETEROCLOUD_ENDPOINT=${origin} と HETEROCLOUD_ORGANIZATION_ID=${organizationId} を、現在のユーザーとシェルで次回起動後も有効になるよう設定してください。
-5. APIキーをチャット、プロンプト、URL、コマンドライン引数、シェル履歴、ログへ出さないでください。既存の安全なキーファイルがあれば HETEROCLOUD_API_KEY_FILE に設定してください。なければ、端末上の非表示入力でキーを受け取り、ユーザー専用の設定ディレクトリへ保存する短いローカル手順だけを用意してください。Unixではファイルを0600、Windowsでは現在ユーザーだけが読めるACLにしてください。APIキー自体を永続環境変数へ保存しないでください。
-6. ${insecureHttp ? "接続先がHTTPなので、HETEROCLOUD_ALLOW_INSECURE_HTTP=1 も明示的に設定してください。" : "HETEROCLOUD_ALLOW_INSECURE_HTTP は設定しないでください。"}
-7. 最後に heterocloud --version を実行し、実行ファイルの場所、バージョン、変更した設定ファイルと環境変数を簡潔に報告してください。サービスやクラウドリソースの作成・更新・削除は行わないでください。`;
+5. ${insecureHttp ? "接続先がHTTPなので、HETEROCLOUD_ALLOW_INSECURE_HTTP=1 も明示的に設定してください。" : "HETEROCLOUD_ALLOW_INSECURE_HTTP は設定しないでください。"}
+6. APIキーを要求・生成・表示しないでください。heterocloud auth login を実行し、表示された任意ドメイン上の認証URLを既定ブラウザで開き、ユーザーがKeycloakログインとCLI承認を完了できる状態にしてください。認証コードやアクセストークンをチャット、シェル履歴、URL、ログへ転記しないでください。
+7. ブラウザ承認後にCLIが終了するまで待ち、heterocloud auth status を実行してください。ログイン済みユーザー、組織、トークン有効期限が取得できた場合だけセットアップ完了としてください。
+8. 最後に heterocloud --version を実行し、実行ファイルの場所、バージョン、変更した設定ファイルと環境変数、auth statusの成否を簡潔に報告してください。サービスやクラウドリソースの作成・更新・削除は行わないでください。`;
 }
 
 export function buildChatGptLaunchUrl(prompt: string): string {

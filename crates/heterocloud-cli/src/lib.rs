@@ -10,9 +10,11 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod auth;
 mod external_dns;
 mod services;
 
+pub use auth::AuthArgs;
 pub use external_dns::ReconcileArgs;
 pub use services::{ApiOutputFormat, ServiceArgs};
 
@@ -29,7 +31,7 @@ const MAX_BASE_DOMAIN_LENGTH: usize = 230;
     about = "Operate HeteroCloud managed services"
 )]
 pub struct Cli {
-    /// HeteroCloud API and console origin. Required for service commands.
+    /// HeteroCloud API and console origin. Saved after a successful login.
     #[arg(long, global = true, env = "HETEROCLOUD_ENDPOINT", value_name = "URL")]
     pub endpoint: Option<String>,
 
@@ -53,7 +55,7 @@ pub struct Cli {
     )]
     pub api_key_file: Option<PathBuf>,
 
-    /// Organization managed by the API key.
+    /// Organization used for browser login or managed by the service-account key.
     #[arg(
         long,
         global = true,
@@ -91,6 +93,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum TopLevelCommand {
+    /// Sign in and manage CLI authentication.
+    Auth(AuthArgs),
     /// Generate or verify public DNS records.
     Dns(DnsArgs),
     /// Manage Flow realtime services.
@@ -247,7 +251,9 @@ pub enum CliError {
     },
     #[error("DNS did not converge within {seconds} seconds ({failures} record(s) still invalid)")]
     DnsConvergenceTimeout { seconds: u64, failures: usize },
-    #[error("service commands require HETEROCLOUD_API_KEY or --api-key-file")]
+    #[error(
+        "authentication is required; run `heterocloud auth login`, or set HETEROCLOUD_API_KEY_FILE for a service account"
+    )]
     MissingApiKey,
     #[error("service commands require HETEROCLOUD_ENDPOINT or --endpoint")]
     MissingEndpoint,
@@ -257,6 +263,26 @@ pub enum CliError {
     InvalidApiEndpoint(String),
     #[error("API key must start with hc_ and contain no whitespace or control characters")]
     InvalidApiKey,
+    #[error("no CLI login is saved for {0}; run `heterocloud --endpoint {0} auth login`")]
+    LoginRequired(String),
+    #[error("CLI authentication failed: {0}")]
+    Authentication(String),
+    #[error("failed to access credential store {path}: {source}")]
+    CredentialStoreIo {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("credential store error: {0}")]
+    CredentialStore(String),
+    #[error("credential store {0} must be a regular file and not a symbolic link")]
+    UnsafeCredentialStore(PathBuf),
+    #[error("credential store {path} has unsafe mode {mode:o}; use chmod 600")]
+    UnsafeCredentialStoreMode { path: PathBuf, mode: u32 },
+    #[error("credential store {0} is invalid or uses an unsupported format")]
+    InvalidStoredCredential(PathBuf),
+    #[error("failed to open the browser: {0}")]
+    Browser(#[source] io::Error),
     #[error("failed to read API key file {path}: {source}")]
     ApiKeyFile {
         path: PathBuf,
@@ -320,57 +346,97 @@ pub async fn execute(cli: Cli) -> Result<(), CliError> {
     let allow_insecure_http = cli.allow_insecure_http;
     let output = cli.output;
     match cli.command {
+        TopLevelCommand::Auth(args) => {
+            auth::execute(
+                args,
+                auth::AuthSettings {
+                    endpoint,
+                    organization_id,
+                    allow_insecure_http,
+                },
+            )
+            .await
+        }
         TopLevelCommand::Dns(args) => match args.command {
             DnsCommand::Records(args) => print_records(args),
             DnsCommand::Verify(args) => verify_records(args),
             DnsCommand::Reconcile(args) => external_dns::reconcile(*args),
         },
         TopLevelCommand::Flow(args) => {
-            services::execute(
-                services::ServiceKind::Flow,
-                args,
-                services::ApiSettings {
-                    endpoint: endpoint.ok_or(CliError::MissingEndpoint)?,
-                    api_key: load_api_key(api_key, api_key_file.as_deref())?,
-                    organization_id: organization_id.ok_or(CliError::MissingOrganization)?,
-                    wait_timeout_seconds,
-                    allow_insecure_http,
-                    output,
-                },
-            )
-            .await
+            let settings = service_api_settings(
+                endpoint,
+                api_key,
+                api_key_file.as_deref(),
+                organization_id,
+                wait_timeout_seconds,
+                allow_insecure_http,
+                output,
+            )?;
+            services::execute(services::ServiceKind::Flow, args, settings).await
         }
         TopLevelCommand::Flash(args) => {
-            services::execute(
-                services::ServiceKind::Flash,
-                args,
-                services::ApiSettings {
-                    endpoint: endpoint.ok_or(CliError::MissingEndpoint)?,
-                    api_key: load_api_key(api_key, api_key_file.as_deref())?,
-                    organization_id: organization_id.ok_or(CliError::MissingOrganization)?,
-                    wait_timeout_seconds,
-                    allow_insecure_http,
-                    output,
-                },
-            )
-            .await
+            let settings = service_api_settings(
+                endpoint,
+                api_key,
+                api_key_file.as_deref(),
+                organization_id,
+                wait_timeout_seconds,
+                allow_insecure_http,
+                output,
+            )?;
+            services::execute(services::ServiceKind::Flash, args, settings).await
         }
         TopLevelCommand::Syouyu(args) => {
-            services::execute(
-                services::ServiceKind::Syouyu,
-                args,
-                services::ApiSettings {
-                    endpoint: endpoint.ok_or(CliError::MissingEndpoint)?,
-                    api_key: load_api_key(api_key, api_key_file.as_deref())?,
-                    organization_id: organization_id.ok_or(CliError::MissingOrganization)?,
-                    wait_timeout_seconds,
-                    allow_insecure_http,
-                    output,
-                },
-            )
-            .await
+            let settings = service_api_settings(
+                endpoint,
+                api_key,
+                api_key_file.as_deref(),
+                organization_id,
+                wait_timeout_seconds,
+                allow_insecure_http,
+                output,
+            )?;
+            services::execute(services::ServiceKind::Syouyu, args, settings).await
         }
     }
+}
+
+fn service_api_settings(
+    endpoint: Option<String>,
+    api_key: Option<String>,
+    api_key_file: Option<&Path>,
+    organization_id: Option<uuid::Uuid>,
+    wait_timeout_seconds: u64,
+    allow_insecure_http: bool,
+    output: ApiOutputFormat,
+) -> Result<services::ApiSettings, CliError> {
+    let (endpoint, bearer_token, organization_id) = if api_key.is_some() || api_key_file.is_some() {
+        (
+            endpoint.ok_or(CliError::MissingEndpoint)?,
+            load_api_key(api_key, api_key_file)?,
+            organization_id.ok_or(CliError::MissingOrganization)?,
+        )
+    } else {
+        let credential = auth::load_stored_credential(endpoint.as_deref(), allow_insecure_http)?;
+        if organization_id.is_some_and(|requested| requested != credential.organization_id) {
+            return Err(CliError::Authentication(
+                "the saved CLI login belongs to a different organization; run `heterocloud auth login` for this organization".into(),
+            ));
+        }
+        (
+            credential.endpoint,
+            credential.access_token,
+            organization_id.unwrap_or(credential.organization_id),
+        )
+    };
+    Ok(services::ApiSettings {
+        endpoint,
+        bearer_token,
+        organization_id,
+        wait_timeout_seconds,
+        allow_insecure_http,
+        output,
+    })
 }
 
 fn load_api_key(value: Option<String>, path: Option<&Path>) -> Result<String, CliError> {

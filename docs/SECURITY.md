@@ -45,6 +45,16 @@ IP/ASN/device rate limits. SMS alone is not a Sybil defense.
   checked against an asymmetric JWKS key for signature, algorithm, issuer,
   audience, expiry, subject, authorized party, and nonce.
 
+CLI login uses a browser-mediated device authorization. The device code has
+256 random bits, the human verification code expires after ten minutes, and
+polling is rate-limited. Approval requires an authenticated browser session,
+same-origin validation, CSRF validation, and membership in the requested
+organization. The returned CLI token is fixed to that organization, expires
+within the configured limit (30 days by default), is independently revocable,
+and is stored only as a SHA-256 digest on the server. CLI bearer mutations do
+not use browser cookies. Local credentials use a mode-`0600` file under the
+user configuration directory on Unix and a current-user ACL on Windows.
+
 TLS is mandatory on public deployments. Database URLs, CSRF keys, bootstrap
 passwords, OIDC client secrets, TLS private keys, Flow access HMAC secrets,
 provider signing keys, and service credentials must be mounted as Kubernetes

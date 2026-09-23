@@ -106,7 +106,7 @@ impl ServiceKind {
 
 pub(crate) struct ApiSettings {
     pub endpoint: String,
-    pub api_key: String,
+    pub bearer_token: String,
     pub organization_id: Uuid,
     pub wait_timeout_seconds: u64,
     pub allow_insecure_http: bool,
@@ -257,7 +257,7 @@ impl ApiClient {
         }
         endpoint.set_path("/");
 
-        let authorization = HeaderValue::from_str(&format!("Bearer {}", settings.api_key))
+        let authorization = HeaderValue::from_str(&format!("Bearer {}", settings.bearer_token))
             .map_err(|_| CliError::InvalidApiKey)?;
         let mut authorization = authorization;
         authorization.set_sensitive(true);
@@ -648,7 +648,7 @@ mod tests {
     fn settings(endpoint: &str, allow_insecure_http: bool) -> ApiSettings {
         ApiSettings {
             endpoint: endpoint.into(),
-            api_key: "hc_0123456789_secret".into(),
+            bearer_token: "hc_0123456789_secret".into(),
             organization_id: Uuid::nil(),
             wait_timeout_seconds: 30,
             allow_insecure_http,
