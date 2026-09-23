@@ -60,6 +60,21 @@ service-account principal and API key in the IAM console, bind only the
 required `realtime:*`, `flash:*`, or `syouyu:*` actions, and keep the secret out
 of shell history and source control:
 
+Install the matching archive and adjacent checksum from the
+[latest release](https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/releases/latest).
+For Linux x64, extract `heterocloud-v0.1.74-linux-x64.tar.gz`, verify it with
+`sha256sum -c`, then install the binary:
+
+```sh
+sha256sum -c heterocloud-v0.1.74-linux-x64.tar.gz.sha256
+tar -xzf heterocloud-v0.1.74-linux-x64.tar.gz
+sudo install -m 0755 heterocloud /usr/local/bin/heterocloud
+heterocloud --version
+```
+
+The same release publishes `heterocloud-v0.1.74-macos-arm64.tar.gz` and
+`heterocloud-v0.1.74-windows-x64.zip` builds.
+
 ```sh
 install -m 0700 -d "$HOME/.config/heterocloud"
 umask 077
@@ -82,7 +97,8 @@ ready. Delete requires `--yes` and waits until the resource is absent. Use
 API origin must use HTTPS unless `--allow-insecure-http` is explicitly enabled
 for a private lab. JSON manifests for each service are under
 [`examples/cli`](examples/cli). Flash autoscaling, endpoint modes, quota reservation,
-and the scoped OpenAPI schema are documented in [Flash API](docs/FLASH_API.md).
+weekly CPU/memory/GPU runtime metering, cost-management views, and the scoped
+OpenAPI schema are documented in [Flash API](docs/FLASH_API.md).
 
 Terraform users can manage the same resources with the separate
 [`IPA-CyberLab/terraform-provider-heterocloud`](https://github.com/IPA-CyberLab/terraform-provider-heterocloud)

@@ -112,6 +112,8 @@ pub struct ReconcileRequest {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlashProviderPolicy {
+    pub max_weekly_cpu_millicore_seconds: u64,
+    pub max_weekly_memory_mib_seconds: u64,
     pub max_weekly_gpu_seconds: u64,
 }
 

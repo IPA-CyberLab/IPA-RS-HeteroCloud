@@ -25,8 +25,9 @@ use heterocloud_domain::{
     DEFAULT_FLOW_MAX_ROOMS, DEFAULT_FLOW_RATE_LIMIT_BURST,
     DEFAULT_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, FlashQuotaLimits, FlashSpec, FlowRateLimit,
     FlowSpec, MAX_FLOW_RATE_LIMIT_BURST, MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, MAX_FLOW_ROOMS,
-    OrganizationId, PolicyDocument, PolicyId, PrincipalId, ProjectId, ResourceQuotaLimits,
-    ServiceInstance, ServiceInstanceId, ServiceState, SyouyuQuotaLimits, SyouyuSpec, UserStatus,
+    Organization, OrganizationId, PolicyDocument, PolicyId, PrincipalId, ProjectId,
+    ResourceQuotaLimits, ServiceInstance, ServiceInstanceId, ServiceState, SyouyuQuotaLimits,
+    SyouyuSpec, UserStatus,
 };
 use heterocloud_iam::{AuthorizationRequest, Decision, authorize, semantics_digest};
 use heterocloud_store::{
@@ -49,8 +50,8 @@ use crate::{
     config::RuntimeConfig,
     error::ApiError,
     flash_provider::{
-        FlashContainerList, FlashProviderContext, FlashProviderProxy, bridge_websockets,
-        refresh_autoscaled_status, refresh_autoscaled_statuses,
+        FlashContainerList, FlashProviderContext, FlashProviderProxy, FlashUsageItem,
+        bridge_websockets, refresh_autoscaled_status, refresh_autoscaled_statuses,
     },
     flow_access::{FlowAccessInput, SignedFlowAccessContext},
     metrics::fetch_and_record_realtime_metrics,
@@ -109,6 +110,7 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route("/auth/session", get(session))
         .route("/auth/logout", post(logout))
         .route("/owner/quotas", get(owner_quota_overview))
+        .route("/owner/cost-management", get(owner_cost_management))
         .route("/owner/accounts", get(list_owner_accounts))
         .route("/owner/gpus", get(list_owner_gpus))
         .route(
@@ -171,6 +173,10 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route(
             "/organizations/{organization_id}/flash/quota",
             get(get_flash_quota),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/usage",
+            get(get_flash_usage),
         )
         .route(
             "/organizations/{organization_id}/flash/services/{service_instance_id}",
@@ -294,6 +300,149 @@ async fn live() -> impl IntoResponse {
 async fn ready(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
     state.store.ping().await.map_err(ApiError::from_store)?;
     Ok((StatusCode::OK, Json(json!({ "status": "ready" }))))
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+struct FlashRuntimeUsage {
+    cpu_millicore_seconds: u64,
+    memory_mib_seconds: u64,
+    gpu_seconds: u64,
+}
+
+impl FlashRuntimeUsage {
+    fn add(&mut self, item: &FlashUsageItem) {
+        self.cpu_millicore_seconds = self
+            .cpu_millicore_seconds
+            .saturating_add(item.weekly_usage.cpu_millicore_seconds);
+        self.memory_mib_seconds = self
+            .memory_mib_seconds
+            .saturating_add(item.weekly_usage.memory_mib_seconds);
+        self.gpu_seconds = self
+            .gpu_seconds
+            .saturating_add(item.weekly_usage.gpu_seconds);
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+struct FlashCurrentAllocation {
+    active_services: u64,
+    ready_replicas: u64,
+    cpu_millis: u64,
+    memory_mib: u64,
+    gpus: u64,
+}
+
+impl FlashCurrentAllocation {
+    fn add(&mut self, item: &FlashUsageItem) {
+        if item.active {
+            self.active_services = self.active_services.saturating_add(1);
+        }
+        let replicas = u64::from(item.ready_replicas);
+        self.ready_replicas = self.ready_replicas.saturating_add(replicas);
+        self.cpu_millis = self
+            .cpu_millis
+            .saturating_add(replicas.saturating_mul(u64::from(item.cpu_millis)));
+        self.memory_mib = self
+            .memory_mib
+            .saturating_add(replicas.saturating_mul(u64::from(item.memory_mib)));
+        self.gpus = self
+            .gpus
+            .saturating_add(replicas.saturating_mul(u64::from(item.gpu_count)));
+    }
+}
+
+fn summarize_flash_usage(items: &[FlashUsageItem]) -> (FlashRuntimeUsage, FlashCurrentAllocation) {
+    let mut usage = FlashRuntimeUsage::default();
+    let mut current = FlashCurrentAllocation::default();
+    for item in items {
+        usage.add(item);
+        current.add(item);
+    }
+    (usage, current)
+}
+
+#[derive(Debug, Serialize)]
+struct FlashCostManagement {
+    generated_at: i64,
+    week_started_at: i64,
+    week_ends_at: i64,
+    limits: FlashQuotaLimits,
+    usage: FlashRuntimeUsage,
+    current: FlashCurrentAllocation,
+    services: Vec<FlashUsageItem>,
+}
+
+#[derive(Debug, Serialize)]
+struct OwnerFlashCostTenant {
+    organization: Organization,
+    limits: FlashQuotaLimits,
+    usage: FlashRuntimeUsage,
+    current: FlashCurrentAllocation,
+    services: Vec<FlashUsageItem>,
+}
+
+async fn provider_flash_usage(
+    state: &AppState,
+) -> Result<crate::flash_provider::FlashUsageSnapshot, ApiError> {
+    let provider = state
+        .flash_provider
+        .as_deref()
+        .ok_or(ApiError::FlashProviderUnavailable)?;
+    provider.list_usage().await.map_err(|error| {
+        tracing::warn!(error = %error, "Flash usage lookup failed");
+        ApiError::FlashProviderUnavailable
+    })
+}
+
+async fn owner_cost_management(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &jar, peer, false).await?;
+    let (tenants, snapshot) = tokio::try_join!(
+        async {
+            state
+                .store
+                .list_resource_quota_tenants()
+                .await
+                .map_err(ApiError::from_store)
+        },
+        provider_flash_usage(&state)
+    )?;
+    let (usage, current) = summarize_flash_usage(&snapshot.items);
+    let mut usage_by_organization = HashMap::<OrganizationId, Vec<FlashUsageItem>>::new();
+    for item in snapshot.items {
+        usage_by_organization
+            .entry(item.organization_id)
+            .or_default()
+            .push(item);
+    }
+    let tenants = tenants
+        .into_iter()
+        .map(|tenant| {
+            let services = usage_by_organization
+                .remove(&tenant.organization.id)
+                .unwrap_or_default();
+            let (usage, current) = summarize_flash_usage(&services);
+            OwnerFlashCostTenant {
+                organization: tenant.organization,
+                limits: tenant.effective_limits.flash,
+                usage,
+                current,
+                services,
+            }
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(json!({
+        "generated_at": snapshot.generated_at,
+        "week_started_at": snapshot.week_started_at,
+        "week_ends_at": snapshot.week_started_at.saturating_add(7 * 24 * 60 * 60),
+        "usage": usage,
+        "current": current,
+        "tenants": tenants,
+    })))
 }
 
 async fn owner_quota_overview(
@@ -1737,6 +1886,49 @@ async fn get_flash_quota(
         .await
         .map_err(ApiError::from_store)?;
     Ok(Json(limits.flash))
+}
+
+async fn get_flash_usage(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<FlashCostManagement>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    let organization_id = OrganizationId(organization_id);
+    authorize_actor(
+        &state,
+        &actor,
+        organization_id,
+        "flash:ListInstances",
+        &flash_collection_resource(organization_id.0),
+    )
+    .await?;
+    let (limits, snapshot) = tokio::try_join!(
+        async {
+            state
+                .store
+                .effective_resource_quota(organization_id)
+                .await
+                .map_err(ApiError::from_store)
+        },
+        provider_flash_usage(&state)
+    )?;
+    let services = snapshot
+        .items
+        .into_iter()
+        .filter(|item| item.organization_id == organization_id)
+        .collect::<Vec<_>>();
+    let (usage, current) = summarize_flash_usage(&services);
+    Ok(Json(FlashCostManagement {
+        generated_at: snapshot.generated_at,
+        week_started_at: snapshot.week_started_at,
+        week_ends_at: snapshot.week_started_at.saturating_add(7 * 24 * 60 * 60),
+        limits: limits.flash,
+        usage,
+        current,
+        services,
+    }))
 }
 
 async fn list_flash_services(
@@ -4280,6 +4472,7 @@ mod tests {
     use uuid::Uuid;
 
     use crate::error::ApiError;
+    use crate::flash_provider::{FlashUsageItem, FlashWeeklyUsage};
     use crate::syouyu_provider::{SyouyuProviderCredential, SyouyuProviderPermissions};
 
     use super::{
@@ -4290,17 +4483,57 @@ mod tests {
         SESSION_COOKIE, deserialize_stored_flow_spec, flash_collection_resource,
         flash_service_resource, flow_permission_iam_action, owner_network_boundary_allows,
         parse_api_key_prefix, parse_flow_developer_credential_prefix, request_source_ip,
-        required_syouyu_idempotency_key, syouyu_compensation_idempotency_key,
-        syouyu_credential_response, valid_kubernetes_name, validate_developer_credential_expiry,
-        validate_developer_credential_name, validate_flash_spec, validate_flow_access_target,
-        validate_flow_access_ttl, validate_flow_permissions, validate_flow_spec,
-        validate_invitation_ttl, validate_list_limit, validate_slug,
+        required_syouyu_idempotency_key, summarize_flash_usage,
+        syouyu_compensation_idempotency_key, syouyu_credential_response, valid_kubernetes_name,
+        validate_developer_credential_expiry, validate_developer_credential_name,
+        validate_flash_spec, validate_flow_access_target, validate_flow_access_ttl,
+        validate_flow_permissions, validate_flow_spec, validate_invitation_ttl,
+        validate_list_limit, validate_slug,
     };
 
     #[test]
     fn public_security_names_are_stable() {
         assert_eq!(SESSION_COOKIE, "hc_session");
         assert_eq!(CSRF_HEADER, "x-heterocloud-csrf");
+    }
+
+    #[test]
+    fn flash_cost_summary_counts_history_without_treating_it_as_current_capacity() {
+        let organization_id = OrganizationId(Uuid::from_u128(1));
+        let project_id = ProjectId(Uuid::from_u128(2));
+        let usage = |service_instance_id, active, ready_replicas, cpu_seconds| FlashUsageItem {
+            organization_id,
+            project_id,
+            service_instance_id: ServiceInstanceId(Uuid::from_u128(service_instance_id)),
+            display_name: format!("flash-{service_instance_id}"),
+            active,
+            ready_replicas,
+            cpu_millis: 500,
+            memory_mib: 1_024,
+            gpu_count: 1,
+            weekly_usage: FlashWeeklyUsage {
+                week_started_at: 345_600,
+                cpu_millicore_seconds: cpu_seconds,
+                memory_mib_seconds: cpu_seconds.saturating_mul(2),
+                gpu_seconds: cpu_seconds / 500,
+                last_metered_at: 345_700,
+                max_cpu_millicore_seconds: 10_000,
+                max_memory_mib_seconds: 20_000,
+                max_gpu_seconds: 30_000,
+            },
+        };
+        let items = vec![usage(3, true, 2, 1_000), usage(4, false, 0, 3_000)];
+
+        let (total, current) = summarize_flash_usage(&items);
+
+        assert_eq!(total.cpu_millicore_seconds, 4_000);
+        assert_eq!(total.memory_mib_seconds, 8_000);
+        assert_eq!(total.gpu_seconds, 8);
+        assert_eq!(current.active_services, 1);
+        assert_eq!(current.ready_replicas, 2);
+        assert_eq!(current.cpu_millis, 1_000);
+        assert_eq!(current.memory_mib, 2_048);
+        assert_eq!(current.gpus, 2);
     }
 
     #[test]

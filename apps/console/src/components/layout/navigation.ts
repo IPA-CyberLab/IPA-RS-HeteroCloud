@@ -9,6 +9,7 @@ const baseNavigationItems: SideNavigationProps.Item[] = [
     items: [
       { type: "link", text: "サービス", href: "/flash/services" },
       { type: "link", text: "イメージ", href: "/registry" },
+      { type: "link", text: "コスト管理", href: "/cost-management" },
     ],
   },
   {
@@ -38,6 +39,7 @@ export function navigationItems(ownerConsole: boolean): SideNavigationProps.Item
   if (!ownerConsole) return baseNavigationItems;
   return [
     { type: "link", text: "全アカウント管理", href: "/overview" },
+    { type: "link", text: "コスト管理", href: "/owner/cost-management" },
     { type: "link", text: "GPU管理", href: "/owner/gpus" },
   ];
 }
@@ -52,9 +54,11 @@ export const routeTitles: Record<string, string> = {
   "/flow/services": "Flow",
   "/flash/services": "Flash",
   "/registry": "イメージ",
+  "/cost-management": "コスト管理",
   "/syouyu/buckets": "Syouyu",
   "/audit-logs": "監査ログ",
   "/settings": "設定",
   "/owner/quotas": "全アカウント管理",
   "/owner/gpus": "GPU管理",
+  "/owner/cost-management": "コスト管理",
 };

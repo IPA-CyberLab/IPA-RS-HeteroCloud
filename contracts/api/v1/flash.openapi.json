@@ -339,6 +339,71 @@
           }
         }
       }
+    },
+    "/api/v1/organizations/{organization_id}/flash/usage": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Read the authenticated account weekly Flash usage",
+        "description": "Requires flash:ListInstances for the organization. Returns organization-shared weekly CPU, memory, and GPU allocation counters, current Ready replica allocations, and current-week service history including deleted services. Counters reset Monday 00:00 UTC.",
+        "responses": {
+          "200": {
+            "description": "Current-week account usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlashCostManagement"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "503": {
+            "description": "Flash usage provider unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/owner/cost-management": {
+      "get": {
+        "summary": "Read system-wide weekly Flash usage",
+        "description": "Requires the owner host, network, account, and session boundary. Returns global allocation counters and one usage summary for every cloud account.",
+        "responses": {
+          "200": {
+            "description": "System-wide current-week usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerFlashCostManagement"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Owner boundary rejected"
+          },
+          "503": {
+            "description": "Flash usage provider unavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1012,6 +1077,376 @@
           "available": {
             "type": "boolean",
             "description": "Provider-reported healthy and currently unleased state."
+          }
+        }
+      },
+      "FlashQuotaLimits": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "max_services",
+          "max_replicas_per_service",
+          "max_cpu_millis_per_vm",
+          "max_memory_mib_per_vm",
+          "max_disk_gib_per_vm",
+          "max_total_replicas",
+          "max_total_cpu_millis",
+          "max_total_memory_mib",
+          "max_total_disk_gib",
+          "max_weekly_cpu_millicore_seconds",
+          "max_weekly_memory_mib_seconds",
+          "max_weekly_gpu_seconds"
+        ],
+        "properties": {
+          "max_services": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_replicas_per_service": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_cpu_millis_per_vm": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_memory_mib_per_vm": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_disk_gib_per_vm": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_total_replicas": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_total_cpu_millis": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_total_memory_mib": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_total_disk_gib": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_weekly_cpu_millicore_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3153600000000000
+          },
+          "max_weekly_memory_mib_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 33067892736000
+          },
+          "max_weekly_gpu_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 31536000
+          }
+        }
+      },
+      "FlashRuntimeUsage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cpu_millicore_seconds",
+          "memory_mib_seconds",
+          "gpu_seconds"
+        ],
+        "properties": {
+          "cpu_millicore_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "memory_mib_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "gpu_seconds": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "FlashCurrentAllocation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "active_services",
+          "ready_replicas",
+          "cpu_millis",
+          "memory_mib",
+          "gpus"
+        ],
+        "properties": {
+          "active_services": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ready_replicas": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cpu_millis": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "memory_mib": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "gpus": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "FlashWeeklyUsage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "week_started_at",
+          "cpu_millicore_seconds",
+          "memory_mib_seconds",
+          "gpu_seconds",
+          "last_metered_at",
+          "max_weekly_cpu_millicore_seconds",
+          "max_weekly_memory_mib_seconds",
+          "max_weekly_gpu_seconds"
+        ],
+        "properties": {
+          "week_started_at": {
+            "type": "integer",
+            "description": "Unix seconds for Monday 00:00 UTC."
+          },
+          "cpu_millicore_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "memory_mib_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "gpu_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_metered_at": {
+            "type": "integer",
+            "description": "Unix seconds."
+          },
+          "max_weekly_cpu_millicore_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3153600000000000
+          },
+          "max_weekly_memory_mib_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 33067892736000
+          },
+          "max_weekly_gpu_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 31536000
+          }
+        }
+      },
+      "FlashUsageService": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "organization_id",
+          "project_id",
+          "service_instance_id",
+          "display_name",
+          "active",
+          "ready_replicas",
+          "cpu_millis",
+          "memory_mib",
+          "gpu_count",
+          "weekly_usage"
+        ],
+        "properties": {
+          "organization_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "service_instance_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "ready_replicas": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cpu_millis": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "memory_mib": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "gpu_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "weekly_usage": {
+            "$ref": "#/components/schemas/FlashWeeklyUsage"
+          }
+        }
+      },
+      "FlashCostManagement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "generated_at",
+          "week_started_at",
+          "week_ends_at",
+          "limits",
+          "usage",
+          "current",
+          "services"
+        ],
+        "properties": {
+          "generated_at": {
+            "type": "integer",
+            "description": "Unix seconds."
+          },
+          "week_started_at": {
+            "type": "integer",
+            "description": "Unix seconds for Monday 00:00 UTC."
+          },
+          "week_ends_at": {
+            "type": "integer",
+            "description": "Unix seconds for the following Monday 00:00 UTC."
+          },
+          "limits": {
+            "$ref": "#/components/schemas/FlashQuotaLimits"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/FlashRuntimeUsage"
+          },
+          "current": {
+            "$ref": "#/components/schemas/FlashCurrentAllocation"
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlashUsageService"
+            }
+          }
+        }
+      },
+      "FlashCostOrganization": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "OwnerFlashCostTenant": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "organization",
+          "limits",
+          "usage",
+          "current",
+          "services"
+        ],
+        "properties": {
+          "organization": {
+            "$ref": "#/components/schemas/FlashCostOrganization"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/FlashQuotaLimits"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/FlashRuntimeUsage"
+          },
+          "current": {
+            "$ref": "#/components/schemas/FlashCurrentAllocation"
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlashUsageService"
+            }
+          }
+        }
+      },
+      "OwnerFlashCostManagement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "generated_at",
+          "week_started_at",
+          "week_ends_at",
+          "usage",
+          "current",
+          "tenants"
+        ],
+        "properties": {
+          "generated_at": {
+            "type": "integer",
+            "description": "Unix seconds."
+          },
+          "week_started_at": {
+            "type": "integer",
+            "description": "Unix seconds for Monday 00:00 UTC."
+          },
+          "week_ends_at": {
+            "type": "integer",
+            "description": "Unix seconds for the following Monday 00:00 UTC."
+          },
+          "usage": {
+            "$ref": "#/components/schemas/FlashRuntimeUsage"
+          },
+          "current": {
+            "$ref": "#/components/schemas/FlashCurrentAllocation"
+          },
+          "tenants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnerFlashCostTenant"
+            }
           }
         }
       }

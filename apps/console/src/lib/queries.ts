@@ -189,6 +189,22 @@ export function flashQuotaQueryOptions(organizationId: string) {
   });
 }
 
+export function flashCostManagementQueryOptions(organizationId: string) {
+  return queryOptions({
+    queryKey: ["organizations", organizationId, "flash", "usage"],
+    queryFn: ({ signal }) => api.flash.usage(organizationId, signal),
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
+}
+
+export const ownerFlashCostManagementQueryOptions = queryOptions({
+  queryKey: ["owner", "flash", "usage"],
+  queryFn: ({ signal }) => api.owner.costManagement(signal),
+  refetchInterval: 30_000,
+  staleTime: 10_000,
+});
+
 export function flashServiceQueryOptions(
   organizationId: string,
   serviceId: string,

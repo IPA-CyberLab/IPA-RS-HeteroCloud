@@ -97,6 +97,16 @@ const OwnerGpusPage = lazy(() =>
     default: module.OwnerGpusPage,
   })),
 );
+const CostManagementPage = lazy(() =>
+  import("@/features/cost-management/cost-management-page").then((module) => ({
+    default: module.CostManagementPage,
+  })),
+);
+const OwnerCostManagementPage = lazy(() =>
+  import("@/features/cost-management/cost-management-page").then((module) => ({
+    default: module.OwnerCostManagementPage,
+  })),
+);
 
 function LazyPage({ children }: { children: React.ReactNode }) {
   return (
@@ -227,6 +237,14 @@ export function App() {
                 }
               />
               <Route
+                path="/cost-management"
+                element={
+                  <LazyPage>
+                    <CostManagementPage />
+                  </LazyPage>
+                }
+              />
+              <Route
                 path="/syouyu/buckets"
                 element={
                   <LazyPage>
@@ -274,6 +292,16 @@ export function App() {
                   <OwnerRoute>
                     <LazyPage>
                       <OwnerGpusPage />
+                    </LazyPage>
+                  </OwnerRoute>
+                }
+              />
+              <Route
+                path="/owner/cost-management"
+                element={
+                  <OwnerRoute>
+                    <LazyPage>
+                      <OwnerCostManagementPage />
                     </LazyPage>
                   </OwnerRoute>
                 }

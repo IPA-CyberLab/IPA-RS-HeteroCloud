@@ -293,6 +293,8 @@ async fn deliver(
                 .effective_resource_quota(payload.organization_id)
                 .await?;
             Some(FlashProviderPolicy {
+                max_weekly_cpu_millicore_seconds: quota.flash.max_weekly_cpu_millicore_seconds,
+                max_weekly_memory_mib_seconds: quota.flash.max_weekly_memory_mib_seconds,
                 max_weekly_gpu_seconds: quota.flash.max_weekly_gpu_seconds,
             })
         } else {

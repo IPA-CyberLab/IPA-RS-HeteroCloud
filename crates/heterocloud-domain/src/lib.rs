@@ -327,7 +327,13 @@ pub const DEFAULT_FLASH_ORGANIZATION_CPU_MILLIS: u64 = 20_000;
 pub const DEFAULT_FLASH_ORGANIZATION_MEMORY_MIB: u64 = 32_768;
 pub const DEFAULT_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB: u64 = 100;
 pub const DEFAULT_FLASH_ORGANIZATION_REPLICAS: u64 = 100;
+/// One thirtieth of the current 161-vCPU schedulable fleet for one week.
+pub const DEFAULT_FLASH_WEEKLY_CPU_MILLICORE_SECONDS: u64 = 3_245_760_000;
+/// One thirtieth of the current 137.39-GiB schedulable fleet for one week.
+pub const DEFAULT_FLASH_WEEKLY_MEMORY_MIB_SECONDS: u64 = 2_836_280_317;
 pub const DEFAULT_FLASH_WEEKLY_GPU_SECONDS: u64 = 40_320;
+pub const MAX_FLASH_WEEKLY_CPU_MILLICORE_SECONDS: u64 = 3_153_600_000_000_000;
+pub const MAX_FLASH_WEEKLY_MEMORY_MIB_SECONDS: u64 = 33_067_892_736_000;
 pub const MAX_FLASH_WEEKLY_GPU_SECONDS: u64 = 31_536_000;
 pub const DEFAULT_FLASH_IDLE_TIMEOUT_SECONDS: u32 = 900;
 pub const MIN_FLASH_IDLE_TIMEOUT_SECONDS: u32 = 60;
@@ -386,7 +392,24 @@ pub struct FlashQuotaLimits {
     pub max_total_cpu_millis: u64,
     pub max_total_memory_mib: u64,
     pub max_total_disk_gib: u64,
+    #[serde(default = "default_flash_weekly_cpu_millicore_seconds")]
+    pub max_weekly_cpu_millicore_seconds: u64,
+    #[serde(default = "default_flash_weekly_memory_mib_seconds")]
+    pub max_weekly_memory_mib_seconds: u64,
+    #[serde(default = "default_flash_weekly_gpu_seconds")]
     pub max_weekly_gpu_seconds: u64,
+}
+
+const fn default_flash_weekly_cpu_millicore_seconds() -> u64 {
+    DEFAULT_FLASH_WEEKLY_CPU_MILLICORE_SECONDS
+}
+
+const fn default_flash_weekly_memory_mib_seconds() -> u64 {
+    DEFAULT_FLASH_WEEKLY_MEMORY_MIB_SECONDS
+}
+
+const fn default_flash_weekly_gpu_seconds() -> u64 {
+    DEFAULT_FLASH_WEEKLY_GPU_SECONDS
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -442,6 +465,8 @@ impl Default for ResourceQuotaLimits {
                 max_total_cpu_millis: DEFAULT_FLASH_ORGANIZATION_CPU_MILLIS,
                 max_total_memory_mib: DEFAULT_FLASH_ORGANIZATION_MEMORY_MIB,
                 max_total_disk_gib: DEFAULT_FLASH_ORGANIZATION_EPHEMERAL_STORAGE_GIB,
+                max_weekly_cpu_millicore_seconds: DEFAULT_FLASH_WEEKLY_CPU_MILLICORE_SECONDS,
+                max_weekly_memory_mib_seconds: DEFAULT_FLASH_WEEKLY_MEMORY_MIB_SECONDS,
                 max_weekly_gpu_seconds: DEFAULT_FLASH_WEEKLY_GPU_SECONDS,
             },
             registry: RegistryQuotaLimits {
@@ -580,6 +605,16 @@ impl ResourceQuotaLimits {
         if flash.max_weekly_gpu_seconds > MAX_FLASH_WEEKLY_GPU_SECONDS {
             return Err(invalid_quota(format!(
                 "flash.max_weekly_gpu_seconds must be between 0 and {MAX_FLASH_WEEKLY_GPU_SECONDS}"
+            )));
+        }
+        if flash.max_weekly_cpu_millicore_seconds > MAX_FLASH_WEEKLY_CPU_MILLICORE_SECONDS {
+            return Err(invalid_quota(format!(
+                "flash.max_weekly_cpu_millicore_seconds must be between 0 and {MAX_FLASH_WEEKLY_CPU_MILLICORE_SECONDS}"
+            )));
+        }
+        if flash.max_weekly_memory_mib_seconds > MAX_FLASH_WEEKLY_MEMORY_MIB_SECONDS {
+            return Err(invalid_quota(format!(
+                "flash.max_weekly_memory_mib_seconds must be between 0 and {MAX_FLASH_WEEKLY_MEMORY_MIB_SECONDS}"
             )));
         }
         if !(1..=10_240).contains(&self.registry.storage_gib) {
@@ -1300,6 +1335,28 @@ mod tests {
     }
 
     #[test]
+    fn resource_quota_defaults_new_runtime_limits_for_rolling_upgrades()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut value = serde_json::to_value(ResourceQuotaLimits::default())?;
+        let flash = value
+            .get_mut("flash")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("flash quota must be an object")?;
+        flash.remove("max_weekly_cpu_millicore_seconds");
+        flash.remove("max_weekly_memory_mib_seconds");
+        let decoded = serde_json::from_value::<ResourceQuotaLimits>(value)?;
+        assert_eq!(
+            decoded.flash.max_weekly_cpu_millicore_seconds,
+            super::DEFAULT_FLASH_WEEKLY_CPU_MILLICORE_SECONDS
+        );
+        assert_eq!(
+            decoded.flash.max_weekly_memory_mib_seconds,
+            super::DEFAULT_FLASH_WEEKLY_MEMORY_MIB_SECONDS
+        );
+        Ok(())
+    }
+
+    #[test]
     fn syouyu_resource_quota_defaults_limit_each_tenant() {
         let limits = super::SyouyuQuotaLimits::default();
 
@@ -1309,6 +1366,18 @@ mod tests {
         assert_eq!(
             ResourceQuotaLimits::default().flash.max_weekly_gpu_seconds,
             40_320
+        );
+        assert_eq!(
+            ResourceQuotaLimits::default()
+                .flash
+                .max_weekly_cpu_millicore_seconds,
+            3_245_760_000
+        );
+        assert_eq!(
+            ResourceQuotaLimits::default()
+                .flash
+                .max_weekly_memory_mib_seconds,
+            2_836_280_317
         );
     }
 

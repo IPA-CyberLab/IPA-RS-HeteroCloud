@@ -57,6 +57,8 @@ const QUOTA_BOUNDS = {
     maxTotalCpuMillis: 100_000_000,
     maxTotalMemoryMib: 1_048_576,
     maxTotalDiskGib: 1_000_000,
+    maxWeeklyCpuMillicoreSeconds: 3_153_600_000_000_000,
+    maxWeeklyMemoryMibSeconds: 33_067_892_736_000,
     maxWeeklyGpuSeconds: 31_536_000,
   },
   registry: {
@@ -295,6 +297,16 @@ export function normalizeResourceQuotaLimits(
         flashDiskGibPerVm,
         QUOTA_BOUNDS.flash.maxTotalDiskGib,
       ),
+      max_weekly_cpu_millicore_seconds: clampInteger(
+        value.flash.max_weekly_cpu_millicore_seconds,
+        0,
+        QUOTA_BOUNDS.flash.maxWeeklyCpuMillicoreSeconds,
+      ),
+      max_weekly_memory_mib_seconds: clampInteger(
+        value.flash.max_weekly_memory_mib_seconds,
+        0,
+        QUOTA_BOUNDS.flash.maxWeeklyMemoryMibSeconds,
+      ),
       max_weekly_gpu_seconds: clampInteger(
         value.flash.max_weekly_gpu_seconds,
         0,
@@ -447,8 +459,24 @@ function QuotaEditor({
             </ColumnLayout>
           </SpaceBetween>
           <SpaceBetween size="xs">
-            <Box variant="awsui-key-label">GPU ランタイム</Box>
-            <ColumnLayout columns={2}>
+            <Box variant="awsui-key-label">週次ランタイム</Box>
+            <ColumnLayout columns={3}>
+              <NumberField
+                label="CPU 上限 (millicore-seconds)"
+                description={`${formatNumber(value.flash.max_weekly_cpu_millicore_seconds / 3_600_000)} vCPU 時間。組織内で共有し、毎週月曜 00:00 UTC にリセットします。`}
+                value={value.flash.max_weekly_cpu_millicore_seconds}
+                min={0}
+                max={QUOTA_BOUNDS.flash.maxWeeklyCpuMillicoreSeconds}
+                onChange={(next) => flash("max_weekly_cpu_millicore_seconds", next)}
+              />
+              <NumberField
+                label="メモリ上限 (MiB-seconds)"
+                description={`${formatNumber(value.flash.max_weekly_memory_mib_seconds / (1_024 * 3_600))} GiB 時間。組織内で共有し、毎週月曜 00:00 UTC にリセットします。`}
+                value={value.flash.max_weekly_memory_mib_seconds}
+                min={0}
+                max={QUOTA_BOUNDS.flash.maxWeeklyMemoryMibSeconds}
+                onChange={(next) => flash("max_weekly_memory_mib_seconds", next)}
+              />
               <NumberField
                 label="週次 GPU 上限 (秒)"
                 description="組織内の全 Flash サービスで共有します。40,320 秒は 11.2 GPU 時間です。毎週月曜 00:00 UTC にリセットされます。"

@@ -14,6 +14,7 @@ import type {
   CreateSyouyuBucketRequest,
   CreateSyouyuCredentialRequest,
   ErrorEnvelope,
+  FlashCostManagement,
   FlashQuotaLimits,
   FlashGpuType,
   FlashService,
@@ -24,6 +25,7 @@ import type {
   Organization,
   OwnerAccount,
   OwnerGpu,
+  OwnerFlashCostManagement,
   OwnerQuotaOverview,
   Principal,
   Project,
@@ -283,6 +285,10 @@ export class HeteroCloudApiClient {
           { method: "DELETE" },
         ),
     },
+    costManagement: (signal?: AbortSignal) =>
+      this.request<OwnerFlashCostManagement>("/owner/cost-management", {
+        signal,
+      }),
     gpus: {
       list: (signal?: AbortSignal) =>
         this.request<CollectionResponse<OwnerGpu>>("/owner/gpus", { signal }),
@@ -580,6 +586,11 @@ export class HeteroCloudApiClient {
     quota: (organizationId: string, signal?: AbortSignal) =>
       this.request<FlashQuotaLimits>(
         organizationPath(organizationId, "flash/quota"),
+        { signal },
+      ),
+    usage: (organizationId: string, signal?: AbortSignal) =>
+      this.request<FlashCostManagement>(
+        organizationPath(organizationId, "flash/usage"),
         { signal },
       ),
     services: {

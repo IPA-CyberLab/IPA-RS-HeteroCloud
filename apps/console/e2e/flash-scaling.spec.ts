@@ -117,7 +117,7 @@ test("Flash作成ではGPU種類だけを選び、レプリカを1に固定す�
       memberships: [{ organization_id: "org-test", organization_slug: "test", organization_name: "Test", principal_id: "principal-test", role: "owner" }], csrf_token: "test-token",
     };
     else if (path.endsWith("/projects")) body = { items: [{ id: "project-test", organization_id: "org-test", slug: "test", name: "Test", created_at: timestamp }] };
-    else if (path.endsWith("/flash/quota")) body = { max_services: 100, max_replicas_per_service: 100, max_cpu_millis_per_vm: 4000, max_memory_mib_per_vm: 8128, max_disk_gib_per_vm: 10, max_total_replicas: 100, max_total_cpu_millis: 20000, max_total_memory_mib: 32768, max_total_disk_gib: 100, max_weekly_gpu_seconds: 40320 };
+    else if (path.endsWith("/flash/quota")) body = { max_services: 100, max_replicas_per_service: 100, max_cpu_millis_per_vm: 4000, max_memory_mib_per_vm: 8128, max_disk_gib_per_vm: 10, max_total_replicas: 100, max_total_cpu_millis: 20000, max_total_memory_mib: 32768, max_total_disk_gib: 100, max_weekly_cpu_millicore_seconds: 3245760000, max_weekly_memory_mib_seconds: 2836280317, max_weekly_gpu_seconds: 40320 };
     else if (path.endsWith("/flash/services")) body = { items: [] };
     else if (path.endsWith("/registry/images")) body = { items: [] };
     else if (path.endsWith("/flash/gpu-types")) body = { items: [

@@ -43,7 +43,71 @@ export interface FlashQuotaLimits {
   max_total_cpu_millis: number;
   max_total_memory_mib: number;
   max_total_disk_gib: number;
+  max_weekly_cpu_millicore_seconds: number;
+  max_weekly_memory_mib_seconds: number;
   max_weekly_gpu_seconds: number;
+}
+
+export interface FlashRuntimeUsage {
+  cpu_millicore_seconds: number;
+  memory_mib_seconds: number;
+  gpu_seconds: number;
+}
+
+export interface FlashCurrentAllocation {
+  active_services: number;
+  ready_replicas: number;
+  cpu_millis: number;
+  memory_mib: number;
+  gpus: number;
+}
+
+export interface FlashWeeklyUsage extends FlashRuntimeUsage {
+  week_started_at: number;
+  last_metered_at: number;
+  max_cpu_millicore_seconds: number;
+  max_memory_mib_seconds: number;
+  max_gpu_seconds: number;
+}
+
+export interface FlashUsageService {
+  organization_id: string;
+  project_id: string;
+  service_instance_id: string;
+  display_name: string;
+  active: boolean;
+  ready_replicas: number;
+  cpu_millis: number;
+  memory_mib: number;
+  gpu_count: number;
+  weekly_usage: FlashWeeklyUsage;
+}
+
+export interface FlashCostManagement {
+  generated_at: number;
+  week_started_at: number;
+  week_ends_at: number;
+  limits: FlashQuotaLimits;
+  usage: FlashRuntimeUsage;
+  current: FlashCurrentAllocation;
+  services: FlashUsageService[];
+}
+
+export interface OwnerFlashCostTenant {
+  organization: Organization;
+  limits: FlashQuotaLimits;
+  usage: FlashRuntimeUsage;
+  current: FlashCurrentAllocation;
+  services: FlashUsageService[];
+}
+
+export interface OwnerFlashCostManagement {
+  generated_at: number;
+  week_started_at: number;
+  week_ends_at: number;
+  usage: FlashRuntimeUsage;
+  current: FlashCurrentAllocation;
+  tenants: OwnerFlashCostTenant[];
 }
 
 export interface RegistryQuotaLimits {

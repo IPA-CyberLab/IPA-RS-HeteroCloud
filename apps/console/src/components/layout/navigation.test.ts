@@ -5,6 +5,7 @@ describe("navigationItems", () => {
   it("ownerコンソールではサービス全体の管理項目だけを表示する", () => {
     expect(navigationItems(true)).toEqual([
       { type: "link", text: "全アカウント管理", href: "/overview" },
+      { type: "link", text: "コスト管理", href: "/owner/cost-management" },
       { type: "link", text: "GPU管理", href: "/owner/gpus" },
     ]);
   });
@@ -21,6 +22,7 @@ describe("navigationItems", () => {
       items: [
         { type: "link", text: "サービス", href: "/flash/services" },
         { type: "link", text: "イメージ", href: "/registry" },
+        { type: "link", text: "コスト管理", href: "/cost-management" },
       ],
     });
     expect(items).not.toContainEqual(

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
 use axum::extract::ws::{Message as BrowserMessage, WebSocket};
 use futures_util::{SinkExt, StreamExt, stream};
@@ -28,6 +28,9 @@ const GPU_CATALOG_ACTION: &str = "flash.gpus.catalog.list";
 const GPU_ACCESS_UPDATE_ACTION: &str = "flash.gpus.access.update";
 const GPU_CATALOG_BUDGET: Duration = Duration::from_secs(3);
 const MAX_GPU_CATALOG_BYTES: usize = 512 * 1024;
+const USAGE_LIST_ACTION: &str = "flash.usage.list";
+const USAGE_LIST_BUDGET: Duration = Duration::from_secs(3);
+const MAX_USAGE_LIST_BYTES: usize = 4 * 1024 * 1024;
 
 pub type ProviderWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -123,6 +126,34 @@ impl FlashProviderProxy {
             ));
         }
         Ok(())
+    }
+
+    pub async fn list_usage(&self) -> Result<FlashUsageSnapshot, FlashProviderError> {
+        let signed = self.sign_administrative(USAGE_LIST_ACTION)?;
+        let url = self.endpoint.join("internal/v1/usage")?;
+        let mut response = self
+            .client
+            .get(url)
+            .bearer_auth(signed)
+            .timeout(USAGE_LIST_BUDGET)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(FlashProviderError::ProviderStatus(
+                response.status().as_u16(),
+            ));
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if chunk.len() > MAX_USAGE_LIST_BYTES.saturating_sub(body.len()) {
+                return Err(FlashProviderError::InvalidUsageSnapshot);
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let snapshot: FlashUsageSnapshot =
+            serde_json::from_slice(&body).map_err(|_| FlashProviderError::InvalidUsageSnapshot)?;
+        snapshot.validate()?;
+        Ok(snapshot)
     }
 
     pub async fn get_status(
@@ -242,6 +273,64 @@ impl FlashProviderProxy {
 #[serde(deny_unknown_fields)]
 struct FlashGpuCatalog {
     items: Vec<GpuCatalogDevice>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlashUsageSnapshot {
+    pub generated_at: i64,
+    pub week_started_at: i64,
+    pub items: Vec<FlashUsageItem>,
+}
+
+impl FlashUsageSnapshot {
+    fn validate(&self) -> Result<(), FlashProviderError> {
+        const WEEK_SECONDS: i64 = 7 * 24 * 60 * 60;
+        if self.generated_at < self.week_started_at
+            || self.generated_at >= self.week_started_at.saturating_add(WEEK_SECONDS)
+        {
+            return Err(FlashProviderError::InvalidUsageSnapshot);
+        }
+        let mut service_ids = HashSet::new();
+        for item in &self.items {
+            if !service_ids.insert(item.service_instance_id)
+                || item.weekly_usage.week_started_at != self.week_started_at
+                || item.weekly_usage.last_metered_at < self.week_started_at
+                || item.weekly_usage.last_metered_at > self.generated_at.saturating_add(5)
+            {
+                return Err(FlashProviderError::InvalidUsageSnapshot);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlashUsageItem {
+    pub organization_id: OrganizationId,
+    pub project_id: ProjectId,
+    pub service_instance_id: ServiceInstanceId,
+    pub display_name: String,
+    pub active: bool,
+    pub ready_replicas: u32,
+    pub cpu_millis: u32,
+    pub memory_mib: u32,
+    pub gpu_count: u32,
+    pub weekly_usage: FlashWeeklyUsage,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlashWeeklyUsage {
+    pub week_started_at: i64,
+    pub cpu_millicore_seconds: u64,
+    pub memory_mib_seconds: u64,
+    pub gpu_seconds: u64,
+    pub last_metered_at: i64,
+    pub max_cpu_millicore_seconds: u64,
+    pub max_memory_mib_seconds: u64,
+    pub max_gpu_seconds: u64,
 }
 
 #[derive(Serialize)]
@@ -411,6 +500,8 @@ pub enum FlashProviderError {
     InvalidLiveStatus,
     #[error("Flash provider GPU catalog is malformed or too large")]
     InvalidGpuCatalog,
+    #[error("Flash provider usage snapshot is malformed or too large")]
+    InvalidUsageSnapshot,
     #[error(transparent)]
     Header(#[from] http::header::InvalidHeaderValue),
     #[error(transparent)]
@@ -731,6 +822,106 @@ MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
                 ready: true,
             }]
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn usage_list_uses_scoped_admin_token_and_validates_week()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let organization_id = Uuid::from_u128(2);
+        let project_id = Uuid::from_u128(3);
+        let service_instance_id = Uuid::from_u128(4);
+        let body = json!({
+            "generated_at": 345_720,
+            "week_started_at": 345_600,
+            "items": [{
+                "organization_id": organization_id,
+                "project_id": project_id,
+                "service_instance_id": service_instance_id,
+                "display_name": "worker",
+                "active": true,
+                "ready_replicas": 2,
+                "cpu_millis": 500,
+                "memory_mib": 512,
+                "gpu_count": 0,
+                "weekly_usage": {
+                    "week_started_at": 345_600,
+                    "cpu_millicore_seconds": 60_000,
+                    "memory_mib_seconds": 61_440,
+                    "gpu_seconds": 0,
+                    "last_metered_at": 345_710,
+                    "max_cpu_millicore_seconds": 3_245_760_000_u64,
+                    "max_memory_mib_seconds": 2_836_280_317_u64,
+                    "max_gpu_seconds": 40_320
+                }
+            }]
+        });
+        let mock = mock_provider(StatusCode::OK, body.to_string(), Duration::ZERO).await?;
+        let snapshot = mock.proxy.list_usage().await?;
+        assert_eq!(snapshot.items.len(), 1);
+        assert_eq!(snapshot.items[0].weekly_usage.cpu_millicore_seconds, 60_000);
+        let requests = mock.requests.lock().map_err(|_| "request lock poisoned")?;
+        let (method, uri, headers) = requests.first().ok_or("missing request")?;
+        assert_eq!(*method, Method::GET);
+        assert_eq!(uri.path(), "/internal/v1/usage");
+        let token = headers
+            .get(http::header::AUTHORIZATION)
+            .ok_or("missing authorization")?
+            .to_str()?
+            .strip_prefix("Bearer ")
+            .ok_or("not bearer")?;
+        let payload = token.split('.').nth(1).ok_or("missing JWT payload")?;
+        let claims: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload)?)?;
+        assert_eq!(claims["action"], USAGE_LIST_ACTION);
+        assert_eq!(claims["sub"], Uuid::nil().to_string());
+        assert_eq!(claims["organization_id"], Uuid::nil().to_string());
+        Ok(())
+    }
+
+    #[test]
+    fn usage_snapshot_rejects_duplicates_and_mismatched_weeks()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let item = FlashUsageItem {
+            organization_id: OrganizationId(Uuid::from_u128(1)),
+            project_id: ProjectId(Uuid::from_u128(2)),
+            service_instance_id: ServiceInstanceId(Uuid::from_u128(3)),
+            display_name: "worker".into(),
+            active: true,
+            ready_replicas: 1,
+            cpu_millis: 500,
+            memory_mib: 512,
+            gpu_count: 0,
+            weekly_usage: FlashWeeklyUsage {
+                week_started_at: 345_600,
+                cpu_millicore_seconds: 1,
+                memory_mib_seconds: 1,
+                gpu_seconds: 0,
+                last_metered_at: 345_610,
+                max_cpu_millicore_seconds: 10,
+                max_memory_mib_seconds: 10,
+                max_gpu_seconds: 10,
+            },
+        };
+        let duplicate = FlashUsageSnapshot {
+            generated_at: 345_620,
+            week_started_at: 345_600,
+            items: vec![item.clone(), item.clone()],
+        };
+        assert!(matches!(
+            duplicate.validate(),
+            Err(FlashProviderError::InvalidUsageSnapshot)
+        ));
+        let mut wrong_week = item;
+        wrong_week.weekly_usage.week_started_at = 0;
+        assert!(matches!(
+            FlashUsageSnapshot {
+                generated_at: 345_620,
+                week_started_at: 345_600,
+                items: vec![wrong_week],
+            }
+            .validate(),
+            Err(FlashProviderError::InvalidUsageSnapshot)
+        ));
         Ok(())
     }
 

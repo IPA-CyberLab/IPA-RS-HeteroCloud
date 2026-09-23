@@ -48,6 +48,25 @@ the spec, generation or reconcile outbox. Deleting services retain existing quot
 release behavior. Owner usage reports use the same reservation calculation, not
 live running replica counts.
 
+## Weekly Runtime Quotas and Usage
+
+Flash enforces three organization-shared weekly runtime limits:
+`max_weekly_cpu_millicore_seconds`, `max_weekly_memory_mib_seconds`, and
+`max_weekly_gpu_seconds`. The defaults divide the schedulable fleet across 30
+accounts: 901.6 vCPU-hours, about 769.39 GiB-hours, and 11.2 GPU-hours per
+account per week. All counters reset Monday at 00:00 UTC. A zero limit disables
+that resource for the account.
+
+The provider counts allocated resources for Ready replicas, so scale-to-zero
+time is free. It stores each service's current-week counter independently from
+the service resource; deleting a service therefore does not erase usage already
+consumed. The authenticated tenant endpoint
+`GET /api/v1/organizations/{organization_id}/flash/usage` returns totals,
+current allocation, limits, and service-level history. The owner-only
+`GET /api/v1/owner/cost-management` returns the same view across every cloud
+account. Both console views label the values as vCPU-hours, GiB-hours, and
+GPU-hours; no currency rate is implied.
+
 ## Web Publication
 
 `web` publishes an HTTP application through a provider-managed ClusterIP Service
