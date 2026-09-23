@@ -53,7 +53,7 @@ function breadcrumbs(pathname: string, ownerConsole: boolean) {
   } else if (pathname.startsWith("/flash/")) {
     items.push({ text: "Flash", href: "/flash/services" });
   } else if (pathname.startsWith("/registry")) {
-    items.push({ text: "Flash Registry", href: "/registry" });
+    items.push({ text: "Flash", href: "/flash/services" });
   } else if (pathname.startsWith("/syouyu/")) {
     items.push({ text: "Syouyu", href: "/syouyu/buckets" });
   } else if (pathname.startsWith("/owner/")) {

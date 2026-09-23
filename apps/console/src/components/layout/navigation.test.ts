@@ -10,11 +10,25 @@ describe("navigationItems", () => {
   });
 
   it("通常コンソールではテナント向けサービスを表示する", () => {
-    expect(JSON.stringify(navigationItems(false))).toContain("Flow");
-    expect(JSON.stringify(navigationItems(false))).toContain('"text":"Flash"');
-    expect(JSON.stringify(navigationItems(false))).toContain('"text":"Flash Registry"');
-    expect(JSON.stringify(navigationItems(false))).toContain("Syouyu");
-    expect(JSON.stringify(navigationItems(false))).toContain("/syouyu/buckets");
-    expect(JSON.stringify(navigationItems(false))).not.toContain("全アカウント管理");
+    const items = navigationItems(false);
+    const flash = items.find(
+      (item) => item.type === "section" && item.text === "Flash",
+    );
+
+    expect(flash).toEqual({
+      type: "section",
+      text: "Flash",
+      items: [
+        { type: "link", text: "サービス", href: "/flash/services" },
+        { type: "link", text: "イメージ", href: "/registry" },
+      ],
+    });
+    expect(items).not.toContainEqual(
+      expect.objectContaining({ type: "section", text: "Flash Registry" }),
+    );
+    expect(JSON.stringify(items)).toContain("Flow");
+    expect(JSON.stringify(items)).toContain("Syouyu");
+    expect(JSON.stringify(items)).toContain("/syouyu/buckets");
+    expect(JSON.stringify(items)).not.toContain("全アカウント管理");
   });
 });

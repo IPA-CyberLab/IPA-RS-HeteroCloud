@@ -1,4 +1,4 @@
-export type ServiceGroup = "Flash" | "Flash Registry" | "プラットフォーム";
+export type ServiceGroup = "Flash" | "プラットフォーム";
 
 export interface ConsoleService {
   id: "flash" | "flash-registry" | "flow" | "syouyu";
@@ -25,7 +25,7 @@ export const consoleServices: ConsoleService[] = [
     name: "Flash Registry",
     shortName: "コンテナイメージ",
     description: "Flashで使うコンテナイメージと認証情報を管理します。",
-    group: "Flash Registry",
+    group: "Flash",
     href: "/registry",
     keywords: ["registry", "image", "artifact", "イメージ"],
   },
