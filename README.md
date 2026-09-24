@@ -60,18 +60,18 @@ buckets through the same IAM-authorized API used by the console.
 For guided installation, open **CLI setup** (`/cli`) in your HeteroCloud
 console and choose **ChatGPTでセットアップ**. The launcher prepares a desktop-app
 prompt for the current console origin and organization. It covers OS and CPU
-detection, checksum verification, PATH installation, browser login, and an
-authenticated status check. Secrets are never embedded in the launch URL. The
+detection, checksum verification, PATH installation, Claude Code and Codex skill
+installation, browser login, and an authenticated status check. Secrets are never embedded in the launch URL. The
 same prompt can be copied when the desktop-app protocol is unavailable.
 
 Install the matching archive and adjacent checksum from the
 [latest release](https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/releases/latest).
-For Linux x64, extract `heterocloud-v0.1.77-linux-x64.tar.gz`, verify it with
+For Linux x64, extract `heterocloud-v0.1.78-linux-x64.tar.gz`, verify it with
 `sha256sum -c`, then install the binary:
 
 ```sh
-sha256sum -c heterocloud-v0.1.77-linux-x64.tar.gz.sha256
-tar -xzf heterocloud-v0.1.77-linux-x64.tar.gz
+sha256sum -c heterocloud-v0.1.78-linux-x64.tar.gz.sha256
+tar -xzf heterocloud-v0.1.78-linux-x64.tar.gz
 sudo install -m 0755 heterocloud /usr/local/bin/heterocloud
 heterocloud --version
 ```
@@ -79,12 +79,12 @@ heterocloud --version
 The release publishes native x64 and ARM64 builds for all three supported
 operating systems:
 
-- `heterocloud-v0.1.77-linux-x64.tar.gz`
-- `heterocloud-v0.1.77-linux-arm64.tar.gz`
-- `heterocloud-v0.1.77-macos-x64.tar.gz`
-- `heterocloud-v0.1.77-macos-arm64.tar.gz`
-- `heterocloud-v0.1.77-windows-x64.zip`
-- `heterocloud-v0.1.77-windows-arm64.zip`
+- `heterocloud-v0.1.78-linux-x64.tar.gz`
+- `heterocloud-v0.1.78-linux-arm64.tar.gz`
+- `heterocloud-v0.1.78-macos-x64.tar.gz`
+- `heterocloud-v0.1.78-macos-arm64.tar.gz`
+- `heterocloud-v0.1.78-windows-x64.zip`
+- `heterocloud-v0.1.78-windows-arm64.zip`
 
 Linux archives are statically linked so they do not depend on the host's glibc
 version.

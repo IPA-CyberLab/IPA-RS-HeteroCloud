@@ -74,8 +74,8 @@ export function CliSetupPanel({
             ]}
           />
           <Box color="text-body-secondary">
-            OSとCPUの判定、最新版の取得、チェックサム検証、PATHへの配置、環境変数と
-            OAuthログイン、接続確認までを案内します。
+            OSとCPUの判定、最新版の取得、チェックサム検証、PATHへの配置、
+            Claude Code/Codexのskill導入、OAuthログイン、接続確認までを案内します。
           </Box>
           <SpaceBetween direction="horizontal" size="xs">
             <Button variant="primary" iconName="external" href={launchUrl}>

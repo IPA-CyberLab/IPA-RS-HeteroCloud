@@ -26,6 +26,21 @@ describe("CLI setup launcher", () => {
     expect(prompt).not.toContain("heterocloud.mizuame.app");
   });
 
+  it("Claude CodeとCodexへ同じ検証済みskillを導入するよう指示する", () => {
+    const prompt = buildCliSetupPrompt(target);
+    expect(prompt).toContain(
+      "https://raw.githubusercontent.com/IPA-CyberLab/IPA-RS-HeteroCloud/",
+    );
+    expect(prompt).toContain(".agents/skills/heterocloud-cli-setup/SKILL.md");
+    expect(prompt).toContain(
+      "21df216663c8b55b6bd452a8efa5089c6e820625cfe7fbf08d43ee70a69e8091",
+    );
+    expect(prompt).toContain("~/.claude/skills/heterocloud-cli-setup/SKILL.md");
+    expect(prompt).toContain("CODEX_HOME");
+    expect(prompt).toContain("~/.codex/skills/heterocloud-cli-setup/SKILL.md");
+    expect(prompt).toContain("バックアップ");
+  });
+
   it("公式デスクトップ起動形式へプロンプトをURLエンコードする", () => {
     const prompt = buildCliSetupPrompt(target);
     const launchUrl = buildChatGptLaunchUrl(prompt);
@@ -47,6 +62,7 @@ describe("CLI setup launcher", () => {
       "href",
       expect.stringMatching(/^codex:\/\/threads\/new\?prompt=/),
     );
+    expect(screen.getByText(/Claude Code\/Codexのskill導入/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "プロンプトをコピー" }));
     expect(writeText).toHaveBeenCalledWith(buildCliSetupPrompt(target));
