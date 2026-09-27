@@ -1,8 +1,9 @@
 - name: Reconcile the Secret Manager public gateway on every configured edge
-  hosts: uc-k8sp1:uc-k8sp2:uc-k8s3p:ichikawap1:uc-k8sp4
+  hosts: ichikawap1:uc-k8sp4
   gather_facts: false
   become: true
   vars:
+    ansible_remote_tmp: /tmp/heterosecrets-ansible
     ansible_become_password: "{{ lookup('env', 'HNN_IAC_BECOME_PASSWORD') }}"
     gateway_ids:
       uc-k8sp1: a
