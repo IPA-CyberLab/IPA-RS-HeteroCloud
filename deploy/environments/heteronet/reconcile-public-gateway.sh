@@ -89,9 +89,12 @@ if target.exists() or target.is_symlink():
         start, stop = existing.index(begin), existing.index(end)
         if start >= stop or (start and existing[start-1:start] != b"\n"):
             raise SystemExit("invalid managed TLS block")
-        # Caddy resolves named imports in source order. The managed TLS
-        # snippet must precede every site block that imports it.
-        content = existing[start:stop+len(end)] + b"\n" + content
+        # Caddy resolves imports in source order: the managed TLS snippet
+        # follows the canonical shared snippets and precedes all site blocks.
+        site = b"http://heterocloud.mizuame.app {\n"
+        if content.count(site) != 1:
+            raise SystemExit("canonical first site is missing or ambiguous")
+        content = content.replace(site, existing[start:stop+len(end)] + b"\n" + site)
 if len(content) > 256 * 1024 or b"\0" in content:
     raise SystemExit("gateway extra exceeds safety limits")
 content.decode("utf-8")
@@ -183,7 +186,7 @@ main() {
   exec {tls_lock_fd}>"$(dirname "$target_file")/.flash-web-tls.lock"
   flock -x "$tls_lock_fd"
   extra_candidate=$(mktemp "${target_file}.candidate.XXXXXX")
-  trap 'rm -f "$extra_candidate"' EXIT
+  trap 'rm -f "${extra_candidate:-}"' EXIT
   render_extra_with_managed_tls "$source_file" "$target_file" >"$extra_candidate"
   "$caddy_bin" adapt --adapter caddyfile --config "$extra_candidate" >/dev/null
   local extra_changed=false drop_in_changed=false active_reload_needed=false install_result=0
