@@ -89,7 +89,9 @@ if target.exists() or target.is_symlink():
         start, stop = existing.index(begin), existing.index(end)
         if start >= stop or (start and existing[start-1:start] != b"\n"):
             raise SystemExit("invalid managed TLS block")
-        content = content.rstrip(b"\n") + b"\n\n" + existing[start:stop+len(end)]
+        # Caddy resolves named imports in source order. The managed TLS
+        # snippet must precede every site block that imports it.
+        content = existing[start:stop+len(end)] + b"\n" + content
 if len(content) > 256 * 1024 or b"\0" in content:
     raise SystemExit("gateway extra exceeds safety limits")
 content.decode("utf-8")
@@ -183,6 +185,7 @@ main() {
   extra_candidate=$(mktemp "${target_file}.candidate.XXXXXX")
   trap 'rm -f "$extra_candidate"' EXIT
   render_extra_with_managed_tls "$source_file" "$target_file" >"$extra_candidate"
+  "$caddy_bin" adapt --adapter caddyfile --config "$extra_candidate" >/dev/null
   local extra_changed=false drop_in_changed=false active_reload_needed=false install_result=0
   install_if_changed "$extra_candidate" "$target_file" || install_result=$?
   case "$install_result" in
@@ -236,7 +239,11 @@ EOF
         https://flow.heterocloud.mizuame.app/health/live >/dev/null \
       && curl --fail --silent --show-error --insecure --max-time 3 \
         --resolve "registry.heterocloud.mizuame.app:443:$public_ip" \
-        https://registry.heterocloud.mizuame.app/api/v2.0/health >/dev/null; then
+        https://registry.heterocloud.mizuame.app/api/v2.0/health >/dev/null \
+      && curl --fail --silent --show-error --max-time 3 \
+        --resolve "secrets.heterocloud.mizuame.app:443:$public_ip" \
+        'https://secrets.heterocloud.mizuame.app/v1/sys/health?standbyok=true' \
+        | grep -Fq '"initialized":true'; then
       consecutive_successes=$((consecutive_successes + 1))
       if ((consecutive_successes >= 5)); then
         echo "Flow and registry gateway $gateway_id are ready on $public_ip with only the Envoy route active."
