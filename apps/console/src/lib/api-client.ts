@@ -313,6 +313,11 @@ export class HeteroCloudApiClient {
     },
   };
 
+  readonly secretManager = {
+    link: (signal?: AbortSignal) =>
+      this.request<{ url: string }>("/services/secret-manager", { signal }),
+  };
+
   readonly registry = {
     get: (organizationId: string, signal?: AbortSignal) =>
       this.request<RegistryStatus>(organizationPath(organizationId, "registry"), {
@@ -653,6 +658,21 @@ export class HeteroCloudApiClient {
             organizationId,
             `flash/services/${encodeURIComponent(serviceId)}`,
           ),
+          { method: "DELETE" },
+        ),
+      listSecrets: (organizationId: string, serviceId: string, signal?: AbortSignal) =>
+        this.request<CollectionResponse<string>>(
+          organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/secrets`),
+          { signal },
+        ),
+      putSecret: (organizationId: string, serviceId: string, name: string, value: string) =>
+        this.request<void>(
+          organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/secrets/${encodeURIComponent(name)}`),
+          { method: "PUT", body: { value } },
+        ),
+      deleteSecret: (organizationId: string, serviceId: string, name: string) =>
+        this.request<void>(
+          organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/secrets/${encodeURIComponent(name)}`),
           { method: "DELETE" },
         ),
       listContainers: (

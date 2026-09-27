@@ -61,6 +61,7 @@ use crate::{
         clear_transaction_cookie,
     },
     registry::RegistryClient,
+    secret_manager::{SecretManagerClient, SecretManagerError},
     syouyu_provider::{
         IssuedSyouyuProviderCredential, SyouyuCredentialLimits, SyouyuProviderContext,
         SyouyuProviderCredential, SyouyuProviderError, SyouyuProviderPermissions,
@@ -146,6 +147,7 @@ pub fn api_router(state: Arc<AppState>) -> Router {
                 .delete(clear_owner_organization_quota),
         )
         .route("/organizations", get(list_organizations))
+        .route("/services/secret-manager", get(secret_manager_link))
         .route(
             "/organizations/{organization_id}/projects",
             get(list_projects).post(create_project),
@@ -198,6 +200,14 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             get(get_flash_service)
                 .put(update_flash_service)
                 .delete(delete_flash_service),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/services/{service_instance_id}/secrets",
+            get(list_flash_secrets),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/services/{service_instance_id}/secrets/{name}",
+            axum::routing::put(put_flash_secret).delete(delete_flash_secret),
         )
         .route(
             "/organizations/{organization_id}/flash/services/{service_instance_id}/containers",
@@ -1302,6 +1312,21 @@ async fn session(
     )))
 }
 
+async fn secret_manager_link(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    authenticated_actor(&state, &headers, &jar).await?;
+    let origin = state
+        .config
+        .secret_manager_origin
+        .as_ref()
+        .ok_or(ApiError::NotFound)?;
+    let url = origin.join("ui/").map_err(|_| ApiError::Internal)?;
+    Ok(Json(json!({ "url": url.as_str() })))
+}
+
 async fn logout(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -2321,6 +2346,11 @@ async fn create_flash_service(
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     validate_name(&request.name)?;
     validate_flash_spec(&request.spec)?;
+    if !request.spec.secret_files.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Create the Flash service before attaching secrets.".into(),
+        ));
+    }
     if request.spec.gpu_type.is_some() {
         sync_gpu_catalog_from_provider(&state).await?;
     }
@@ -2402,6 +2432,23 @@ async fn update_flash_service(
         &flash_service_resource(organization_id, service_instance_id),
     )
     .await?;
+    if !request.spec.secret_files.is_empty() {
+        let manager = flash_secret_manager(&state).await?;
+        let available = manager
+            .list(service_instance_id)
+            .await
+            .map_err(map_secret_error)?;
+        if request
+            .spec
+            .secret_files
+            .values()
+            .any(|name| !available.contains(name))
+        {
+            return Err(ApiError::BadRequest(
+                "Create each referenced secret before attaching it to the service.".into(),
+            ));
+        }
+    }
     let instance = state
         .store
         .update_service_instance(
@@ -2415,6 +2462,143 @@ async fn update_flash_service(
         .await
         .map_err(ApiError::from_store)?;
     Ok((StatusCode::ACCEPTED, Json(instance)))
+}
+
+fn validate_flash_secret_name(name: &str) -> Result<(), ApiError> {
+    let valid = !name.is_empty()
+        && name.len() <= 63
+        && name.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+        && name
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && name
+            .bytes()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == b'-');
+    if valid {
+        Ok(())
+    } else {
+        Err(ApiError::BadRequest(
+            "Secret names must be lowercase DNS labels (up to 63 characters).".into(),
+        ))
+    }
+}
+
+fn map_secret_error(error: SecretManagerError) -> ApiError {
+    match error {
+        SecretManagerError::Missing => ApiError::NotFound,
+        SecretManagerError::Unavailable => ApiError::SecretManagerUnavailable,
+    }
+}
+
+async fn flash_secret_manager(state: &AppState) -> Result<SecretManagerClient, ApiError> {
+    let origin = state
+        .config
+        .secret_manager_origin
+        .as_ref()
+        .ok_or(ApiError::SecretManagerUnavailable)?;
+    SecretManagerClient::login(origin)
+        .await
+        .map_err(map_secret_error)
+}
+
+async fn list_flash_secrets(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:GetInstance",
+        &flash_service_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    flash_service(&state, organization_id, service_instance_id).await?;
+    let items = flash_secret_manager(&state)
+        .await?
+        .list(service_instance_id)
+        .await
+        .map_err(map_secret_error)?;
+    Ok(Json(json!({ "items": items })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PutFlashSecret {
+    value: String,
+}
+
+async fn put_flash_secret(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id, name)): Path<(Uuid, Uuid, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<PutFlashSecret>,
+) -> Result<StatusCode, ApiError> {
+    validate_flash_secret_name(&name)?;
+    if request.value.is_empty() || request.value.len() > 16_384 {
+        return Err(ApiError::BadRequest(
+            "Secret values must contain 1 to 16384 bytes.".into(),
+        ));
+    }
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:UpdateInstance",
+        &flash_service_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    flash_service(&state, organization_id, service_instance_id).await?;
+    let manager = flash_secret_manager(&state).await?;
+    let existing = manager
+        .list(service_instance_id)
+        .await
+        .map_err(map_secret_error)?;
+    if !existing.contains(&name) && existing.len() >= 32 {
+        return Err(ApiError::BadRequest(
+            "A Flash service can store at most 32 secrets.".into(),
+        ));
+    }
+    manager
+        .put(service_instance_id, &name, &request.value)
+        .await
+        .map_err(map_secret_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_flash_secret(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id, name)): Path<(Uuid, Uuid, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<StatusCode, ApiError> {
+    validate_flash_secret_name(&name)?;
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:UpdateInstance",
+        &flash_service_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let service = flash_service(&state, organization_id, service_instance_id).await?;
+    let spec: FlashSpec = serde_json::from_value(service.spec).map_err(|_| ApiError::Internal)?;
+    if spec.secret_files.values().any(|attached| attached == &name) {
+        return Err(ApiError::Conflict);
+    }
+    flash_secret_manager(&state)
+        .await?
+        .delete(service_instance_id, &name)
+        .await
+        .map_err(map_secret_error)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn delete_flash_service(
@@ -2433,6 +2617,18 @@ async fn delete_flash_service(
         &flash_service_resource(organization_id, service_instance_id),
     )
     .await?;
+    if state.config.secret_manager_origin.is_some()
+        && !flash_secret_manager(&state)
+            .await?
+            .list(service_instance_id)
+            .await
+            .map_err(map_secret_error)?
+            .is_empty()
+    {
+        return Err(ApiError::BadRequest(
+            "Detach and delete the service secrets before deleting the Flash service.".into(),
+        ));
+    }
     let instance = state
         .store
         .begin_delete_service_instance(
@@ -5096,6 +5292,7 @@ mod tests {
             },
             egress: FlashEgress::default(),
             env: Default::default(),
+            secret_files: Default::default(),
             command: Vec::new(),
             args: Vec::new(),
             metadata: Default::default(),

@@ -73,6 +73,11 @@ const SyouyuBucketsPage = lazy(() =>
     default: module.SyouyuBucketsPage,
   })),
 );
+const SecretManagerPage = lazy(() =>
+  import("@/features/secrets/secret-manager-page").then((module) => ({
+    default: module.SecretManagerPage,
+  })),
+);
 const SyouyuBucketDetailPage = lazy(() =>
   import("@/features/syouyu/syouyu-bucket-detail-page").then((module) => ({
     default: module.SyouyuBucketDetailPage,
@@ -248,6 +253,14 @@ export function App() {
                 element={
                   <LazyPage>
                     <RegistryPage />
+                  </LazyPage>
+                }
+              />
+              <Route
+                path="/secrets"
+                element={
+                  <LazyPage>
+                    <SecretManagerPage />
                   </LazyPage>
                 }
               />

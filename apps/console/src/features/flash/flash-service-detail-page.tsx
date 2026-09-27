@@ -34,6 +34,7 @@ import {
 } from "@/lib/queries";
 import { formatDateTime, formatNumber } from "@/lib/utils";
 import { FlashEndpoints } from "./flash-endpoints";
+import { FlashSecretsPanel } from "./flash-secrets-panel";
 import {
   FlashServiceForm,
   flashFormFromService,
@@ -125,7 +126,10 @@ export function FlashServiceDetailPage() {
     mutationFn: (value: FlashServiceFormValue) =>
       api.flash.services.update(organizationId, serviceId, {
         name: value.name.trim(),
-        spec: flashSpecFromForm(value, service.data?.spec.metadata ?? {}),
+        spec: {
+          ...flashSpecFromForm(value, service.data?.spec.metadata ?? {}),
+          secret_files: service.data?.spec.secret_files ?? {},
+        },
       }),
     onSuccess: async (updated) => {
       queryClient.setQueryData(
@@ -334,6 +338,7 @@ export function FlashServiceDetailPage() {
           ]}
         />
       </Container>
+      <FlashSecretsPanel organizationId={organizationId} service={item} disabled={disabled} />
       <ColumnLayout columns={2}>
         <Container header={<Header variant="h2">サービス設定</Header>}>
           <KeyValuePairs
@@ -552,6 +557,7 @@ export function FlashServiceDetailPage() {
         <SpaceBetween size="l">
           <Alert type="warning" header="この操作は取り消せません">
             {item.name} のコンテナ、Service、公開エンドポイントを削除します。
+            登録済みのシークレットがある場合は、先に接続解除して削除してください。
           </Alert>
           <FormError
             message={

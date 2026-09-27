@@ -2,6 +2,8 @@ replicaCount: 4
 hostNetwork: true
 
 publicOrigin: https://heterocloud.mizuame.app
+secretManager:
+  origin: https://secrets.heterocloud.mizuame.app/
 additionalOrigins:
   - https://cloud-a.heterocloud.mizuame.app
   - https://cloud-b.heterocloud.mizuame.app

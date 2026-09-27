@@ -469,6 +469,7 @@ export interface FlashServiceSpec {
   exposure: FlashExposure;
   egress?: FlashEgress;
   env: Record<string, string>;
+  secret_files?: Record<string, string>;
   command: string[];
   args: string[];
   metadata: Record<string, unknown>;

@@ -1,7 +1,7 @@
 export type ServiceGroup = "Flash" | "プラットフォーム";
 
 export interface ConsoleService {
-  id: "flash" | "flash-registry" | "flow" | "syouyu";
+  id: "flash" | "flash-registry" | "flow" | "syouyu" | "secret-manager";
   name: string;
   shortName: string;
   description: string;
@@ -46,6 +46,15 @@ export const consoleServices: ConsoleService[] = [
     group: "プラットフォーム",
     href: "/syouyu/buckets",
     keywords: ["storage", "s3", "bucket", "ストレージ"],
+  },
+  {
+    id: "secret-manager",
+    name: "Hetero Secret Manager",
+    shortName: "シークレット管理",
+    description: "OpenBaoでアプリケーションの機密情報を管理します。",
+    group: "プラットフォーム",
+    href: "/secrets",
+    keywords: ["secret", "openbao", "vault", "credential", "シークレット"],
   },
 ];
 

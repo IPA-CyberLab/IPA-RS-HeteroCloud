@@ -445,6 +445,7 @@ async fn test_state() -> Result<
         store: store.clone(),
         config: RuntimeConfig {
             public_origin: Url::parse(PUBLIC_ORIGIN)?,
+            secret_manager_origin: None,
             allowed_origins: vec![PUBLIC_ORIGIN.to_owned()],
             trusted_proxy_networks: Vec::new(),
             secure_cookie: false,

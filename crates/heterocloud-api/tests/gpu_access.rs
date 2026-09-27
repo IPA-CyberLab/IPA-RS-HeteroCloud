@@ -231,6 +231,7 @@ async fn test_state()
         store: store.clone(),
         config: RuntimeConfig {
             public_origin: owner_origin.clone(),
+            secret_manager_origin: None,
             allowed_origins: vec![OWNER_ORIGIN.into()],
             trusted_proxy_networks: Vec::new(),
             secure_cookie: false,

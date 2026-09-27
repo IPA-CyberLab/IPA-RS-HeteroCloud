@@ -91,7 +91,7 @@ jobs:
       - working-directory: apps/console
         run: npm ci
       - working-directory: apps/console
-        run: npm test -- --run
+        run: npm test -- --run --maxWorkers=1
       - working-directory: apps/console
         run: npm run build
       - working-directory: apps/console

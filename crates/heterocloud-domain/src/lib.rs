@@ -351,6 +351,7 @@ pub const MAX_FLASH_REGION_LENGTH: usize = 63;
 pub const MAX_FLASH_IMAGE_LENGTH: usize = 512;
 pub const MAX_FLASH_PORT_NAME_LENGTH: usize = 63;
 pub const MAX_FLASH_ENV_VARS: usize = 128;
+pub const MAX_FLASH_SECRET_FILES: usize = 32;
 pub const MAX_FLASH_ENV_KEY_LENGTH: usize = 253;
 pub const MAX_FLASH_ENV_VALUE_LENGTH: usize = 16 * 1024;
 pub const MAX_FLASH_COMMAND_PARTS: usize = 128;
@@ -747,6 +748,8 @@ pub struct FlashSpec {
     #[serde(default)]
     pub egress: FlashEgress,
     pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub secret_files: BTreeMap<String, String>,
     pub command: Vec<String>,
     pub args: Vec<String>,
     pub metadata: BTreeMap<String, Value>,
@@ -970,6 +973,18 @@ impl FlashSpec {
                 return Err(invalid_flash_spec(format!(
                     "environment variable values must be at most {MAX_FLASH_ENV_VALUE_LENGTH} bytes and cannot contain NUL"
                 )));
+            }
+        }
+        if self.secret_files.len() > MAX_FLASH_SECRET_FILES {
+            return Err(invalid_flash_spec(format!(
+                "secret_files must contain at most {MAX_FLASH_SECRET_FILES} entries"
+            )));
+        }
+        for (file_name, secret_name) in &self.secret_files {
+            if !valid_flash_port_name(file_name) || !valid_flash_port_name(secret_name) {
+                return Err(invalid_flash_spec(
+                    "secret_files names must be lowercase DNS labels of at most 63 bytes",
+                ));
             }
         }
         validate_process_values("command", &self.command, MAX_FLASH_COMMAND_PARTS)?;
@@ -1406,6 +1421,7 @@ mod tests {
             },
             egress: FlashEgress::default(),
             env: [("LOG_LEVEL".into(), "info".into())].into_iter().collect(),
+            secret_files: Default::default(),
             command: vec!["/app/server".into()],
             args: vec!["--port=7777".into()],
             metadata: [("team".into(), json!("simulation"))].into_iter().collect(),

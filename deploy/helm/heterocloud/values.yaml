@@ -13,6 +13,8 @@ nameOverride: ""
 fullnameOverride: ""
 
 publicOrigin: https://cloud.example.com
+secretManager:
+  origin: ""
 additionalOrigins: []
 trustedProxyNetworks: []
 secureCookie: true

@@ -94,6 +94,9 @@ spec:
             - --flash-audience={{ .Values.flashExec.audience }}
             - --provider-key-id={{ .Values.flashExec.providerKeyId }}
             - --public-origin={{ required "publicOrigin is required" .Values.publicOrigin }}
+            {{- if .Values.secretManager.origin }}
+            - --secret-manager-origin={{ .Values.secretManager.origin }}
+            {{- end }}
             {{- if .Values.additionalOrigins }}
             - --additional-origins={{ join "," .Values.additionalOrigins }}
             {{- end }}
@@ -156,6 +159,11 @@ spec:
               drop:
                 - ALL
           volumeMounts:
+            {{- if .Values.secretManager.origin }}
+            - name: openbao-identity
+              mountPath: /var/run/secrets/openbao-identity
+              readOnly: true
+            {{- end }}
             {{- if and .Values.oidc.enabled .Values.oidc.rootCaSecretName }}
             - name: oidc-ca
               mountPath: /var/run/secrets/oidc-ca
@@ -189,6 +197,15 @@ spec:
             - name: tmp
               mountPath: /tmp
       volumes:
+        {{- if .Values.secretManager.origin }}
+        - name: openbao-identity
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+        {{- end }}
         {{- if and .Values.oidc.enabled .Values.oidc.rootCaSecretName }}
         - name: oidc-ca
           secret:

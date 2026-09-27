@@ -33,6 +33,8 @@ pub enum ApiError {
     RealtimeProviderUnavailable,
     #[error("Flash Registry is unavailable")]
     RegistryProviderUnavailable,
+    #[error("Secret Manager is unavailable")]
+    SecretManagerUnavailable,
     #[error("too many requests")]
     TooManyRequests,
     #[error("authentication required")]
@@ -125,6 +127,11 @@ impl IntoResponse for ApiError {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "registry_provider_unavailable",
                 "Flash Registry is temporarily unavailable.",
+            ),
+            Self::SecretManagerUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "secret_manager_unavailable",
+                "Secret Manager is temporarily unavailable.",
             ),
             Self::TooManyRequests => (
                 StatusCode::TOO_MANY_REQUESTS,

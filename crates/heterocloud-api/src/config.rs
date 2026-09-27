@@ -124,6 +124,9 @@ pub struct Config {
     )]
     pub public_origin: Url,
 
+    #[arg(long, env = "HETEROCLOUD_SECRET_MANAGER_ORIGIN")]
+    pub secret_manager_origin: Option<Url>,
+
     #[arg(long, env = "HETEROCLOUD_ADDITIONAL_ORIGINS", value_delimiter = ',')]
     pub additional_origins: Vec<Url>,
 
@@ -260,6 +263,7 @@ pub struct Config {
 #[derive(Clone)]
 pub struct RuntimeConfig {
     pub public_origin: Url,
+    pub secret_manager_origin: Option<Url>,
     pub allowed_origins: Vec<String>,
     pub trusted_proxy_networks: Vec<IpNet>,
     pub secure_cookie: bool,
@@ -328,6 +332,17 @@ impl Config {
             return Err(ConfigError::IncompleteTls);
         }
         validate_owner_config(self.owner_origin.as_ref(), self.owner_email.as_deref())?;
+        if let Some(origin) = &self.secret_manager_origin
+            && (origin.scheme() != "https"
+                || origin.host_str().is_none()
+                || origin.username() != ""
+                || origin.password().is_some()
+                || origin.path() != "/"
+                || origin.query().is_some()
+                || origin.fragment().is_some())
+        {
+            return Err(ConfigError::InvalidSecretManagerOrigin);
+        }
         if self.secure_cookie
             && (self.public_origin.scheme() != "https"
                 || self
@@ -413,6 +428,7 @@ impl Config {
         };
         Ok(RuntimeConfig {
             public_origin: self.public_origin.clone(),
+            secret_manager_origin: self.secret_manager_origin.clone(),
             allowed_origins,
             trusted_proxy_networks: self.trusted_proxy_networks.clone(),
             secure_cookie: self.secure_cookie,
@@ -626,6 +642,8 @@ fn validate_registry_config(
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
+    #[error("secret manager origin must be an absolute HTTPS origin")]
+    InvalidSecretManagerOrigin,
     #[error("owner origin and owner email must be configured together")]
     IncompleteOwner,
     #[error("owner origin must be an absolute HTTP(S) origin")]
