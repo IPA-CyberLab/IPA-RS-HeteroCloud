@@ -1,0 +1,48 @@
+- name: Reconcile the Secret Manager public gateway on every configured edge
+  hosts: uc-k8sp1:uc-k8sp2:uc-k8s3p:ichikawap1:uc-k8sp4
+  gather_facts: false
+  become: true
+  vars:
+    ansible_become_password: "{{ lookup('env', 'HNN_IAC_BECOME_PASSWORD') }}"
+    gateway_ids:
+      uc-k8sp1: a
+      uc-k8sp2: b
+      uc-k8s3p: c
+      ichikawap1: d
+      uc-k8sp4: e
+    gateway_id: "{{ gateway_ids[inventory_hostname] }}"
+    stage_dir: /run/heterosecrets-gateway-reconcile
+  tasks:
+    - name: Create temporary root-only source directory
+      ansible.builtin.file:
+        path: "{{ stage_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+    - name: Stage the reviewed gateway source
+      ansible.builtin.copy:
+        src: "public-gateway-{{ gateway_id }}.Caddyfile"
+        dest: "{{ stage_dir }}/public-gateway-{{ gateway_id }}.Caddyfile"
+        owner: root
+        group: root
+        mode: '0644'
+    - name: Stage the idempotent reconciliation script
+      ansible.builtin.copy:
+        src: reconcile-public-gateway.sh
+        dest: "{{ stage_dir }}/reconcile-public-gateway.sh"
+        owner: root
+        group: root
+        mode: '0700'
+    - name: Apply the gateway source and verify readiness
+      ansible.builtin.command:
+        argv:
+          - /bin/bash
+          - "{{ stage_dir }}/reconcile-public-gateway.sh"
+          - "{{ gateway_id }}"
+      register: gateway_result
+      changed_when: "'Canonicalized' in gateway_result.stdout or 'ready' in gateway_result.stdout"
+    - name: Remove temporary source directory
+      ansible.builtin.file:
+        path: "{{ stage_dir }}"
+        state: absent

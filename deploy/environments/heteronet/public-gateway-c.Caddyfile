@@ -158,6 +158,16 @@ s3.heterocloud.mizuame.app {
 	import heterocloud_envoy /api/v1/health/live heterocloud.mizuame.app
 }
 
+http://secrets.heterocloud.mizuame.app {
+	redir https://secrets.heterocloud.mizuame.app{uri} 308
+}
+
+secrets.heterocloud.mizuame.app {
+	import heterocloud_public_tls
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	import heterocloud_envoy /v1/sys/health?standbyok=true secrets.heterocloud.mizuame.app
+}
+
 http://:18082 {
 	bind 10.250.0.6
 	@vpn remote_ip 10.250.0.0/16 127.0.0.0/8
