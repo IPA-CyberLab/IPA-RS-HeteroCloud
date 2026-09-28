@@ -5106,12 +5106,13 @@ mod tests {
     }
 
     #[test]
-    fn secret_manager_link_selects_oidc_login() {
-        let origin = Url::parse("http://secrets.heteronetwork.internal:21444/").unwrap();
+    fn secret_manager_link_selects_oidc_login() -> Result<(), Box<dyn std::error::Error>> {
+        let origin = Url::parse("http://secrets.heteronetwork.internal:21444/")?;
         assert_eq!(
-            secret_manager_oidc_login_url(&origin).unwrap().as_str(),
+            secret_manager_oidc_login_url(&origin)?.as_str(),
             "http://secrets.heteronetwork.internal:21444/ui/vault/auth?with=oidc/"
         );
+        Ok(())
     }
 
     #[test]
