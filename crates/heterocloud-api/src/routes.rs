@@ -1324,8 +1324,14 @@ async fn secret_manager_link(
         .as_ref()
         .or(state.config.secret_manager_origin.as_ref())
         .ok_or(ApiError::NotFound)?;
-    let url = origin.join("ui/").map_err(|_| ApiError::Internal)?;
+    let url = secret_manager_oidc_login_url(origin)?;
     Ok(Json(json!({ "url": url.as_str() })))
+}
+
+fn secret_manager_oidc_login_url(origin: &Url) -> Result<Url, ApiError> {
+    origin
+        .join("ui/vault/auth?with=oidc/")
+        .map_err(|_| ApiError::Internal)
 }
 
 async fn logout(
@@ -5086,8 +5092,8 @@ mod tests {
         flash_service_resource, flow_permission_iam_action, owner_network_boundary_allows,
         parse_api_key_prefix, parse_cli_access_token_prefix,
         parse_flow_developer_credential_prefix, request_source_ip, required_syouyu_idempotency_key,
-        summarize_flash_usage, syouyu_compensation_idempotency_key, syouyu_credential_response,
-        valid_kubernetes_name, validate_developer_credential_expiry,
+        secret_manager_oidc_login_url, summarize_flash_usage, syouyu_compensation_idempotency_key,
+        syouyu_credential_response, valid_kubernetes_name, validate_developer_credential_expiry,
         validate_developer_credential_name, validate_flash_spec, validate_flow_access_target,
         validate_flow_access_ttl, validate_flow_permissions, validate_flow_spec,
         validate_invitation_ttl, validate_list_limit, validate_slug,
@@ -5097,6 +5103,15 @@ mod tests {
     fn public_security_names_are_stable() {
         assert_eq!(SESSION_COOKIE, "hc_session");
         assert_eq!(CSRF_HEADER, "x-heterocloud-csrf");
+    }
+
+    #[test]
+    fn secret_manager_link_selects_oidc_login() {
+        let origin = Url::parse("http://secrets.heteronetwork.internal:21444/").unwrap();
+        assert_eq!(
+            secret_manager_oidc_login_url(&origin).unwrap().as_str(),
+            "http://secrets.heteronetwork.internal:21444/ui/vault/auth?with=oidc/"
+        );
     }
 
     #[test]
