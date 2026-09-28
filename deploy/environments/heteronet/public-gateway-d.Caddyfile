@@ -174,19 +174,13 @@ https://:443 {
 	bind 10.250.0.10
 	import heterocloud_public_tls
 	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
-	@openbao host secrets.heterocloud.mizuame.app
-	handle @openbao {
-		reverse_proxy https://openbao-active.openbao.svc.cluster.local:8200 {
-			header_up Host openbao-active.openbao.svc.cluster.local
-			transport http {
-				resolvers 10.96.0.10
-				tls_trust_pool file /etc/heteronetwork/openbao-ca.crt
-				tls_server_name openbao-active.openbao.svc.cluster.local
-			}
+	reverse_proxy https://openbao-active.openbao.svc.cluster.local:8200 {
+		header_up Host openbao-active.openbao.svc.cluster.local
+		transport http {
+			resolvers 10.96.0.10
+			tls_trust_pool file /etc/heteronetwork/openbao-ca.crt
+			tls_server_name openbao-active.openbao.svc.cluster.local
 		}
-	}
-	handle {
-		respond 404
 	}
 }
 
