@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("a user configures container secrets from the Flash service detail page", async ({ page }) => {
+test("a user configures container secrets in the Flash service edit screen", async ({ page }) => {
   const organizationId = "org-test";
   const serviceId = "flash-test";
   const timestamp = "2026-09-28T00:00:00Z";
@@ -23,7 +23,7 @@ test("a user configures container secrets from the Flash service detail page", a
       memory_mib: 512,
       ephemeral_storage_gib: 10,
       ports: [],
-      exposure: { type: "private", traffic_mode: "forwarded", endpoint_mode: "load_balancer" },
+      exposure: { type: "internal", traffic_mode: "forwarded", endpoint_mode: "ip" },
       env: {},
       command: [],
       args: [],
@@ -82,15 +82,27 @@ test("a user configures container secrets from the Flash service detail page", a
 
   await page.goto(`/flash/services/${serviceId}`);
   await expect(page.getByRole("heading", { name: "my-container" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "コンテナのシークレット" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "コンテナのシークレット" })).toHaveCount(0);
   await expect(page.getByText("Hetero Secret Manager", { exact: true })).toHaveCount(0);
-  await page.getByRole("textbox", { name: "名前" }).fill("api-key");
-  await page.getByLabel("値").fill("e2e-value");
-  await page.getByRole("button", { name: "登録・更新" }).click();
+  await page.getByRole("button", { name: "編集" }).click();
+  const editor = page.getByRole("dialog", { name: "Flashサービスを編集" });
+  await expect(editor.getByRole("heading", { name: "コンテナのシークレット" })).toBeVisible();
+  await editor.getByRole("textbox", { name: "名前" }).fill("api-key");
+  await editor.getByLabel("値").fill("e2e-value");
+  await editor.getByRole("button", { name: "登録・更新" }).click();
   await expect.poll(() => writes).toEqual([{ value: "e2e-value" }]);
-  await expect(page.getByLabel("値")).toHaveValue("");
-  await page.getByRole("button", { name: "コンテナへ接続" }).click();
+  await expect(editor.getByLabel("値")).toHaveValue("");
+  await editor.getByRole("button", { name: "コンテナへ接続" }).click();
+  expect(secretFiles).toEqual({});
+  await expect(editor.getByText("/vault/secrets/api-key")).toBeVisible();
+  await editor.getByRole("button", { name: "キャンセル" }).click();
+  await expect(page.getByRole("heading", { name: "コンテナのシークレット" })).toHaveCount(0);
+  await page.getByRole("button", { name: "編集" }).click();
+  await expect(editor.getByText("/vault/secrets/api-key")).toHaveCount(0);
+  await editor.getByRole("button", { name: "コンテナへ接続" }).click();
+  await editor.getByRole("button", { name: "変更を保存" }).click();
   await expect.poll(() => secretFiles).toEqual({ "api-key": "api-key" });
-  await expect(page.getByText("/vault/secrets/api-key")).toBeVisible();
+  await expect(editor).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "コンテナのシークレット" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "OpenBaoにOIDCでサインイン" })).toHaveCount(0);
 });

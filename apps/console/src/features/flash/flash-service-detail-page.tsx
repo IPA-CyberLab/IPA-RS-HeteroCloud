@@ -99,6 +99,8 @@ export function FlashServiceDetailPage() {
   const [shellState, setShellState] =
     useState<FlashShellConnectionState>("closed");
   const [editForm, setEditForm] = useState<FlashServiceFormValue | null>(null);
+  const [editSecretFiles, setEditSecretFiles] = useState<Record<string, string>>({});
+  const [secretBusy, setSecretBusy] = useState(false);
   const registryImages = useQuery({
     ...registryImagesQueryOptions(organizationId),
     enabled: editOpen,
@@ -128,7 +130,7 @@ export function FlashServiceDetailPage() {
         name: value.name.trim(),
         spec: {
           ...flashSpecFromForm(value, service.data?.spec.metadata ?? {}),
-          secret_files: service.data?.spec.secret_files ?? {},
+          secret_files: editSecretFiles,
         },
       }),
     onSuccess: async (updated) => {
@@ -201,10 +203,12 @@ export function FlashServiceDetailPage() {
   const shellStatus = shellStatuses[shellState];
   const submitEdit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (editForm && !validationError) updateService.mutate(editForm);
+    if (editForm && !validationError && !secretBusy) updateService.mutate(editForm);
   };
   const openEditor = () => {
     setEditForm(flashFormFromService(item, registryImages.data?.items));
+    setEditSecretFiles({ ...(item.spec.secret_files ?? {}) });
+    setSecretBusy(false);
     updateService.reset();
     setEditOpen(true);
   };
@@ -338,7 +342,6 @@ export function FlashServiceDetailPage() {
           ]}
         />
       </Container>
-      <FlashSecretsPanel organizationId={organizationId} service={item} disabled={disabled} />
       <ColumnLayout columns={2}>
         <Container header={<Header variant="h2">サービス設定</Header>}>
           <KeyValuePairs
@@ -490,7 +493,7 @@ export function FlashServiceDetailPage() {
               <Button
                 variant="primary"
                 loading={updateService.isPending}
-                disabled={!editForm || Boolean(validationError)}
+                disabled={!editForm || Boolean(validationError) || secretBusy}
                 onClick={() => editForm && updateService.mutate(editForm)}
               >
                 変更を保存
@@ -499,39 +502,49 @@ export function FlashServiceDetailPage() {
           </Box>
         }
       >
-        {editForm ? (
-          <FlashServiceForm
-            value={editForm}
-            onChange={setEditForm}
-            onSubmit={submitEdit}
-            disabled={updateService.isPending}
-            projectLocked
-            registryImages={registryImages.data?.items}
-            registryImagesStatus={
-              registryImages.isError
-                ? "error"
-                : registryImages.isPending
-                  ? "loading"
-                  : "finished"
-            }
-            gpuTypes={gpuTypes.data?.items}
-            gpuTypesStatus={
-              gpuTypes.isError
-                ? "error"
-                : gpuTypes.isPending
-                  ? "loading"
-                  : "finished"
-            }
-            quota={quota.data}
-          >
-            <FormError
-              message={
-                updateService.isError
-                  ? getApiErrorMessage(updateService.error)
-                  : validationError
+        {editOpen && editForm ? (
+          <SpaceBetween size="l">
+            <FlashServiceForm
+              value={editForm}
+              onChange={setEditForm}
+              onSubmit={submitEdit}
+              disabled={updateService.isPending}
+              projectLocked
+              registryImages={registryImages.data?.items}
+              registryImagesStatus={
+                registryImages.isError
+                  ? "error"
+                  : registryImages.isPending
+                    ? "loading"
+                    : "finished"
               }
+              gpuTypes={gpuTypes.data?.items}
+              gpuTypesStatus={
+                gpuTypes.isError
+                  ? "error"
+                  : gpuTypes.isPending
+                    ? "loading"
+                    : "finished"
+              }
+              quota={quota.data}
+            >
+              <FormError
+                message={
+                  updateService.isError
+                    ? getApiErrorMessage(updateService.error)
+                    : validationError
+                }
+              />
+            </FlashServiceForm>
+            <FlashSecretsPanel
+              organizationId={organizationId}
+              service={item}
+              secretFiles={editSecretFiles}
+              onSecretFilesChange={setEditSecretFiles}
+              onBusyChange={setSecretBusy}
+              disabled={updateService.isPending}
             />
-          </FlashServiceForm>
+          </SpaceBetween>
         ) : null}
       </Modal>
       <Modal

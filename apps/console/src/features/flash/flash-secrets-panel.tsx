@@ -6,25 +6,28 @@ import FormField from "@cloudscape-design/components/form-field";
 import Header from "@cloudscape-design/components/header";
 import Input from "@cloudscape-design/components/input";
 import SpaceBetween from "@cloudscape-design/components/space-between";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { FlashService } from "@/lib/api-types";
-import { flashServiceQueryOptions } from "@/lib/queries";
 
 export function FlashSecretsPanel({
   organizationId,
   service,
+  secretFiles,
+  onSecretFilesChange,
+  onBusyChange,
   disabled,
 }: {
   organizationId: string;
   service: FlashService;
+  secretFiles: Record<string, string>;
+  onSecretFilesChange: (files: Record<string, string>) => void;
+  onBusyChange: (busy: boolean) => void;
   disabled: boolean;
 }) {
-  const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
-  const secretFiles = service.spec.secret_files ?? {};
   const secrets = useQuery({
     queryKey: ["organizations", organizationId, "flash", "services", service.id, "secrets"],
     queryFn: ({ signal }) => api.flash.services.listSecrets(organizationId, service.id, signal),
@@ -41,46 +44,39 @@ export function FlashSecretsPanel({
     mutationFn: (secretName: string) => api.flash.services.deleteSecret(organizationId, service.id, secretName),
     onSuccess: async () => { await secrets.refetch(); },
   });
-  const attachment = useMutation({
-    mutationFn: (files: Record<string, string>) =>
-      api.flash.services.update(organizationId, service.id, {
-        name: service.name,
-        spec: { ...service.spec, secret_files: files },
-      }),
-    onSuccess: async (updated) => {
-      queryClient.setQueryData(flashServiceQueryOptions(organizationId, service.id).queryKey, updated);
-      await queryClient.invalidateQueries({
-        queryKey: ["organizations", organizationId, "flash", "services"],
-      });
-    },
-  });
+  const busy = save.isPending || remove.isPending;
+  useEffect(() => {
+    onBusyChange(busy);
+    return () => onBusyChange(false);
+  }, [busy, onBusyChange]);
   const validName = /^[a-z][a-z0-9-]{0,61}[a-z0-9]$/.test(name) || /^[a-z]$/.test(name);
-  const error = save.error ?? remove.error ?? attachment.error;
+  const error = save.error ?? remove.error;
 
   return (
     <Container header={<Header variant="h2">コンテナのシークレット</Header>}>
       <SpaceBetween size="m">
-        <Box>値はOpenBaoに保存します。接続したシークレットはコンテナ内の <code>/vault/secrets/名前</code> に読み取り専用ファイルとして配置されます。</Box>
+        <Box>登録・更新した値はOpenBaoに保存します。接続・解除は「変更を保存」で反映されます。接続したシークレットはコンテナ内の <code>/vault/secrets/名前</code> に読み取り専用ファイルとして配置されます。</Box>
         {secrets.isError ? <Alert type="error">シークレット一覧を取得できません。Secret Managerの接続を確認してください。</Alert> : null}
         {error ? <Alert type="error">{getApiErrorMessage(error)}</Alert> : null}
         {secrets.data?.items.length ? secrets.data.items.map((secretName) => {
           const attachedFile = Object.entries(secretFiles).find(([, selected]) => selected === secretName)?.[0];
+          const persistedFile = Object.entries(service.spec.secret_files ?? {}).find(([, selected]) => selected === secretName)?.[0];
           return (
             <SpaceBetween key={secretName} direction="horizontal" size="s" alignItems="center">
               <Box variant="code">{secretName}</Box>
               <Box>{attachedFile ? `/vault/secrets/${attachedFile}` : "未接続"}</Box>
               {attachedFile ? (
-                <Button disabled={disabled || attachment.isPending} onClick={() => {
+                <Button disabled={disabled || busy} onClick={() => {
                   const next = { ...secretFiles };
                   delete next[attachedFile];
-                  attachment.mutate(next);
+                  onSecretFilesChange(next);
                 }}>接続解除</Button>
               ) : (
-                <Button disabled={disabled || attachment.isPending || Object.keys(secretFiles).length >= 32} onClick={() =>
-                  attachment.mutate({ ...secretFiles, [secretName]: secretName })
+                <Button disabled={disabled || busy || Object.keys(secretFiles).length >= 32} onClick={() =>
+                  onSecretFilesChange({ ...secretFiles, [secretName]: secretName })
                 }>コンテナへ接続</Button>
               )}
-              <Button disabled={disabled || Boolean(attachedFile) || remove.isPending} onClick={() => remove.mutate(secretName)}>削除</Button>
+              <Button disabled={disabled || Boolean(attachedFile || persistedFile) || busy} onClick={() => remove.mutate(secretName)}>削除</Button>
             </SpaceBetween>
           );
         }) : (!secrets.isPending && !secrets.isError ? <Box color="text-body-secondary">登録済みのシークレットはありません。</Box> : null)}
