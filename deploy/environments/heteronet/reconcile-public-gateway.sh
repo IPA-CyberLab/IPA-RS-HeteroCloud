@@ -151,13 +151,13 @@ main() {
   fi
 
   local gateway_id=${1:-}
-  local expected_host public_ip
+  local expected_host public_ip vpn_ip
   case "$gateway_id" in
-    a) expected_host=uc-k8sp1; public_ip=163.220.236.51 ;;
-    b) expected_host=uc-k8sp2; public_ip=163.220.236.52 ;;
-    c) expected_host=uc-k8s3p; public_ip=163.220.236.53 ;;
-    d) expected_host=ichikawap1; public_ip=163.220.236.61 ;;
-    e) expected_host=uc-k8sp4; public_ip=163.220.236.54 ;;
+    a) expected_host=uc-k8sp1; public_ip=163.220.236.51; vpn_ip=10.250.0.4 ;;
+    b) expected_host=uc-k8sp2; public_ip=163.220.236.52; vpn_ip=10.250.0.5 ;;
+    c) expected_host=uc-k8s3p; public_ip=163.220.236.53; vpn_ip=10.250.0.6 ;;
+    d) expected_host=ichikawap1; public_ip=163.220.236.61; vpn_ip=10.250.0.10 ;;
+    e) expected_host=uc-k8sp4; public_ip=163.220.236.54; vpn_ip=10.250.0.11 ;;
     *) echo "usage: $0 {a|b|c|d|e}" >&2; exit 2 ;;
   esac
 
@@ -245,6 +245,10 @@ EOF
         https://registry.heterocloud.mizuame.app/api/v2.0/health >/dev/null \
       && curl --fail --silent --show-error --max-time 3 \
         --resolve "secrets.heterocloud.mizuame.app:443:$public_ip" \
+        'https://secrets.heterocloud.mizuame.app/v1/sys/health?standbyok=true' \
+        | grep -Fq '"initialized":true' \
+      && curl --fail --silent --show-error --max-time 3 \
+        --resolve "secrets.heterocloud.mizuame.app:443:$vpn_ip" \
         'https://secrets.heterocloud.mizuame.app/v1/sys/health?standbyok=true' \
         | grep -Fq '"initialized":true'; then
       consecutive_successes=$((consecutive_successes + 1))
