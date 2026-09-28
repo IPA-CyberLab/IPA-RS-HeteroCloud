@@ -22,8 +22,8 @@ END = '# END managed flash-web TLS\n'
 
 def render(extra: str, vpn_ip: str) -> str:
     address = ipaddress.ip_address(vpn_ip)
-    if address.version != 4 or not address.is_private or not str(address).startswith('10.250.0.'):
-        raise ValueError('VPN listener must be a 10.250.0.0/24 address')
+    if address.version != 4 or vpn_ip not in ('10.250.0.10', '10.250.0.11'):
+        raise ValueError('VPN listener must be a commissioned gateway address')
     if extra.count(BEGIN) != 1 or extra.count(END) != 1:
         raise ValueError('managed TLS block is missing or ambiguous')
     managed = extra.split(BEGIN, 1)[1].split(END, 1)[0]
@@ -38,9 +38,6 @@ def render(extra: str, vpn_ip: str) -> str:
         metadata = path.stat()
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o022:
             raise ValueError('public TLS file has unsafe permissions')
-    peers = ['10.250.0.10', '10.250.0.11']
-    peers.remove(vpn_ip)
-    upstreams = ' '.join(f'{ip}:18082' for ip in [vpn_ip, *peers])
     return f'''{{
     admin off
     auto_https disable_redirects
@@ -50,13 +47,10 @@ https://secrets.heterocloud.mizuame.app {{
     bind {vpn_ip}
     tls {cert} {key}
     header Strict-Transport-Security "max-age=31536000; includeSubDomains"
-    reverse_proxy {upstreams} {{
-        lb_policy first
+    reverse_proxy http://openbao-vpn-proxy.envoy-gateway-system.svc.cluster.local:18083 {{
+        header_up Host secrets.heterocloud.mizuame.app
         lb_try_duration 3s
         lb_try_interval 100ms
-        fail_duration 10s
-        max_fails 1
-        unhealthy_status 5xx
         health_uri /v1/sys/health?standbyok=true
         health_headers {{
             Host secrets.heterocloud.mizuame.app
@@ -64,6 +58,9 @@ https://secrets.heterocloud.mizuame.app {{
         health_interval 2s
         health_timeout 2s
         health_status 2xx
+        transport http {{
+            resolvers 10.96.0.10
+        }}
     }}
 }}
 '''
