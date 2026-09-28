@@ -15,7 +15,6 @@ fullnameOverride: ""
 publicOrigin: https://cloud.example.com
 secretManager:
   origin: ""
-  uiOrigin: ""
 additionalOrigins: []
 trustedProxyNetworks: []
 secureCookie: true

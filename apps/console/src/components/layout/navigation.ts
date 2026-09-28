@@ -23,7 +23,6 @@ const baseNavigationItems: SideNavigationProps.Item[] = [
     items: [
       { type: "link", text: "Flow", href: "/flow/services" },
       { type: "link", text: "Syouyu", href: "/syouyu/buckets" },
-      { type: "link", text: "Hetero Secret Manager", href: "/secrets" },
     ],
   },
   {
@@ -62,7 +61,6 @@ export const routeTitles: Record<string, string> = {
   "/registry": "イメージ",
   "/cost-management": "コスト管理",
   "/syouyu/buckets": "Syouyu",
-  "/secrets": "Hetero Secret Manager",
   "/audit-logs": "監査ログ",
   "/settings": "設定",
   "/cli": "CLIセットアップ",

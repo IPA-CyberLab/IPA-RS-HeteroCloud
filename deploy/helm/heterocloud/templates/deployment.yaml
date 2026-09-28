@@ -97,9 +97,6 @@ spec:
             {{- if .Values.secretManager.origin }}
             - --secret-manager-origin={{ .Values.secretManager.origin }}
             {{- end }}
-            {{- if .Values.secretManager.uiOrigin }}
-            - --secret-manager-ui-origin={{ .Values.secretManager.uiOrigin }}
-            {{- end }}
             {{- if .Values.additionalOrigins }}
             - --additional-origins={{ join "," .Values.additionalOrigins }}
             {{- end }}

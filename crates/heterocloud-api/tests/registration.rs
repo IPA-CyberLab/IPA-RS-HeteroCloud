@@ -366,7 +366,6 @@ async fn test_state() -> Result<Option<(Store, Arc<AppState>)>, Box<dyn Error>> 
         config: RuntimeConfig {
             public_origin,
             secret_manager_origin: None,
-            secret_manager_ui_origin: None,
             allowed_origins: vec![PUBLIC_ORIGIN.to_owned()],
             trusted_proxy_networks: Vec::new(),
             secure_cookie: false,

@@ -127,9 +127,6 @@ pub struct Config {
     #[arg(long, env = "HETEROCLOUD_SECRET_MANAGER_ORIGIN")]
     pub secret_manager_origin: Option<Url>,
 
-    #[arg(long, env = "HETEROCLOUD_SECRET_MANAGER_UI_ORIGIN")]
-    pub secret_manager_ui_origin: Option<Url>,
-
     #[arg(long, env = "HETEROCLOUD_ADDITIONAL_ORIGINS", value_delimiter = ',')]
     pub additional_origins: Vec<Url>,
 
@@ -267,7 +264,6 @@ pub struct Config {
 pub struct RuntimeConfig {
     pub public_origin: Url,
     pub secret_manager_origin: Option<Url>,
-    pub secret_manager_ui_origin: Option<Url>,
     pub allowed_origins: Vec<String>,
     pub trusted_proxy_networks: Vec<IpNet>,
     pub secure_cookie: bool,
@@ -347,10 +343,6 @@ impl Config {
         {
             return Err(ConfigError::InvalidSecretManagerOrigin);
         }
-        validate_secret_manager_ui_origin(
-            self.secret_manager_ui_origin.as_ref(),
-            self.secret_manager_origin.as_ref(),
-        )?;
         if self.secure_cookie
             && (self.public_origin.scheme() != "https"
                 || self
@@ -437,7 +429,6 @@ impl Config {
         Ok(RuntimeConfig {
             public_origin: self.public_origin.clone(),
             secret_manager_origin: self.secret_manager_origin.clone(),
-            secret_manager_ui_origin: self.secret_manager_ui_origin.clone(),
             allowed_origins,
             trusted_proxy_networks: self.trusted_proxy_networks.clone(),
             secure_cookie: self.secure_cookie,
@@ -602,29 +593,6 @@ fn validate_syouyu_internal_endpoint(endpoint: &Url) -> Result<(), ConfigError> 
     Ok(())
 }
 
-fn validate_secret_manager_ui_origin(
-    ui_origin: Option<&Url>,
-    backend_origin: Option<&Url>,
-) -> Result<(), ConfigError> {
-    if let Some(origin) = ui_origin
-        && (backend_origin.is_none()
-            || !matches!(origin.scheme(), "http" | "https")
-            || origin.host_str().is_none()
-            || (origin.scheme() == "http"
-                && !origin
-                    .host_str()
-                    .is_some_and(|host| host.ends_with(".heteronetwork.internal")))
-            || origin.username() != ""
-            || origin.password().is_some()
-            || origin.path() != "/"
-            || origin.query().is_some()
-            || origin.fragment().is_some())
-    {
-        return Err(ConfigError::InvalidSecretManagerUiOrigin);
-    }
-    Ok(())
-}
-
 fn validate_owner_config(origin: Option<&Url>, email: Option<&str>) -> Result<(), ConfigError> {
     if origin.is_some() != email.is_some() {
         return Err(ConfigError::IncompleteOwner);
@@ -676,10 +644,6 @@ fn validate_registry_config(
 pub enum ConfigError {
     #[error("secret manager origin must be an absolute HTTPS origin")]
     InvalidSecretManagerOrigin,
-    #[error(
-        "secret manager UI origin must be an absolute HTTPS origin, or an HTTP origin below heteronetwork.internal, and requires a backend origin"
-    )]
-    InvalidSecretManagerUiOrigin,
     #[error("owner origin and owner email must be configured together")]
     IncompleteOwner,
     #[error("owner origin must be an absolute HTTP(S) origin")]
@@ -751,26 +715,6 @@ mod tests {
     #[cfg(unix)]
     use super::read_secret;
     use super::validate_flow_public_endpoints;
-
-    #[test]
-    fn secret_manager_ui_origin_allows_only_private_http_with_a_backend()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let backend = Url::parse("https://secrets.example.test/")?;
-        let internal = Url::parse("http://secrets.heteronetwork.internal:21444/")?;
-        assert!(super::validate_secret_manager_ui_origin(Some(&internal), Some(&backend)).is_ok());
-        assert!(super::validate_secret_manager_ui_origin(Some(&internal), None).is_err());
-        for candidate in [
-            "http://secrets.example.test:21444/",
-            "http://secrets.heteronetwork.internal.evil.test:21444/",
-            "http://secrets.heteronetwork.internal:21444/other",
-        ] {
-            let parsed = Url::parse(candidate)?;
-            assert!(
-                super::validate_secret_manager_ui_origin(Some(&parsed), Some(&backend)).is_err()
-            );
-        }
-        Ok(())
-    }
 
     #[cfg(unix)]
     #[test]

@@ -4,7 +4,6 @@ hostNetwork: true
 publicOrigin: https://heterocloud.mizuame.app
 secretManager:
   origin: https://secrets.heterocloud.mizuame.app/
-  uiOrigin: http://secrets.heteronetwork.internal:21444/
 additionalOrigins:
   - https://cloud-a.heterocloud.mizuame.app
   - https://cloud-b.heterocloud.mizuame.app

@@ -147,7 +147,6 @@ pub fn api_router(state: Arc<AppState>) -> Router {
                 .delete(clear_owner_organization_quota),
         )
         .route("/organizations", get(list_organizations))
-        .route("/services/secret-manager", get(secret_manager_link))
         .route(
             "/organizations/{organization_id}/projects",
             get(list_projects).post(create_project),
@@ -1310,28 +1309,6 @@ async fn session(
         authenticated.csrf,
         owner_console,
     )))
-}
-
-async fn secret_manager_link(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    jar: CookieJar,
-) -> Result<Json<Value>, ApiError> {
-    authenticated_actor(&state, &headers, &jar).await?;
-    let origin = state
-        .config
-        .secret_manager_ui_origin
-        .as_ref()
-        .or(state.config.secret_manager_origin.as_ref())
-        .ok_or(ApiError::NotFound)?;
-    let url = secret_manager_oidc_login_url(origin)?;
-    Ok(Json(json!({ "url": url.as_str() })))
-}
-
-fn secret_manager_oidc_login_url(origin: &Url) -> Result<Url, ApiError> {
-    origin
-        .join("ui/vault/auth?with=oidc/")
-        .map_err(|_| ApiError::Internal)
 }
 
 async fn logout(
@@ -5092,8 +5069,8 @@ mod tests {
         flash_service_resource, flow_permission_iam_action, owner_network_boundary_allows,
         parse_api_key_prefix, parse_cli_access_token_prefix,
         parse_flow_developer_credential_prefix, request_source_ip, required_syouyu_idempotency_key,
-        secret_manager_oidc_login_url, summarize_flash_usage, syouyu_compensation_idempotency_key,
-        syouyu_credential_response, valid_kubernetes_name, validate_developer_credential_expiry,
+        summarize_flash_usage, syouyu_compensation_idempotency_key, syouyu_credential_response,
+        valid_kubernetes_name, validate_developer_credential_expiry,
         validate_developer_credential_name, validate_flash_spec, validate_flow_access_target,
         validate_flow_access_ttl, validate_flow_permissions, validate_flow_spec,
         validate_invitation_ttl, validate_list_limit, validate_slug,
@@ -5103,16 +5080,6 @@ mod tests {
     fn public_security_names_are_stable() {
         assert_eq!(SESSION_COOKIE, "hc_session");
         assert_eq!(CSRF_HEADER, "x-heterocloud-csrf");
-    }
-
-    #[test]
-    fn secret_manager_link_selects_oidc_login() -> Result<(), Box<dyn std::error::Error>> {
-        let origin = Url::parse("http://secrets.heteronetwork.internal:21444/")?;
-        assert_eq!(
-            secret_manager_oidc_login_url(&origin)?.as_str(),
-            "http://secrets.heteronetwork.internal:21444/ui/vault/auth?with=oidc/"
-        );
-        Ok(())
     }
 
     #[test]

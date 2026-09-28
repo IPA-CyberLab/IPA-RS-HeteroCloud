@@ -313,11 +313,6 @@ export class HeteroCloudApiClient {
     },
   };
 
-  readonly secretManager = {
-    link: (signal?: AbortSignal) =>
-      this.request<{ url: string }>("/services/secret-manager", { signal }),
-  };
-
   readonly registry = {
     get: (organizationId: string, signal?: AbortSignal) =>
       this.request<RegistryStatus>(organizationPath(organizationId, "registry"), {
