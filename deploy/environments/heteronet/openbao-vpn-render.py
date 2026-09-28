@@ -63,6 +63,25 @@ https://secrets.heterocloud.mizuame.app {{
         }}
     }}
 }}
+
+http://secrets.heteronetwork.internal:21444 {{
+    bind {vpn_ip}
+    reverse_proxy http://openbao-vpn-proxy.envoy-gateway-system.svc.cluster.local:18083 {{
+        header_up Host secrets.heteronetwork.internal
+        lb_try_duration 3s
+        lb_try_interval 100ms
+        health_uri /v1/sys/health?standbyok=true
+        health_headers {{
+            Host secrets.heteronetwork.internal
+        }}
+        health_interval 2s
+        health_timeout 2s
+        health_status 2xx
+        transport http {{
+            resolvers 10.96.0.10
+        }}
+    }}
+}}
 '''
 
 

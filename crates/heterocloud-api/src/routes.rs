@@ -1320,8 +1320,9 @@ async fn secret_manager_link(
     authenticated_actor(&state, &headers, &jar).await?;
     let origin = state
         .config
-        .secret_manager_origin
+        .secret_manager_ui_origin
         .as_ref()
+        .or(state.config.secret_manager_origin.as_ref())
         .ok_or(ApiError::NotFound)?;
     let url = origin.join("ui/").map_err(|_| ApiError::Internal)?;
     Ok(Json(json!({ "url": url.as_str() })))

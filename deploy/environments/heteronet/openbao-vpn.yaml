@@ -73,3 +73,20 @@
       retries: 6
       delay: 2
       until: "'\"initialized\":true' in openbao_vpn_health.stdout"
+    - name: Verify the internal OpenBao URL through the VPN entry
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --fail
+          - --silent
+          - --show-error
+          - --max-time
+          - '5'
+          - --resolve
+          - "secrets.heteronetwork.internal:21444:{{ openbao_vpn_ip }}"
+          - http://secrets.heteronetwork.internal:21444/v1/sys/health?standbyok=true
+      changed_when: false
+      register: openbao_internal_health
+      retries: 6
+      delay: 2
+      until: "'\"initialized\":true' in openbao_internal_health.stdout"
