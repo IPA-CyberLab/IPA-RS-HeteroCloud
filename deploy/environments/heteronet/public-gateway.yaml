@@ -14,6 +14,29 @@
     gateway_id: "{{ gateway_ids[inventory_hostname] }}"
     stage_dir: /run/heterosecrets-gateway-reconcile
   tasks:
+    - name: Read the current public OpenBao CA certificate
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig=/workspace/.heteronetwork-iac/tunnel-kubeconfig
+          - --namespace=openbao
+          - get
+          - secret
+          - openbao-ca
+          - --output=jsonpath={.data.tls\.crt}
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: openbao_ca_certificate
+      changed_when: false
+      no_log: true
+    - name: Install the OpenBao CA for verified upstream TLS
+      ansible.builtin.copy:
+        content: "{{ openbao_ca_certificate.stdout | b64decode }}"
+        dest: /etc/heteronetwork/openbao-ca.crt
+        owner: root
+        group: heteronetwork-gateway
+        mode: '0640'
     - name: Create temporary root-only source directory
       ansible.builtin.file:
         path: "{{ stage_dir }}"

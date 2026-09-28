@@ -168,6 +168,22 @@ secrets.heterocloud.mizuame.app {
 	import heterocloud_envoy /v1/sys/health?standbyok=true secrets.heterocloud.mizuame.app
 }
 
+# OpenBao is served only on the HeteroNetwork WireGuard address. The public
+# hostname is retained for its existing OIDC callback and trusted TLS cert.
+https://secrets.heterocloud.mizuame.app {
+	bind 10.250.0.10
+	import heterocloud_public_tls
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	reverse_proxy https://openbao-active.openbao.svc.cluster.local:8200 {
+		header_up Host openbao-active.openbao.svc.cluster.local
+		transport http {
+			resolvers 10.96.0.10
+			tls_trust_pool file /etc/heteronetwork/openbao-ca.crt
+			tls_server_name openbao-active.openbao.svc.cluster.local
+		}
+	}
+}
+
 http://:18082 {
 	bind 10.250.0.10
 	@vpn remote_ip 10.250.0.0/16 127.0.0.0/8
