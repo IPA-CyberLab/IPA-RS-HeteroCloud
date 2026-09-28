@@ -97,12 +97,10 @@ for gateway_id in a b c d e; do
   grep -Fq 'import heterocloud_envoy /api/v2.0/health' "$gateway_file"
   grep -Fq 's3.heterocloud.mizuame.app {' "$gateway_file"
   grep -Fq 'X-HeteroCloud-Syouyu-ACME-Visited-' "$gateway_file"
-  grep -Fq 'https://:443 {' "$gateway_file"
-  grep -Fq "bind $local_vpn_ip" "$gateway_file"
-  grep -Fq 'reverse_proxy https://openbao-active.openbao.svc.cluster.local:8200 {' "$gateway_file"
-  grep -Fq 'tls_trust_pool file /etc/heteronetwork/openbao-ca.crt' "$gateway_file"
-  if grep -Fq 'tls_insecure_skip_verify' "$gateway_file"; then
-    echo "gateway $gateway_id disables OpenBao upstream TLS verification" >&2
+  grep -Fq 'http://secrets.heterocloud.mizuame.app {' "$gateway_file"
+  grep -Fq 'secrets.heterocloud.mizuame.app {' "$gateway_file"
+  if grep -Fq 'import heterocloud_envoy /v1/sys/health?standbyok=true secrets.heterocloud.mizuame.app' "$gateway_file"; then
+    echo "gateway $gateway_id still publishes OpenBao" >&2
     exit 1
   fi
   if grep -Fq '127.0.0.1:18079' "$gateway_file"; then

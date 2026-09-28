@@ -1,0 +1,37 @@
+[Unit]
+Description=HeteroCloud OpenBao VPN HTTPS gateway
+Wants=network-online.target heteronetwork-gateway.service
+After=network-online.target heteronetwork-gateway.service
+
+[Service]
+Type=simple
+User=heteronetwork-gateway
+Group=heteronetwork-gateway
+ExecStartPre=/usr/bin/python3 /usr/local/libexec/heteronetwork-openbao-vpn-render.py --vpn-ip {{ openbao_vpn_ip }}
+ExecStart=/opt/heteronetwork/bin/caddy run --config /run/heteronetwork-openbao-vpn/Caddyfile --adapter caddyfile
+Restart=always
+RestartSec=5s
+RuntimeDirectory=heteronetwork-openbao-vpn
+RuntimeDirectoryMode=0750
+StateDirectory=heteronetwork-openbao-vpn
+StateDirectoryMode=0700
+Environment=XDG_DATA_HOME=/var/lib/heteronetwork-openbao-vpn
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

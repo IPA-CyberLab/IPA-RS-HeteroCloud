@@ -243,17 +243,21 @@ EOF
       && curl --fail --silent --show-error --insecure --max-time 3 \
         --resolve "registry.heterocloud.mizuame.app:443:$public_ip" \
         https://registry.heterocloud.mizuame.app/api/v2.0/health >/dev/null \
-      && curl --fail --silent --show-error --max-time 3 \
+      && [[ $(curl --silent --show-error --max-time 3 --output /dev/null \
+        --write-out '%{http_code}' \
         --resolve "secrets.heterocloud.mizuame.app:443:$public_ip" \
-        'https://secrets.heterocloud.mizuame.app/v1/sys/health?standbyok=true' \
-        | grep -Fq '"initialized":true' \
+        'https://secrets.heterocloud.mizuame.app/v1/sys/health?standbyok=true') == 403 ]] \
+      && [[ $(curl --silent --show-error --max-time 3 --output /dev/null \
+        --write-out '%{http_code}' \
+        --resolve "secrets.heterocloud.mizuame.app:443:$public_ip" \
+        'https://secrets.heterocloud.mizuame.app/ui/') == 403 ]] \
       && curl --fail --silent --show-error --max-time 3 \
         --resolve "secrets.heterocloud.mizuame.app:443:$vpn_ip" \
         'https://secrets.heterocloud.mizuame.app/v1/sys/health?standbyok=true' \
         | grep -Fq '"initialized":true'; then
       consecutive_successes=$((consecutive_successes + 1))
       if ((consecutive_successes >= 5)); then
-        echo "Flow and registry gateway $gateway_id are ready on $public_ip with only the Envoy route active."
+        echo "Gateway $gateway_id serves OpenBao on $vpn_ip and denies it on $public_ip."
         exit 0
       fi
     else

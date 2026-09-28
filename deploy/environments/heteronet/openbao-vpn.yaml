@@ -1,0 +1,75 @@
+- name: Deploy the OpenBao HTTPS entry only on live VPN gateway nodes
+  hosts: ichikawap1:uc-k8sp4
+  gather_facts: false
+  become: true
+  vars:
+    ansible_remote_tmp: /tmp/heterosecrets-ansible
+    ansible_become_password: "{{ lookup('env', 'HNN_IAC_BECOME_PASSWORD') }}"
+    openbao_vpn_ips:
+      ichikawap1: 10.250.0.10
+      uc-k8sp4: 10.250.0.11
+    openbao_vpn_ip: "{{ openbao_vpn_ips[inventory_hostname] }}"
+  tasks:
+    - name: Create the root-owned helper directory
+      ansible.builtin.file:
+        path: /usr/local/libexec
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+    - name: Install the reviewed TLS configuration renderer
+      ansible.builtin.copy:
+        src: openbao-vpn-render.py
+        dest: /usr/local/libexec/heteronetwork-openbao-vpn-render.py
+        owner: root
+        group: root
+        mode: '0755'
+    - name: Install the VPN-only gateway service
+      ansible.builtin.template:
+        src: openbao-vpn.service.j2
+        dest: /etc/systemd/system/heteronetwork-openbao-vpn.service
+        owner: root
+        group: root
+        mode: '0644'
+    - name: Install the TLS renewal watcher
+      ansible.builtin.copy:
+        src: openbao-vpn-refresh.path
+        dest: /etc/systemd/system/heteronetwork-openbao-vpn-refresh.path
+        owner: root
+        group: root
+        mode: '0644'
+    - name: Install the TLS renewal restart action
+      ansible.builtin.copy:
+        src: openbao-vpn-refresh.service
+        dest: /etc/systemd/system/heteronetwork-openbao-vpn-refresh.service
+        owner: root
+        group: root
+        mode: '0644'
+    - name: Start the VPN-only HTTPS entry
+      ansible.builtin.systemd_service:
+        name: heteronetwork-openbao-vpn.service
+        daemon_reload: true
+        enabled: true
+        state: restarted
+    - name: Watch certificate rotations
+      ansible.builtin.systemd_service:
+        name: heteronetwork-openbao-vpn-refresh.path
+        enabled: true
+        state: started
+    - name: Verify OpenBao through the VPN HTTPS entry
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --fail
+          - --silent
+          - --show-error
+          - --max-time
+          - '5'
+          - --resolve
+          - "secrets.heterocloud.mizuame.app:443:{{ openbao_vpn_ip }}"
+          - https://secrets.heterocloud.mizuame.app/v1/sys/health?standbyok=true
+      changed_when: false
+      register: openbao_vpn_health
+      retries: 6
+      delay: 2
+      until: "'\"initialized\":true' in openbao_vpn_health.stdout"

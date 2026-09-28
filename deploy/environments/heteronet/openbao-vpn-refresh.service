@@ -1,0 +1,6 @@
+[Unit]
+Description=Reload OpenBao VPN gateway after public TLS certificate renewal
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl restart heteronetwork-openbao-vpn.service

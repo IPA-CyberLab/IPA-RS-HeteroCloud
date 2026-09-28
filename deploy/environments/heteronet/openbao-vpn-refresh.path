@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch renewed OpenBao VPN gateway TLS certificate paths
+
+[Path]
+PathChanged=/etc/heteronetwork/public-gateway-extra.Caddyfile
+Unit=heteronetwork-openbao-vpn-refresh.service
+
+[Install]
+WantedBy=multi-user.target
