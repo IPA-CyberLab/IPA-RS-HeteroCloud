@@ -34,6 +34,9 @@ pub struct AuthArgs {
 pub enum AuthCommand {
     /// Sign in through the HeteroCloud browser and configured identity provider.
     Login {
+        /// Show a short verification URL and code for signing in on another device.
+        #[arg(long, conflicts_with = "no_browser")]
+        device_code: bool,
         /// Print the verification URL without opening a browser.
         #[arg(long)]
         no_browser: bool,
@@ -85,6 +88,7 @@ const fn credential_file_version() -> u8 {
 struct DeviceAuthorization {
     device_code: String,
     user_code: String,
+    verification_uri: String,
     verification_uri_complete: String,
     expires_in: u64,
     interval: u64,
@@ -137,13 +141,20 @@ struct ApiErrorBody {
 
 pub(crate) async fn execute(args: AuthArgs, settings: AuthSettings) -> Result<(), CliError> {
     match args.command {
-        AuthCommand::Login { no_browser } => login(settings, no_browser).await,
+        AuthCommand::Login {
+            device_code,
+            no_browser,
+        } => login(settings, device_code, no_browser).await,
         AuthCommand::Status => status(settings).await,
         AuthCommand::Logout => logout(settings).await,
     }
 }
 
-async fn login(settings: AuthSettings, no_browser: bool) -> Result<(), CliError> {
+async fn login(
+    settings: AuthSettings,
+    device_code: bool,
+    no_browser: bool,
+) -> Result<(), CliError> {
     let endpoint = resolve_endpoint(settings.endpoint.as_deref(), settings.allow_insecure_http)?;
     let organization_id = settings
         .organization_id
@@ -168,24 +179,35 @@ async fn login(settings: AuthSettings, no_browser: bool) -> Result<(), CliError>
             "the server returned an invalid device authorization".into(),
         ));
     }
+    let verification_uri = Url::parse(&authorization.verification_uri)
+        .map_err(|_| CliError::Authentication("the server returned an invalid login URL".into()))?;
     let verification_url = Url::parse(&authorization.verification_uri_complete)
         .map_err(|_| CliError::Authentication("the server returned an invalid login URL".into()))?;
-    if verification_url.scheme() != endpoint.scheme()
-        || verification_url.host_str() != endpoint.host_str()
-        || verification_url.port_or_known_default() != endpoint.port_or_known_default()
-        || !verification_url.username().is_empty()
-        || verification_url.password().is_some()
+    if [&verification_uri, &verification_url].iter().any(|url| {
+        url.scheme() != endpoint.scheme()
+            || url.host_str() != endpoint.host_str()
+            || url.port_or_known_default() != endpoint.port_or_known_default()
+            || !url.username().is_empty()
+            || url.password().is_some()
+    }) || verification_uri.query().is_some()
+        || verification_uri.fragment().is_some()
     {
         return Err(CliError::Authentication(
             "the server returned a login URL on a different origin".into(),
         ));
     }
 
-    println!("Open this URL to sign in and approve the CLI:");
-    println!("{}", verification_url.as_str());
-    println!("Verification code: {}", authorization.user_code);
-    if !no_browser && !open_browser(verification_url.as_str())? {
-        eprintln!("Could not open a browser automatically. Open the URL above manually.");
+    if device_code {
+        println!("Open this URL in a browser, sign in, and enter the code to approve the CLI:");
+        println!("{}", verification_uri.as_str());
+        println!("Verification code: {}", authorization.user_code);
+    } else {
+        println!("Open this URL to sign in and approve the CLI:");
+        println!("{}", verification_url.as_str());
+        println!("Verification code: {}", authorization.user_code);
+        if !no_browser && !open_browser(verification_url.as_str())? {
+            eprintln!("Could not open a browser automatically. Open the URL above manually.");
+        }
     }
 
     let token_url = endpoint

@@ -20,8 +20,11 @@ describe("CLI setup launcher", () => {
     expect(prompt).toContain("Linux/macOS/Windows の x64/ARM64");
     expect(prompt).toContain("SHA-256");
     expect(prompt).toContain("heterocloud --version");
-    expect(prompt).toContain("heterocloud auth login");
+    expect(prompt).toContain("heterocloud auth login --device-code");
     expect(prompt).toContain("heterocloud auth status");
+    expect(prompt).toContain("短い確認URL");
+    expect(prompt).toContain("確認コードを画面へ入力");
+    expect(prompt).toContain("確認コードをURL、チャット");
     expect(prompt).toContain("APIキーを要求・生成・表示しない");
     expect(prompt).not.toContain("heterocloud.mizuame.app");
   });
@@ -63,6 +66,7 @@ describe("CLI setup launcher", () => {
       expect.stringMatching(/^codex:\/\/threads\/new\?prompt=/),
     );
     expect(screen.getByText(/Claude Code\/Codexのskill導入/)).toBeInTheDocument();
+    expect(screen.getByText(/デバイスコードでのログイン/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "プロンプトをコピー" }));
     expect(writeText).toHaveBeenCalledWith(buildCliSetupPrompt(target));

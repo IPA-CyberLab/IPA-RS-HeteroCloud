@@ -35,7 +35,7 @@ export function buildCliSetupPrompt({
 4. HeteroCloud CLIセットアップ用のClaude Code/Codex skillも、このユーザーへインストールしてください。公式リポジトリの固定コミットにある ${SKILL_URL} から SKILL.md を取得し、SHA-256が ${SKILL_SHA256} に一致した場合だけ配置してください。Claude Codeはユーザーの ~/.claude/skills/heterocloud-cli-setup/SKILL.md、Codexは CODEX_HOME があればその skills/heterocloud-cli-setup/SKILL.md、なければ ~/.codex/skills/heterocloud-cli-setup/SKILL.md です。Windowsでは ~ をユーザープロファイルに読み替えてください。両方の保存先を用意し、異なる既存ファイルがあればバックアップしてから更新し、保存後のファイルも同じSHA-256で検証してください。Claude CodeやCodex本体のインストールは不要です。
 5. HETEROCLOUD_ENDPOINT=${origin} と HETEROCLOUD_ORGANIZATION_ID=${organizationId} を、現在のユーザーとシェルで次回起動後も有効になるよう設定してください。
 6. ${insecureHttp ? "接続先がHTTPなので、HETEROCLOUD_ALLOW_INSECURE_HTTP=1 も明示的に設定してください。" : "HETEROCLOUD_ALLOW_INSECURE_HTTP は設定しないでください。"}
-7. APIキーを要求・生成・表示しないでください。heterocloud auth login を実行し、表示された任意ドメイン上の認証URLを既定ブラウザで開き、ユーザーがKeycloakログインとCLI承認を完了できる状態にしてください。認証コードやアクセストークンをチャット、シェル履歴、URL、ログへ転記しないでください。
+7. APIキーを要求・生成・表示しないでください。heterocloud auth login --device-code を実行し、CLIに表示された短い確認URLをユーザーのブラウザで開けるよう案内してください。CLIは承認待ちの間そのまま実行し続けてください。ユーザー自身がブラウザでIDプロバイダーにログインし、CLIに表示された確認コードを画面へ入力して承認します。確認コードをURL、チャット、シェル履歴、ログへ転記せず、アクセストークンも表示・共有しないでください。ブラウザの自動操作やAPIキーによる代替ログインは行わないでください。
 8. ブラウザ承認後にCLIが終了するまで待ち、heterocloud auth status を実行してください。ログイン済みユーザー、組織、トークン有効期限が取得でき、両skillの配置とSHA-256検証も成功した場合だけセットアップ完了としてください。
 9. 最後に heterocloud --version を実行し、実行ファイルの場所、バージョン、変更した設定ファイルと環境変数、Claude Code/Codex skillの配置先、auth statusの成否を簡潔に報告してください。サービスやクラウドリソースの作成・更新・削除は行わないでください。`;
 }

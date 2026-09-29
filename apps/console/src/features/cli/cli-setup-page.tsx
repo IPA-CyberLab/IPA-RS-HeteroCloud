@@ -36,8 +36,8 @@ export function CliSetupPanel({
   return (
     <SpaceBetween size="l">
       <Alert type="info" header="秘密値はChatGPTへ送りません">
-        起動リンクには接続先と組織IDだけを含めます。認証はブラウザ上のKeycloakログインと
-        CLI承認で完了し、APIキーやアクセストークンの貼り付けは不要です。
+        起動リンクには接続先と組織IDだけを含めます。CLIの確認コードをブラウザで入力して
+        承認します。APIキーやアクセストークンの貼り付けは不要です。
       </Alert>
       {copyState === "copied" ? (
         <Alert type="success" dismissible onDismiss={() => setCopyState("idle")}>
@@ -75,7 +75,7 @@ export function CliSetupPanel({
           />
           <Box color="text-body-secondary">
             OSとCPUの判定、最新版の取得、チェックサム検証、PATHへの配置、
-            Claude Code/Codexのskill導入、OAuthログイン、接続確認までを案内します。
+            Claude Code/Codexのskill導入、デバイスコードでのログイン、接続確認までを案内します。
           </Box>
           <SpaceBetween direction="horizontal" size="xs">
             <Button variant="primary" iconName="external" href={launchUrl}>

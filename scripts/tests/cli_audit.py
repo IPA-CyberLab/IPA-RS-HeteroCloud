@@ -259,8 +259,12 @@ def run_suite(a):
         require(stored["profiles"][a.origin + "/"]["organization_id"] == ORG,
                 "saved organization differs")
         require(cli_token not in out + err, "CLI token leaked to terminal output")
+        require(device["verification_uri"] in out, "CLI did not show the short verification URL")
+        require(device["user_code"] in out, "CLI did not show the verification code")
+        require(device["verification_uri_complete"] not in out + err,
+                "device-code login put the verification code into a URL")
 
-    a.run("auth:login", ["auth", "login", "--no-browser"],
+    a.run("auth:device-code", ["auth", "login", "--device-code"],
           defaults=["--endpoint", a.origin, "--allow-insecure-http", "--organization-id", ORG],
           responses=[reply(device), reply(issued), reply(identity)],
           methods=["POST", "POST", "GET"],

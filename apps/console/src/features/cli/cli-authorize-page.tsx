@@ -2,10 +2,13 @@ import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
 import Container from "@cloudscape-design/components/container";
+import FormField from "@cloudscape-design/components/form-field";
 import Header from "@cloudscape-design/components/header";
+import Input from "@cloudscape-design/components/input";
 import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ErrorState } from "@/components/shared/error-state";
 import { PageHeader } from "@/components/shared/page-header";
@@ -14,7 +17,19 @@ import { api, getApiErrorMessage } from "@/lib/api-client";
 
 export function CliAuthorizePage() {
   const [searchParams] = useSearchParams();
-  const userCode = searchParams.get("user_code")?.trim() ?? "";
+  const [userCode, setUserCode] = useState(searchParams.get("user_code")?.trim() ?? "");
+  const [enteredCode, setEnteredCode] = useState("");
+  const [codeError, setCodeError] = useState("");
+  const submitCode = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const characters = enteredCode.trim().replaceAll("-", "").toUpperCase();
+    if (!/^[A-Z0-9]{12}$/.test(characters)) {
+      setCodeError("CLIに表示された12文字の確認コードを入力してください。");
+      return;
+    }
+    setCodeError("");
+    setUserCode(`${characters.slice(0, 4)}-${characters.slice(4, 8)}-${characters.slice(8)}`);
+  };
   const authorization = useQuery({
     queryKey: ["auth", "cli-device", userCode],
     queryFn: ({ signal }) => api.auth.cliDevice.get(userCode, signal),
@@ -27,10 +42,29 @@ export function CliAuthorizePage() {
 
   if (!userCode) {
     return (
-      <ErrorState
-        title="確認コードがありません"
-        description="CLIに表示された認証URLをもう一度開いてください。"
-      />
+      <SpaceBetween size="l">
+        <PageHeader
+          title="CLIの確認コードを入力"
+          description="CLIに表示されたURLを開き、確認コードを入力してください。"
+        />
+        <Container>
+          <form onSubmit={submitCode}>
+            <SpaceBetween size="m">
+              <FormField label="確認コード" errorText={codeError || undefined}>
+                <Input
+                  value={enteredCode}
+                  onChange={({ detail }) => setEnteredCode(detail.value)}
+                  placeholder="ABCD-EFGH-JKLM"
+                  autoComplete={false}
+                />
+              </FormField>
+              <Button variant="primary" formAction="submit">
+                続行
+              </Button>
+            </SpaceBetween>
+          </form>
+        </Container>
+      </SpaceBetween>
     );
   }
   if (authorization.isPending) {
@@ -38,11 +72,14 @@ export function CliAuthorizePage() {
   }
   if (authorization.isError) {
     return (
-      <ErrorState
-        title="CLI認証リクエストを確認できません"
-        description={getApiErrorMessage(authorization.error)}
-        onRetry={() => void authorization.refetch()}
-      />
+      <SpaceBetween size="l">
+        <ErrorState
+          title="CLI認証リクエストを確認できません"
+          description={getApiErrorMessage(authorization.error)}
+          onRetry={() => void authorization.refetch()}
+        />
+        <Button onClick={() => setUserCode("")}>別の確認コードを入力</Button>
+      </SpaceBetween>
     );
   }
 

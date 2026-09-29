@@ -61,17 +61,17 @@ For guided installation, open **CLI setup** (`/cli`) in your HeteroCloud
 console and choose **ChatGPTでセットアップ**. The launcher prepares a desktop-app
 prompt for the current console origin and organization. It covers OS and CPU
 detection, checksum verification, PATH installation, Claude Code and Codex skill
-installation, browser login, and an authenticated status check. Secrets are never embedded in the launch URL. The
+installation, device-code login, and an authenticated status check. Secrets are never embedded in the launch URL. The
 same prompt can be copied when the desktop-app protocol is unavailable.
 
 Install the matching archive and adjacent checksum from the
 [latest release](https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/releases/latest).
-For Linux x64, extract `heterocloud-v0.1.78-linux-x64.tar.gz`, verify it with
+For Linux x64, extract `heterocloud-v0.1.86-linux-x64.tar.gz`, verify it with
 `sha256sum -c`, then install the binary:
 
 ```sh
-sha256sum -c heterocloud-v0.1.78-linux-x64.tar.gz.sha256
-tar -xzf heterocloud-v0.1.78-linux-x64.tar.gz
+sha256sum -c heterocloud-v0.1.86-linux-x64.tar.gz.sha256
+tar -xzf heterocloud-v0.1.86-linux-x64.tar.gz
 sudo install -m 0755 heterocloud /usr/local/bin/heterocloud
 heterocloud --version
 ```
@@ -79,12 +79,12 @@ heterocloud --version
 The release publishes native x64 and ARM64 builds for all three supported
 operating systems:
 
-- `heterocloud-v0.1.78-linux-x64.tar.gz`
-- `heterocloud-v0.1.78-linux-arm64.tar.gz`
-- `heterocloud-v0.1.78-macos-x64.tar.gz`
-- `heterocloud-v0.1.78-macos-arm64.tar.gz`
-- `heterocloud-v0.1.78-windows-x64.zip`
-- `heterocloud-v0.1.78-windows-arm64.zip`
+- `heterocloud-v0.1.86-linux-x64.tar.gz`
+- `heterocloud-v0.1.86-linux-arm64.tar.gz`
+- `heterocloud-v0.1.86-macos-x64.tar.gz`
+- `heterocloud-v0.1.86-macos-arm64.tar.gz`
+- `heterocloud-v0.1.86-windows-x64.zip`
+- `heterocloud-v0.1.86-windows-arm64.zip`
 
 Linux archives are statically linked so they do not depend on the host's glibc
 version.
@@ -93,7 +93,7 @@ version.
 export HETEROCLOUD_ENDPOINT=https://cloud.example.com
 export HETEROCLOUD_ORGANIZATION_ID=0198a118-073f-79e4-9ca4-0c1c2501c031
 
-heterocloud auth login
+heterocloud auth login --device-code
 heterocloud auth status
 
 heterocloud flow create --file examples/cli/flow.json
@@ -101,8 +101,9 @@ heterocloud flash list --output table
 heterocloud syouyu get 0198a118-073f-79e4-9ca4-0c1c2501c031
 ```
 
-`auth login` opens the selected HeteroCloud origin, completes its configured
-Keycloak login, and asks for an explicit CLI approval. The resulting
+`auth login --device-code` displays a short verification URL and code. Open the
+URL in a browser, sign in through the configured identity provider, enter the
+code on the page, and explicitly approve the CLI. The resulting
 organization-bound token is stored with mode `0600` on Linux/macOS and a
 current-user ACL on Windows. Run `heterocloud auth logout` to revoke it.
 Service-account API keys remain available for non-interactive automation via

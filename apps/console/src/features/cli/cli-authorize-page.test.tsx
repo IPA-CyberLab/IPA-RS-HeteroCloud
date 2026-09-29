@@ -7,6 +7,41 @@ import { api } from "@/lib/api-client";
 import { CliAuthorizePage } from "./cli-authorize-page";
 
 describe("CLI authorization", () => {
+  it("短い確認URLで開き、画面で入力したコードからCLIを承認する", async () => {
+    const get = vi.spyOn(api.auth.cliDevice, "get").mockResolvedValue({
+      user_code: "ABCD-EFGH-JKLM",
+      organization: {
+        organization_id: "0199a117-0d8c-70e2-a457-a83c253b9f21",
+        organization_slug: "example",
+        organization_name: "Example Organization",
+        principal_id: "0199a117-0d8c-70e2-a457-a83c253b9f22",
+        role: "member",
+      },
+      expires_at: "2026-09-23T15:00:00Z",
+    });
+    const approve = vi.spyOn(api.auth.cliDevice, "approve").mockResolvedValue();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const user = userEvent.setup();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/cli/authorize"]}>
+          <CliAuthorizePage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await user.type(screen.getByRole("textbox", { name: "確認コード" }), "abcd-efgh-jklm");
+    await user.click(screen.getByRole("button", { name: "続行" }));
+    expect(await screen.findByText("Example Organization (example)")).toBeInTheDocument();
+    expect(get).toHaveBeenCalledWith("ABCD-EFGH-JKLM", expect.any(AbortSignal));
+    await user.click(screen.getByRole("button", { name: "このCLIを承認" }));
+    expect(approve).toHaveBeenCalledWith("ABCD-EFGH-JKLM");
+    expect(await screen.findByText("CLIを承認しました")).toBeInTheDocument();
+  });
+
   it("組織と確認コードを表示してCLIを承認する", async () => {
     const get = vi.spyOn(api.auth.cliDevice, "get").mockResolvedValue({
       user_code: "ABCD-EFGH-JKLM",
