@@ -1,9 +1,9 @@
 const RELEASES_URL =
   "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/releases/latest";
 const SKILL_URL =
-  "https://raw.githubusercontent.com/IPA-CyberLab/IPA-RS-HeteroCloud/d359be6fdf7b71d7a676df059fe9a5640d3e63f0/.agents/skills/heterocloud-cli-setup/SKILL.md";
+  "https://raw.githubusercontent.com/IPA-CyberLab/IPA-RS-HeteroCloud/e5e67d8cf562557db307f2511f90ef703545520a/.agents/skills/heterocloud-cli-setup/SKILL.md";
 const SKILL_SHA256 =
-  "21df216663c8b55b6bd452a8efa5089c6e820625cfe7fbf08d43ee70a69e8091";
+  "82a5489d8179262700a171c6a01d5c516467fe409b1700d7a54ad02aee53eea8";
 
 export interface CliSetupTarget {
   endpoint: string;
