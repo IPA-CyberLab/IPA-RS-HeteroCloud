@@ -21,7 +21,7 @@ describe("FlashSecretsPanel", () => {
 
   it("registers a value without displaying it and attaches only its name", async () => {
     const user = userEvent.setup();
-    const onSecretFilesChange = vi.fn();
+    const onSecretEnvChange = vi.fn();
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
@@ -30,8 +30,9 @@ describe("FlashSecretsPanel", () => {
         <FlashSecretsPanel
           organizationId="organization-1"
           service={service}
-          secretFiles={{}}
-          onSecretFilesChange={onSecretFilesChange}
+          secretEnv={{}}
+          onSecretEnvChange={onSecretEnvChange}
+          plainEnvNames={[]}
           onBusyChange={vi.fn()}
           disabled={false}
         />
@@ -49,7 +50,7 @@ describe("FlashSecretsPanel", () => {
     expect(screen.queryByText("sensitive-test-value")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "コンテナへ接続" }));
-    expect(onSecretFilesChange).toHaveBeenCalledWith({ "database-url": "database-url" });
+    expect(onSecretEnvChange).toHaveBeenCalledWith({ DATABASE_URL: "database-url" });
     expect(api.flash.services.update).not.toHaveBeenCalled();
   });
 });

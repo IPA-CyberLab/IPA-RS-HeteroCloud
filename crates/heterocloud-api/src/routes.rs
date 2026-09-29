@@ -2330,7 +2330,7 @@ async fn create_flash_service(
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     validate_name(&request.name)?;
     validate_flash_spec(&request.spec)?;
-    if !request.spec.secret_files.is_empty() {
+    if !request.spec.secret_env.is_empty() || !request.spec.secret_files.is_empty() {
         return Err(ApiError::BadRequest(
             "Create the Flash service before attaching secrets.".into(),
         ));
@@ -2416,15 +2416,17 @@ async fn update_flash_service(
         &flash_service_resource(organization_id, service_instance_id),
     )
     .await?;
-    if !request.spec.secret_files.is_empty() {
+    let attached_secrets = request
+        .spec
+        .effective_secret_env()
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    if !attached_secrets.is_empty() {
         let manager = flash_secret_manager(&state).await?;
         let available = manager
             .list(service_instance_id)
             .await
             .map_err(map_secret_error)?;
-        if request
-            .spec
-            .secret_files
+        if attached_secrets
             .values()
             .any(|name| !available.contains(name))
         {
@@ -2524,13 +2526,13 @@ async fn put_flash_secret(
     Json(request): Json<PutFlashSecret>,
 ) -> Result<StatusCode, ApiError> {
     validate_flash_secret_name(&name)?;
-    if request.value.is_empty() || request.value.len() > 16_384 {
+    if request.value.is_empty() || request.value.len() > 16_384 || request.value.contains('\0') {
         return Err(ApiError::BadRequest(
-            "Secret values must contain 1 to 16384 bytes.".into(),
+            "Secret values must contain 1 to 16384 bytes and cannot contain NUL.".into(),
         ));
     }
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
-    authorize_actor(
+    let authorization = authorize_actor(
         &state,
         &actor,
         OrganizationId(organization_id),
@@ -2538,7 +2540,9 @@ async fn put_flash_secret(
         &flash_service_resource(organization_id, service_instance_id),
     )
     .await?;
-    flash_service(&state, organization_id, service_instance_id).await?;
+    let service = flash_service(&state, organization_id, service_instance_id).await?;
+    let spec: FlashSpec =
+        serde_json::from_value(service.spec.clone()).map_err(|_| ApiError::Internal)?;
     let manager = flash_secret_manager(&state).await?;
     let existing = manager
         .list(service_instance_id)
@@ -2553,6 +2557,25 @@ async fn put_flash_secret(
         .put(service_instance_id, &name, &request.value)
         .await
         .map_err(map_secret_error)?;
+    if spec
+        .effective_secret_env()
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?
+        .values()
+        .any(|attached| attached == &name)
+    {
+        state
+            .store
+            .update_service_instance(
+                OrganizationId(organization_id),
+                ServiceInstanceId(service_instance_id),
+                "flash",
+                authorization.principal_id,
+                &service.name,
+                service.spec,
+            )
+            .await
+            .map_err(ApiError::from_store)?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -2574,7 +2597,12 @@ async fn delete_flash_secret(
     .await?;
     let service = flash_service(&state, organization_id, service_instance_id).await?;
     let spec: FlashSpec = serde_json::from_value(service.spec).map_err(|_| ApiError::Internal)?;
-    if spec.secret_files.values().any(|attached| attached == &name) {
+    if spec
+        .effective_secret_env()
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?
+        .values()
+        .any(|attached| attached == &name)
+    {
         return Err(ApiError::Conflict);
     }
     flash_secret_manager(&state)
@@ -5277,6 +5305,7 @@ mod tests {
             egress: FlashEgress::default(),
             env: Default::default(),
             secret_files: Default::default(),
+            secret_env: Default::default(),
             command: Vec::new(),
             args: Vec::new(),
             metadata: Default::default(),

@@ -6,7 +6,7 @@ test("a user configures container secrets in the Flash service edit screen", asy
   const timestamp = "2026-09-28T00:00:00Z";
   const names: string[] = [];
   const writes: Array<{ value: string }> = [];
-  let secretFiles: Record<string, string> = {};
+  let secretEnv: Record<string, string> = {};
   const service = () => ({
     id: serviceId,
     organization_id: organizationId,
@@ -28,7 +28,7 @@ test("a user configures container secrets in the Flash service edit screen", asy
       command: [],
       args: [],
       metadata: {},
-      secret_files: secretFiles,
+      secret_env: secretEnv,
     },
     status: {},
     created_at: timestamp,
@@ -64,7 +64,7 @@ test("a user configures container secrets in the Flash service edit screen", asy
     }
     if (path === `/api/v1/organizations/${organizationId}/flash/services/${serviceId}`) {
       if (route.request().method() === "PUT") {
-        secretFiles = route.request().postDataJSON().spec.secret_files;
+        secretEnv = route.request().postDataJSON().spec.secret_env;
       }
       return route.fulfill({ json: service() });
     }
@@ -93,16 +93,15 @@ test("a user configures container secrets in the Flash service edit screen", asy
   await expect.poll(() => writes).toEqual([{ value: "e2e-value" }]);
   await expect(editor.getByLabel("値")).toHaveValue("");
   await editor.getByRole("button", { name: "コンテナへ接続" }).click();
-  expect(secretFiles).toEqual({});
-  await expect(editor.getByText("/vault/secrets/api-key")).toBeVisible();
+  expect(secretEnv).toEqual({});
+  await expect(editor.getByText("API_KEY")).toBeVisible();
   await editor.getByRole("button", { name: "キャンセル" }).click();
   await expect(page.getByRole("heading", { name: "コンテナのシークレット" })).toHaveCount(0);
   await page.getByRole("button", { name: "編集" }).click();
-  await expect(editor.getByText("/vault/secrets/api-key")).toHaveCount(0);
+  await expect(editor.getByRole("button", { name: "コンテナへ接続" })).toBeVisible();
   await editor.getByRole("button", { name: "コンテナへ接続" }).click();
   await editor.getByRole("button", { name: "変更を保存" }).click();
-  await expect.poll(() => secretFiles).toEqual({ "api-key": "api-key" });
+  await expect.poll(() => secretEnv).toEqual({ API_KEY: "api-key" });
   await expect(editor).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "コンテナのシークレット" })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "OpenBaoにOIDCでサインイン" })).toHaveCount(0);
 });

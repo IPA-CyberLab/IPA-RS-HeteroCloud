@@ -351,7 +351,7 @@ pub const MAX_FLASH_REGION_LENGTH: usize = 63;
 pub const MAX_FLASH_IMAGE_LENGTH: usize = 512;
 pub const MAX_FLASH_PORT_NAME_LENGTH: usize = 63;
 pub const MAX_FLASH_ENV_VARS: usize = 128;
-pub const MAX_FLASH_SECRET_FILES: usize = 32;
+pub const MAX_FLASH_SECRET_ENV: usize = 32;
 pub const MAX_FLASH_ENV_KEY_LENGTH: usize = 253;
 pub const MAX_FLASH_ENV_VALUE_LENGTH: usize = 16 * 1024;
 pub const MAX_FLASH_COMMAND_PARTS: usize = 128;
@@ -749,6 +749,9 @@ pub struct FlashSpec {
     pub egress: FlashEgress,
     pub env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub secret_env: BTreeMap<String, String>,
+    /// Kept for existing services; converted to environment variable names.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub secret_files: BTreeMap<String, String>,
     pub command: Vec<String>,
     pub args: Vec<String>,
@@ -975,9 +978,10 @@ impl FlashSpec {
                 )));
             }
         }
-        if self.secret_files.len() > MAX_FLASH_SECRET_FILES {
+        let secret_env = self.effective_secret_env()?;
+        if secret_env.len() > MAX_FLASH_SECRET_ENV {
             return Err(invalid_flash_spec(format!(
-                "secret_files must contain at most {MAX_FLASH_SECRET_FILES} entries"
+                "secret_env must contain at most {MAX_FLASH_SECRET_ENV} entries"
             )));
         }
         for (file_name, secret_name) in &self.secret_files {
@@ -985,6 +989,18 @@ impl FlashSpec {
                 return Err(invalid_flash_spec(
                     "secret_files names must be lowercase DNS labels of at most 63 bytes",
                 ));
+            }
+        }
+        for (env_name, secret_name) in &secret_env {
+            if !valid_flash_env_name(env_name) || !valid_flash_port_name(secret_name) {
+                return Err(invalid_flash_spec(
+                    "secret_env must map valid environment variable names to secret names",
+                ));
+            }
+            if self.env.contains_key(env_name) {
+                return Err(invalid_flash_spec(format!(
+                    "environment variable {env_name} is configured as both plain text and a secret"
+                )));
             }
         }
         validate_process_values("command", &self.command, MAX_FLASH_COMMAND_PARTS)?;
@@ -997,6 +1013,22 @@ impl FlashSpec {
             )));
         }
         Ok(())
+    }
+
+    pub fn effective_secret_env(&self) -> Result<BTreeMap<String, String>, DomainError> {
+        let mut effective = self.secret_env.clone();
+        for (file_name, secret_name) in &self.secret_files {
+            let env_name = file_name.to_ascii_uppercase().replace('-', "_");
+            if effective
+                .insert(env_name.clone(), secret_name.clone())
+                .is_some()
+            {
+                return Err(invalid_flash_spec(format!(
+                    "secret environment variable {env_name} is configured more than once"
+                )));
+            }
+        }
+        Ok(effective)
     }
 }
 
@@ -1422,10 +1454,33 @@ mod tests {
             egress: FlashEgress::default(),
             env: [("LOG_LEVEL".into(), "info".into())].into_iter().collect(),
             secret_files: Default::default(),
+            secret_env: Default::default(),
             command: vec!["/app/server".into()],
             args: vec!["--port=7777".into()],
             metadata: [("team".into(), json!("simulation"))].into_iter().collect(),
         }
+    }
+
+    #[test]
+    fn flash_secret_environment_names_are_validated_and_legacy_files_migrate()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut spec = flash_spec();
+        spec.secret_env
+            .insert("DATABASE_URL".into(), "database-url".into());
+        spec.validate_request()?;
+        assert_eq!(spec.effective_secret_env()?["DATABASE_URL"], "database-url");
+
+        spec.env.insert("DATABASE_URL".into(), "plain-text".into());
+        assert!(spec.validate_request().is_err());
+        spec.env.remove("DATABASE_URL");
+        spec.secret_env.insert("BAD-NAME".into(), "api-key".into());
+        assert!(spec.validate_request().is_err());
+        spec.secret_env.remove("BAD-NAME");
+
+        spec.secret_files.insert("api-key".into(), "api-key".into());
+        spec.validate_request()?;
+        assert_eq!(spec.effective_secret_env()?["API_KEY"], "api-key");
+        Ok(())
     }
 
     #[test]

@@ -469,6 +469,8 @@ export interface FlashServiceSpec {
   exposure: FlashExposure;
   egress?: FlashEgress;
   env: Record<string, string>;
+  secret_env?: Record<string, string>;
+  /** Existing services may still have this legacy field. */
   secret_files?: Record<string, string>;
   command: string[];
   args: string[];

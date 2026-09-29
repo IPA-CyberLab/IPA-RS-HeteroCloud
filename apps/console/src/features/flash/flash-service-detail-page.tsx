@@ -40,6 +40,7 @@ import {
   flashFormFromService,
   flashFormValidationError,
   flashSpecFromForm,
+  parseFlashEnvironment,
   type FlashServiceFormValue,
 } from "./flash-service-form";
 import {
@@ -99,7 +100,7 @@ export function FlashServiceDetailPage() {
   const [shellState, setShellState] =
     useState<FlashShellConnectionState>("closed");
   const [editForm, setEditForm] = useState<FlashServiceFormValue | null>(null);
-  const [editSecretFiles, setEditSecretFiles] = useState<Record<string, string>>({});
+  const [editSecretEnv, setEditSecretEnv] = useState<Record<string, string>>({});
   const [secretBusy, setSecretBusy] = useState(false);
   const registryImages = useQuery({
     ...registryImagesQueryOptions(organizationId),
@@ -130,7 +131,8 @@ export function FlashServiceDetailPage() {
         name: value.name.trim(),
         spec: {
           ...flashSpecFromForm(value, service.data?.spec.metadata ?? {}),
-          secret_files: editSecretFiles,
+          secret_env: editSecretEnv,
+          secret_files: {},
         },
       }),
     onSuccess: async (updated) => {
@@ -189,10 +191,19 @@ export function FlashServiceDetailPage() {
   const gpuQueueMessage = flashGpuQueueMessage(item.status);
   const statusMessage = gpuQueueMessage ??
     (typeof providerStatus.message === "string" ? providerStatus.message : null);
+  const plainEnvNames = editForm
+    ? Object.keys(parseFlashEnvironment(editForm.environment).env)
+    : [];
+  const secretCollision = Object.keys(editSecretEnv).find((name) => plainEnvNames.includes(name));
   const validationError = editForm
-    ? flashFormValidationError(editForm, quota.data)
+    ? flashFormValidationError(editForm, quota.data) ??
+      (secretCollision ? `${secretCollision} は通常の環境変数とシークレットの両方に設定されています。` : null)
     : null;
-  const environmentKeys = Object.keys(item.spec.env);
+  const environmentKeys = [...new Set([
+    ...Object.keys(item.spec.env),
+    ...Object.keys(item.spec.secret_env ?? {}),
+    ...Object.keys(item.spec.secret_files ?? {}).map((name) => name.toUpperCase().replaceAll("-", "_")),
+  ])];
   const runningContainers = (containers.data?.items ?? []).filter(
     (container) => container.phase === "Running" && container.ready,
   );
@@ -207,7 +218,12 @@ export function FlashServiceDetailPage() {
   };
   const openEditor = () => {
     setEditForm(flashFormFromService(item, registryImages.data?.items));
-    setEditSecretFiles({ ...(item.spec.secret_files ?? {}) });
+    setEditSecretEnv({
+      ...Object.fromEntries(Object.entries(item.spec.secret_files ?? {}).map(
+        ([fileName, secretName]) => [fileName.toUpperCase().replaceAll("-", "_"), secretName],
+      )),
+      ...(item.spec.secret_env ?? {}),
+    });
     setSecretBusy(false);
     updateService.reset();
     setEditOpen(true);
@@ -539,8 +555,9 @@ export function FlashServiceDetailPage() {
             <FlashSecretsPanel
               organizationId={organizationId}
               service={item}
-              secretFiles={editSecretFiles}
-              onSecretFilesChange={setEditSecretFiles}
+              secretEnv={editSecretEnv}
+              onSecretEnvChange={setEditSecretEnv}
+              plainEnvNames={plainEnvNames}
               onBusyChange={setSecretBusy}
               disabled={updateService.isPending}
             />

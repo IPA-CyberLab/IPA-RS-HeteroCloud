@@ -6,28 +6,33 @@ import FormField from "@cloudscape-design/components/form-field";
 import Header from "@cloudscape-design/components/header";
 import Input from "@cloudscape-design/components/input";
 import SpaceBetween from "@cloudscape-design/components/space-between";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { FlashService } from "@/lib/api-types";
+import { flashServiceQueryOptions } from "@/lib/queries";
 
 export function FlashSecretsPanel({
   organizationId,
   service,
-  secretFiles,
-  onSecretFilesChange,
+  secretEnv,
+  onSecretEnvChange,
+  plainEnvNames,
   onBusyChange,
   disabled,
 }: {
   organizationId: string;
   service: FlashService;
-  secretFiles: Record<string, string>;
-  onSecretFilesChange: (files: Record<string, string>) => void;
+  secretEnv: Record<string, string>;
+  onSecretEnvChange: (variables: Record<string, string>) => void;
+  plainEnvNames: string[];
   onBusyChange: (busy: boolean) => void;
   disabled: boolean;
 }) {
+  const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
+  const [envNames, setEnvNames] = useState<Record<string, string>>({});
   const secrets = useQuery({
     queryKey: ["organizations", organizationId, "flash", "services", service.id, "secrets"],
     queryFn: ({ signal }) => api.flash.services.listSecrets(organizationId, service.id, signal),
@@ -38,6 +43,9 @@ export function FlashSecretsPanel({
       setName("");
       setValue("");
       await secrets.refetch();
+      await queryClient.invalidateQueries({
+        queryKey: flashServiceQueryOptions(organizationId, service.id).queryKey,
+      });
     },
   });
   const remove = useMutation({
@@ -55,28 +63,36 @@ export function FlashSecretsPanel({
   return (
     <Container header={<Header variant="h2">コンテナのシークレット</Header>}>
       <SpaceBetween size="m">
-        <Box>登録・更新した値はOpenBaoに保存します。接続・解除は「変更を保存」で反映されます。接続したシークレットはコンテナ内の <code>/vault/secrets/名前</code> に読み取り専用ファイルとして配置されます。</Box>
-        {secrets.isError ? <Alert type="error">シークレット一覧を取得できません。Secret Managerの接続を確認してください。</Alert> : null}
+        <Box>値はシークレットマネージャーに保存し、接続したシークレットをコンテナの環境変数として渡します。接続・解除は「変更を保存」で反映されます。接続中の値を更新するとコンテナが順次再作成されます。</Box>
+        {secrets.isError ? <Alert type="error">シークレット一覧を取得できません。シークレットマネージャーへの接続を確認してください。</Alert> : null}
         {error ? <Alert type="error">{getApiErrorMessage(error)}</Alert> : null}
         {secrets.data?.items.length ? secrets.data.items.map((secretName) => {
-          const attachedFile = Object.entries(secretFiles).find(([, selected]) => selected === secretName)?.[0];
-          const persistedFile = Object.entries(service.spec.secret_files ?? {}).find(([, selected]) => selected === secretName)?.[0];
+          const attachedEnv = Object.entries(secretEnv).find(([, selected]) => selected === secretName)?.[0];
+          const persistedEnv = Object.entries(service.spec.secret_env ?? {}).find(([, selected]) => selected === secretName)?.[0]
+            ?? Object.entries(service.spec.secret_files ?? {}).find(([, selected]) => selected === secretName)?.[0];
+          const envName = envNames[secretName] ?? secretName.toUpperCase().replaceAll("-", "_");
+          const validEnvName = /^[A-Za-z_][A-Za-z0-9_]{0,252}$/.test(envName);
+          const envNameTaken = Object.hasOwn(secretEnv, envName) || plainEnvNames.includes(envName);
           return (
             <SpaceBetween key={secretName} direction="horizontal" size="s" alignItems="center">
               <Box variant="code">{secretName}</Box>
-              <Box>{attachedFile ? `/vault/secrets/${attachedFile}` : "未接続"}</Box>
-              {attachedFile ? (
+              {attachedEnv ? <Box variant="code">{attachedEnv}</Box> : (
+                <FormField label="環境変数名" errorText={!validEnvName ? "英字または _ で始まる英数字・_ を入力してください" : envNameTaken ? "環境変数名が重複しています" : undefined}>
+                  <Input ariaLabel={`${secretName} の環境変数名`} value={envName} disabled={disabled || busy} onChange={({ detail }) => setEnvNames((current) => ({ ...current, [secretName]: detail.value }))} />
+                </FormField>
+              )}
+              {attachedEnv ? (
                 <Button disabled={disabled || busy} onClick={() => {
-                  const next = { ...secretFiles };
-                  delete next[attachedFile];
-                  onSecretFilesChange(next);
+                  const next = { ...secretEnv };
+                  delete next[attachedEnv];
+                  onSecretEnvChange(next);
                 }}>接続解除</Button>
               ) : (
-                <Button disabled={disabled || busy || Object.keys(secretFiles).length >= 32} onClick={() =>
-                  onSecretFilesChange({ ...secretFiles, [secretName]: secretName })
+                <Button disabled={disabled || busy || !validEnvName || envNameTaken || Object.keys(secretEnv).length >= 32} onClick={() =>
+                  onSecretEnvChange({ ...secretEnv, [envName]: secretName })
                 }>コンテナへ接続</Button>
               )}
-              <Button disabled={disabled || Boolean(attachedFile || persistedFile) || busy} onClick={() => remove.mutate(secretName)}>削除</Button>
+              <Button disabled={disabled || Boolean(attachedEnv || persistedEnv) || busy} onClick={() => remove.mutate(secretName)}>削除</Button>
             </SpaceBetween>
           );
         }) : (!secrets.isPending && !secrets.isError ? <Box color="text-body-secondary">登録済みのシークレットはありません。</Box> : null)}
