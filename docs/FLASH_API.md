@@ -23,6 +23,18 @@ mode are omitted from serialized specs. Provider reconciliation receives the
 non-default fields unchanged. Provider implementation and endpoint provisioning
 remain the provider's responsibility.
 
+## Disk allocation
+
+`spec.ephemeral_storage_gib` is the total disk budget, including the image.
+When persistent home storage is enabled, Flash normally gives up to 1 GiB of
+the writable budget to the container filesystem and assigns the rest to
+`/root`. Build workloads that write outside `/root` can set
+`spec.rootfs_storage_gib` at creation. This optional integer must be at least
+1 GiB and smaller than `ephemeral_storage_gib`. The image size and at least
+64 MiB of persistent storage must still fit in the total budget. The root
+filesystem allocation cannot be changed after creation because that would
+require shrinking the existing persistent volume.
+
 ## GPU selection
 
 `spec.gpu_type` is optional. A canonical type such as

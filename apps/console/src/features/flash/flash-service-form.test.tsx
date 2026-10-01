@@ -109,6 +109,27 @@ function RegistryImageFormHarness() {
 }
 
 describe("FlashServiceForm", () => {
+  it("コンテナ書き込み領域を検証し、編集フォームで保持する", () => {
+    const value = {
+      ...defaultFlashServiceFormValue,
+      projectId: "project-1",
+      name: "build-runner",
+      image: "ghcr.io/actions/actions-runner:2.337.0",
+      ephemeralStorageGib: 30,
+      rootfsStorageGib: 20,
+    };
+    expect(flashFormValidationError(value, { ...defaultFlashQuotaLimits, max_disk_gib_per_vm: 30 })).toBeNull();
+    expect(flashFormValidationError({ ...value, rootfsStorageGib: 30 }, { ...defaultFlashQuotaLimits, max_disk_gib_per_vm: 30 })).not.toBeNull();
+    const spec = flashSpecFromForm(value);
+    expect(spec.rootfs_storage_gib).toBe(20);
+    const edited = flashFormFromService({
+      project_id: value.projectId,
+      name: value.name,
+      spec: { ...spec, ports: spec.ports.map((port) => ({ ...port, service_port: 30001 })) },
+    });
+    expect(flashSpecFromForm(edited).rootfs_storage_gib).toBe(20);
+  });
+
   it("自動公開ポートとリソース上限を適用する", () => {
     render(<FormHarness />);
 

@@ -381,6 +381,7 @@ export function FlashServiceDetailPage() {
                   "なし",
               },
               { label: "ディスク上限（イメージ込み）", value: `${formatNumber(item.spec.ephemeral_storage_gib)} GiB` },
+              { label: "コンテナの書き込み領域", value: item.spec.rootfs_storage_gib === undefined ? "自動配分" : `${formatNumber(item.spec.rootfs_storage_gib)} GiB` },
               { label: "更新日時", value: formatDateTime(item.updated_at) },
             ]}
           />

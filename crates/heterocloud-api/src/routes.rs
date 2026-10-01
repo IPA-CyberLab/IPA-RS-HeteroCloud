@@ -5289,6 +5289,7 @@ mod tests {
             memory_mib: 512,
             gpu_type: None,
             ephemeral_storage_gib: 10,
+            rootfs_storage_gib: None,
             ports: vec![FlashPort {
                 name: "game-udp".into(),
                 protocol: FlashProtocol::Udp,

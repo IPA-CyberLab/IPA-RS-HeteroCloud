@@ -743,6 +743,10 @@ pub struct FlashSpec {
     pub gpu_type: Option<String>,
     #[serde(default = "default_flash_ephemeral_storage_gib")]
     pub ephemeral_storage_gib: u32,
+    /// Optional writable container filesystem size; the remainder of the
+    /// disk budget is available for the persistent home volume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rootfs_storage_gib: Option<u32>,
     pub ports: Vec<FlashPort>,
     pub exposure: FlashExposure,
     #[serde(default)]
@@ -889,6 +893,14 @@ impl FlashSpec {
             return Err(invalid_flash_spec(format!(
                 "ephemeral_storage_gib must be between {MIN_FLASH_EPHEMERAL_STORAGE_GIB} and {MAX_FLASH_EPHEMERAL_STORAGE_GIB}"
             )));
+        }
+        if self
+            .rootfs_storage_gib
+            .is_some_and(|rootfs| rootfs == 0 || rootfs >= self.ephemeral_storage_gib)
+        {
+            return Err(invalid_flash_spec(
+                "rootfs_storage_gib must be at least 1 and less than ephemeral_storage_gib",
+            ));
         }
         if self.ports.len() > MAX_FLASH_PORTS {
             return Err(invalid_flash_spec(format!(
@@ -1438,6 +1450,7 @@ mod tests {
             memory_mib: 512,
             gpu_type: None,
             ephemeral_storage_gib: 10,
+            rootfs_storage_gib: None,
             ports: vec![FlashPort {
                 name: "game-udp".into(),
                 protocol: FlashProtocol::Udp,
@@ -1700,6 +1713,7 @@ mod tests {
             .remove("egress");
         let defaulted = serde_json::from_value::<FlashSpec>(value)?;
         assert_eq!(defaulted.ephemeral_storage_gib, 10);
+        assert_eq!(defaulted.rootfs_storage_gib, None);
         assert!(defaulted.exposure.allowed_source_cidrs.is_empty());
         assert!(defaulted.exposure.denied_source_cidrs.is_empty());
         assert_eq!(defaulted.egress.mode, FlashEgressMode::Internet);
@@ -1743,6 +1757,12 @@ mod tests {
         let mut oversized = flash_spec();
         oversized.ephemeral_storage_gib = MAX_FLASH_EPHEMERAL_STORAGE_GIB + 1;
         assert!(oversized.validate().is_err());
+        let mut split = flash_spec();
+        split.ephemeral_storage_gib = 30;
+        split.rootfs_storage_gib = Some(20);
+        assert!(split.validate().is_ok());
+        split.rootfs_storage_gib = Some(30);
+        assert!(split.validate().is_err());
         Ok(())
     }
 

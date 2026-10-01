@@ -47,6 +47,7 @@ export interface FlashServiceFormValue {
   memoryMib: number;
   gpuType: string;
   ephemeralStorageGib: number;
+  rootfsStorageGib?: number;
   ports: FlashPortInput[];
   exposureType: FlashExposure["type"];
   trafficMode: FlashExposure["traffic_mode"];
@@ -397,6 +398,12 @@ export function flashFormValidationError(
   ) {
     return `ディスク上限は1〜${quota.max_disk_gib_per_vm.toLocaleString("ja-JP")} GiBで入力してください。`;
   }
+  if (value.rootfsStorageGib !== undefined &&
+      (!Number.isInteger(value.rootfsStorageGib) ||
+       value.rootfsStorageGib < 1 ||
+       value.rootfsStorageGib >= value.ephemeralStorageGib)) {
+    return "コンテナの書き込み領域は1 GiB以上、ディスク上限未満にしてください。";
+  }
   if (value.exposureType === "internal" && value.trafficMode !== "forwarded") {
     return "内部公開では転送モードを使用してください。";
   }
@@ -453,6 +460,7 @@ export function flashSpecFromForm(
     memory_mib: value.memoryMib,
     ...(value.gpuType ? { gpu_type: value.gpuType } : {}),
     ephemeral_storage_gib: value.ephemeralStorageGib,
+    ...(value.rootfsStorageGib !== undefined ? { rootfs_storage_gib: value.rootfsStorageGib } : {}),
     ports: value.ports,
     exposure: {
       type: value.exposureType,
@@ -525,6 +533,7 @@ export function flashFormFromService(
     memoryMib: service.spec.memory_mib,
     gpuType: service.spec.gpu_type ?? "",
     ephemeralStorageGib: service.spec.ephemeral_storage_gib,
+    rootfsStorageGib: service.spec.rootfs_storage_gib,
     ports: service.spec.ports.map(({ name, protocol, container_port }) => ({
       name,
       protocol,
@@ -853,6 +862,33 @@ export function FlashServiceForm({
                     quota.max_disk_gib_per_vm,
                     value.ephemeralStorageGib,
                   ),
+                )
+              }
+            />
+          </FormField>
+          <FormField
+            label="コンテナの書き込み領域"
+            description="空欄なら自動配分。残りは /root の永続領域に割り当てます。"
+            constraintText="GiB。作成後は変更できません。"
+          >
+            <Input
+              type="number"
+              inputMode="numeric"
+              step={1}
+              nativeInputAttributes={{ min: 1, max: Math.max(1, value.ephemeralStorageGib - 1) }}
+              value={value.rootfsStorageGib === undefined ? "" : String(value.rootfsStorageGib)}
+              disabled={disabled || projectLocked}
+              onChange={({ detail }) =>
+                update(
+                  "rootfsStorageGib",
+                  detail.value.trim() === ""
+                    ? undefined
+                    : boundedInteger(
+                        detail.value,
+                        1,
+                        Math.max(1, value.ephemeralStorageGib - 1),
+                        value.rootfsStorageGib ?? 1,
+                      ),
                 )
               }
             />

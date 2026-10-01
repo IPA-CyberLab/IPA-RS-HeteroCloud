@@ -465,6 +465,7 @@ export interface FlashServiceSpec {
   memory_mib: number;
   gpu_type?: string;
   ephemeral_storage_gib: number;
+  rootfs_storage_gib?: number;
   ports: FlashPort[];
   exposure: FlashExposure;
   egress?: FlashEgress;

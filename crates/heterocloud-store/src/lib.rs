@@ -3539,6 +3539,14 @@ async fn prepare_flash_spec(
     requested
         .validate_request()
         .map_err(|error| StoreError::RequestRejected(error.to_string()))?;
+    if let Some(existing) = existing_spec {
+        let existing: FlashSpec = serde_json::from_value(existing.clone())?;
+        if existing.rootfs_storage_gib != requested.rootfs_storage_gib {
+            return Err(StoreError::RequestRejected(
+                "rootfs_storage_gib cannot be changed after service creation".into(),
+            ));
+        }
+    }
     validate_flash_gpu_access(transaction, organization_id, principal_id, &requested).await?;
     if requested.reserved_replicas() > quota.flash.max_replicas_per_service {
         return Err(StoreError::RequestRejected(format!(

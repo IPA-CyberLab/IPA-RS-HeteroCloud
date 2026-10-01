@@ -879,6 +879,12 @@
             "maximum": 1000000,
             "default": 10
           },
+          "rootfs_storage_gib": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "description": "Optional writable container filesystem size. Must be less than ephemeral_storage_gib; remaining disk budget is available for the persistent home volume. Omit to keep the legacy allocation."
+          },
           "ports": {
             "type": "array",
             "maxItems": 16,
