@@ -1,3 +1,4 @@
+import { vpcsQueryOptions } from "@/lib/queries";
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
@@ -84,6 +85,7 @@ export function FlashServiceDetailPage() {
   const { serviceId = "" } = useParams<{ serviceId: string }>();
   const { activeOrganization } = useActiveOrganization();
   const organizationId = activeOrganization.organization_id;
+  const vpcs = useQuery(vpcsQueryOptions(organizationId));
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const service = useQuery({
@@ -313,6 +315,14 @@ export function FlashServiceDetailPage() {
       <Container header={<Header variant="h2">エンドポイント</Header>}>
         <FlashEndpoints endpoints={endpoints} />
       </Container>
+      {item.spec.network && <Container header={<Header variant="h2">VPCのプライベート接続</Header>}>
+        <SpaceBetween size="s">
+          <div>VPC: <a href="/vpc/networks">{item.spec.network.vpc_id}</a></div>
+          <div>セキュリティグループ: {item.spec.network.security_groups.join(", ")}</div>
+          {(item.status.status?.private_endpoints ?? item.status.private_endpoints ?? []).map((endpoint, index) => <Box variant="code" key={index}>{endpoint.protocol?.toUpperCase()} {endpoint.host}:{endpoint.port}</Box>)}
+          <Box variant="small">接続元はVPCの通信ルールで許可してください。外部への接続にはVPCのNATと送信アクセスの両方の許可が必要です。</Box>
+        </SpaceBetween>
+      </Container>}
       <Container header={<Header variant="h2">ネットワークアクセス</Header>}>
         <KeyValuePairs
           columns={3}
@@ -522,6 +532,7 @@ export function FlashServiceDetailPage() {
         {editOpen && editForm ? (
           <SpaceBetween size="l">
             <FlashServiceForm
+            vpcs={vpcs.data?.items ?? []}
               value={editForm}
               onChange={setEditForm}
               onSubmit={submitEdit}

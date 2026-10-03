@@ -253,6 +253,7 @@ async fn test_state()
         },
         flow_client: reqwest::Client::builder().no_proxy().build()?,
         flash_provider: Some(Arc::new(flash_provider)),
+        vpc_provider: None,
         syouyu_provider: None,
         registry: None,
         registration_limiter: Arc::new(Semaphore::new(2)),

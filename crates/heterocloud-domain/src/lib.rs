@@ -10,6 +10,9 @@ use serde_json::Value;
 use thiserror::Error;
 use uuid::Uuid;
 
+pub mod vpc;
+pub use vpc::{FlashVpcAttachment, VpcNat, VpcPeer, VpcRule, VpcSpec};
+
 pub const POLICY_VERSION: &str = "2026-07-31";
 pub const SYOUYU_REGION: &str = "heteronet-global";
 
@@ -751,6 +754,8 @@ pub struct FlashSpec {
     pub exposure: FlashExposure,
     #[serde(default)]
     pub egress: FlashEgress,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<FlashVpcAttachment>,
     pub env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub secret_env: BTreeMap<String, String>,
@@ -924,7 +929,13 @@ impl FlashSpec {
                 ));
             }
             if require_assigned_service_ports
-                && !(MIN_FLASH_SERVICE_PORT..=MAX_FLASH_SERVICE_PORT).contains(&port.service_port)
+                && (if self.network.is_some()
+                    && self.exposure.exposure_type == FlashExposureType::Internal
+                {
+                    port.service_port != port.container_port
+                } else {
+                    !(MIN_FLASH_SERVICE_PORT..=MAX_FLASH_SERVICE_PORT).contains(&port.service_port)
+                })
             {
                 return Err(invalid_flash_spec(format!(
                     "service_port must be assigned between {MIN_FLASH_SERVICE_PORT} and {MAX_FLASH_SERVICE_PORT}"
@@ -973,6 +984,14 @@ impl FlashSpec {
         validate_flash_source_cidrs("allowed_source_cidrs", &self.exposure.allowed_source_cidrs)?;
         validate_flash_source_cidrs("denied_source_cidrs", &self.exposure.denied_source_cidrs)?;
         validate_flash_egress(&self.egress)?;
+        if let Some(network) = &self.network {
+            network.validate()?;
+            if self.egress.allow_same_organization {
+                return Err(invalid_flash_spec(
+                    "VPC attachments use VPC connection rules; allow_same_organization must be false",
+                ));
+            }
+        }
         if self.env.len() > MAX_FLASH_ENV_VARS {
             return Err(invalid_flash_spec(format!(
                 "env must contain at most {MAX_FLASH_ENV_VARS} entries"
@@ -1232,6 +1251,8 @@ pub struct ServiceInstance {
 
 #[derive(Debug, Error)]
 pub enum DomainError {
+    #[error("invalid VPC spec: {0}")]
+    InvalidVpcSpec(String),
     #[error("invalid resource quota: {0}")]
     InvalidResourceQuota(String),
 
@@ -1465,6 +1486,7 @@ mod tests {
                 denied_source_cidrs: vec!["192.0.2.128/25".into()],
             },
             egress: FlashEgress::default(),
+            network: None,
             env: [("LOG_LEVEL".into(), "info".into())].into_iter().collect(),
             secret_files: Default::default(),
             secret_env: Default::default(),

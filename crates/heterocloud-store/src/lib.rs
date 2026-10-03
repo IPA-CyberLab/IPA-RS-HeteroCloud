@@ -2,10 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use heterocloud_domain::{
-    FlashProtocol, FlashSpec, FlowSpec, IamPolicy, MAX_FLASH_SERVICE_PORT, MIN_FLASH_SERVICE_PORT,
-    Organization, OrganizationId, PolicyDocument, PolicyId, Principal, PrincipalId, PrincipalKind,
-    Project, ProjectId, ResourceQuotaLimits, ServiceInstance, ServiceInstanceId, ServiceState,
-    SyouyuSpec, User, UserId, UserStatus, valid_flash_gpu_type,
+    FlashExposureType, FlashProtocol, FlashSpec, FlowSpec, IamPolicy, MAX_FLASH_SERVICE_PORT,
+    MIN_FLASH_SERVICE_PORT, Organization, OrganizationId, PolicyDocument, PolicyId, Principal,
+    PrincipalId, PrincipalKind, Project, ProjectId, ResourceQuotaLimits, ServiceInstance,
+    ServiceInstanceId, ServiceState, SyouyuSpec, User, UserId, UserStatus, VpcPeer, VpcSpec,
+    valid_flash_gpu_type,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -2675,6 +2676,18 @@ impl Store {
                     resource_quota_in_transaction(&mut transaction, organization_id).await?;
                 prepare_syouyu_spec(&mut transaction, organization_id, None, spec, &quota).await
             }
+            "vpc" => {
+                lock_tenant_allocations(&mut transaction, organization_id).await?;
+                prepare_vpc_spec(
+                    &mut transaction,
+                    organization_id,
+                    project_id,
+                    id,
+                    spec,
+                    true,
+                )
+                .await
+            }
             _ => Ok(spec),
         };
         let spec = match prepared {
@@ -2684,6 +2697,10 @@ impl Store {
                 return Err(error);
             }
         };
+        if provider == "flash" {
+            validate_vpc_attachment(&mut transaction, organization_id, project_id, id, &spec)
+                .await?;
+        }
         let row = sqlx::query_as::<_, ServiceRow>(
             "INSERT INTO service_instances
                 (id, organization_id, project_id, provider, name, state, spec)
@@ -2742,7 +2759,7 @@ impl Store {
         spec: Value,
     ) -> Result<ServiceInstance, StoreError> {
         let mut transaction = self.pool.begin().await?;
-        if matches!(provider, "flow" | "flash" | "syouyu") {
+        if matches!(provider, "flow" | "flash" | "syouyu" | "vpc") {
             lock_tenant_allocations(&mut transaction, organization_id).await?;
         }
         if provider == "flash" {
@@ -2796,6 +2813,17 @@ impl Store {
                     resource_quota_in_transaction(&mut transaction, organization_id).await?;
                 prepare_syouyu_spec(&mut transaction, organization_id, Some(id), spec, &quota).await
             }
+            "vpc" => {
+                prepare_vpc_spec(
+                    &mut transaction,
+                    organization_id,
+                    ProjectId(existing.project_id),
+                    id,
+                    spec,
+                    false,
+                )
+                .await
+            }
             _ => Ok(spec),
         };
         let spec = match prepared {
@@ -2805,6 +2833,16 @@ impl Store {
                 return Err(error);
             }
         };
+        if provider == "flash" {
+            validate_vpc_attachment(
+                &mut transaction,
+                organization_id,
+                ProjectId(existing.project_id),
+                id,
+                &spec,
+            )
+            .await?;
+        }
         let generation = existing
             .generation
             .checked_add(1)
@@ -2863,6 +2901,23 @@ impl Store {
         principal_id: PrincipalId,
     ) -> Result<ServiceInstance, StoreError> {
         let mut transaction = self.pool.begin().await?;
+        // Serialize attach, group changes and delete with service mutations.
+        lock_tenant_allocations(&mut transaction, organization_id).await?;
+        if provider == "vpc" {
+            let in_use: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM service_instances WHERE organization_id = $1
+                 AND provider = 'flash' AND spec #>> '{network,vpc_id}' = $2)",
+            )
+            .bind(organization_id.0)
+            .bind(id.to_string())
+            .fetch_one(&mut *transaction)
+            .await?;
+            if in_use {
+                return Err(StoreError::RequestRejected(
+                    "VPC is still attached to Flash services; detach or delete them first".into(),
+                ));
+            }
+        }
         let existing = sqlx::query_as::<_, ServiceRow>(
             "SELECT id, organization_id, project_id, provider, name, generation,
                     state, spec, status, created_at, updated_at
@@ -3541,6 +3596,137 @@ async fn replace_flash_gpu_service_request(
     Ok(())
 }
 
+/// Validate all references within the same transaction as the desired state write.
+async fn validate_vpc_attachment(
+    tx: &mut Transaction<'_, Postgres>,
+    org: OrganizationId,
+    project: ProjectId,
+    id: ServiceInstanceId,
+    spec: &Value,
+) -> Result<(), StoreError> {
+    let flash: FlashSpec = serde_json::from_value(spec.clone())
+        .map_err(|e| StoreError::RequestRejected(e.to_string()))?;
+    let Some(network) = &flash.network else {
+        return Ok(());
+    };
+    let row: Option<(Value, String)> = sqlx::query_as(
+        "SELECT spec, state FROM service_instances WHERE id = $1 AND organization_id = $2
+         AND project_id = $3 AND provider = 'vpc' FOR SHARE",
+    )
+    .bind(network.vpc_id)
+    .bind(org.0)
+    .bind(project.0)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some((vpc_spec, state)) = row else {
+        return Err(StoreError::RequestRejected(
+            "VPC must belong to this organization and project".into(),
+        ));
+    };
+    if state == "deleting" {
+        return Err(StoreError::Conflict);
+    }
+    let vpc: VpcSpec = serde_json::from_value(vpc_spec)
+        .map_err(|_| StoreError::Invariant("invalid VPC specification"))?;
+    if vpc.region != flash.region
+        || network
+            .security_groups
+            .iter()
+            .any(|g| !vpc.security_groups.contains(g))
+    {
+        return Err(StoreError::RequestRejected(
+            "VPC region and security groups must match the attachment".into(),
+        ));
+    }
+    let private_name = network
+        .private_name
+        .clone()
+        .unwrap_or_else(|| format!("f-{}", id.0.simple()));
+    let duplicate: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM service_instances WHERE organization_id = $1
+         AND provider = 'flash' AND id <> $2 AND spec #>> '{network,vpc_id}' = $3
+         AND COALESCE(spec #>> '{network,private_name}', 'f-' || replace(id::text, '-', '')) = $4)",
+    )
+    .bind(org.0)
+    .bind(id.0)
+    .bind(network.vpc_id.to_string())
+    .bind(private_name)
+    .fetch_one(&mut **tx)
+    .await?;
+    if duplicate {
+        return Err(StoreError::RequestRejected(
+            "private_name is already in use in this VPC".into(),
+        ));
+    }
+    Ok(())
+}
+
+async fn prepare_vpc_spec(
+    tx: &mut Transaction<'_, Postgres>,
+    org: OrganizationId,
+    project: ProjectId,
+    id: ServiceInstanceId,
+    spec: Value,
+    creating: bool,
+) -> Result<Value, StoreError> {
+    let vpc: VpcSpec =
+        serde_json::from_value(spec).map_err(|e| StoreError::RequestRejected(e.to_string()))?;
+    vpc.validate()
+        .map_err(|e| StoreError::RequestRejected(e.to_string()))?;
+    if creating {
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM service_instances WHERE organization_id = $1 AND provider = 'vpc'")
+            .bind(org.0).fetch_one(&mut **tx).await?;
+        if count >= 16 {
+            return Err(StoreError::RequestRejected(
+                "at most 16 VPCs are supported per organization".into(),
+            ));
+        }
+    }
+    let members: Vec<(Uuid, Value)> = sqlx::query_as(
+        "SELECT id, spec FROM service_instances WHERE organization_id = $1 AND provider = 'flash'
+         AND spec #>> '{network,vpc_id}' = $2",
+    )
+    .bind(org.0)
+    .bind(id.to_string())
+    .fetch_all(&mut **tx)
+    .await?;
+    for (_, spec) in &members {
+        let flash: FlashSpec = serde_json::from_value(spec.clone())
+            .map_err(|_| StoreError::Invariant("invalid Flash specification"))?;
+        if flash.region != vpc.region
+            || flash.network.as_ref().is_some_and(|n| {
+                n.security_groups
+                    .iter()
+                    .any(|g| !vpc.security_groups.contains(g))
+            })
+        {
+            return Err(StoreError::RequestRejected(
+                "cannot remove an attached security group or change the region of an attached VPC"
+                    .into(),
+            ));
+        }
+    }
+    // A service selector never grants access to a service outside this VPC.
+    for rule in &vpc.rules {
+        for peer in [&rule.source, &rule.destination] {
+            if let VpcPeer::Service { service_id } = peer {
+                let valid: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM service_instances WHERE id = $1 AND organization_id = $2
+                     AND project_id = $3 AND provider = 'flash' AND state <> 'deleting'
+                     AND spec #>> '{network,vpc_id}' = $4)"
+                ).bind(service_id).bind(org.0).bind(project.0).bind(id.to_string()).fetch_one(&mut **tx).await?;
+                if !valid {
+                    return Err(StoreError::RequestRejected(
+                        "rule service must be attached to this VPC".into(),
+                    ));
+                }
+            }
+        }
+    }
+    serde_json::to_value(vpc)
+        .map_err(|_| StoreError::Invariant("could not serialize VPC specification"))
+}
+
 async fn prepare_flash_spec(
     transaction: &mut Transaction<'_, Postgres>,
     organization_id: OrganizationId,
@@ -3600,12 +3786,14 @@ async fn prepare_flash_spec(
             continue;
         }
         let stored: FlashSpec = serde_json::from_value(row.spec.clone())?;
-        occupied_ports.extend(
-            stored
-                .ports
-                .iter()
-                .map(|port| (port.protocol, port.service_port)),
-        );
+        if stored.exposure.exposure_type == FlashExposureType::Public || stored.network.is_none() {
+            occupied_ports.extend(
+                stored
+                    .ports
+                    .iter()
+                    .map(|port| (port.protocol, port.service_port)),
+            );
+        }
         if row.organization_id == organization_id.0 {
             organization_services += 1;
             organization_replicas += u64::from(stored.reserved_replicas());
@@ -3630,6 +3818,12 @@ async fn prepare_flash_spec(
         })
         .unwrap_or_default();
     for port in &mut requested.ports {
+        if requested.network.is_some()
+            && requested.exposure.exposure_type == FlashExposureType::Internal
+        {
+            port.service_port = port.container_port;
+            continue;
+        }
         let preserved = existing_ports
             .get(&(port.protocol, port.name.clone()))
             .copied()

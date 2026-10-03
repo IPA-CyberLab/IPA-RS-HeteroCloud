@@ -62,6 +62,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect_timeout(std::time::Duration::from_secs(3))
         .timeout(std::time::Duration::from_secs(10))
         .build()?;
+    let vpc_provider = config
+        .vpc_endpoint
+        .clone()
+        .map(|endpoint| {
+            ProviderSigner::from_ed25519_pem(
+                &config.provider_issuer,
+                "heterocloud-vpc",
+                &config.provider_key_id,
+                secrets.provider_signing_key.expose_secret().as_bytes(),
+            )
+            .map(|signer| {
+                Arc::new(heterocloud_api::vpc_provider::VpcProviderProxy::new(
+                    endpoint,
+                    signer,
+                    provider_client.clone(),
+                ))
+            })
+        })
+        .transpose()?;
     let flash_provider = FlashProviderProxy::new(
         config.flash_internal_endpoint.clone(),
         flash_provider_signer,
@@ -99,6 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config: runtime,
         flow_client: provider_client,
         flash_provider: Some(Arc::new(flash_provider)),
+        vpc_provider,
         syouyu_provider: Some(Arc::new(syouyu_provider)),
         registry,
         registration_limiter: Arc::new(Semaphore::new(4)),

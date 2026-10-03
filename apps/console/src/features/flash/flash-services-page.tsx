@@ -1,3 +1,4 @@
+import { vpcsQueryOptions } from "@/lib/queries";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
@@ -44,6 +45,7 @@ import {
 export function FlashServicesPage() {
   const { activeOrganization } = useActiveOrganization();
   const organizationId = activeOrganization.organization_id;
+  const vpcs = useQuery(vpcsQueryOptions(organizationId));
   const services = useQuery(flashServicesQueryOptions(organizationId));
   const quota = useQuery(flashQuotaQueryOptions(organizationId));
   const projects = useQuery(projectsQueryOptions(organizationId));
@@ -266,6 +268,7 @@ export function FlashServicesPage() {
         }
       >
         <FlashServiceForm
+            vpcs={vpcs.data?.items ?? []}
           value={form}
           onChange={setForm}
           onSubmit={submit}

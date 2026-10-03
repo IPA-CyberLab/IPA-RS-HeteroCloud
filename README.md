@@ -382,3 +382,5 @@ OIDC provider failures log fixed stage and failure-class labels, optional HTTP
 status, attempt number, and elapsed milliseconds. These diagnostics do not
 include provider URLs, response bodies, credentials, authorization codes,
 tokens, or raw transport errors. Public error responses remain unchanged.
+
+VPC・Flashのプライベート接続: [設定方法](docs/networking/vpc.md)

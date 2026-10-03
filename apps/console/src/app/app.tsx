@@ -54,6 +54,7 @@ const RealtimeServiceDetailPage = lazy(() =>
     default: module.RealtimeServiceDetailPage,
   })),
 );
+const VpcPage = lazy(() => import("@/features/vpc/vpc-page").then(module => ({default:module.VpcPage})));
 const FlashServicesPage = lazy(() =>
   import("@/features/flash/flash-services-page").then((module) => ({
     default: module.FlashServicesPage,
@@ -229,6 +230,7 @@ export function App() {
                   </LazyPage>
                 }
               />
+              <Route path="/vpc/networks" element={<LazyPage><VpcPage /></LazyPage>} />
               <Route
                 path="/flash/services"
                 element={

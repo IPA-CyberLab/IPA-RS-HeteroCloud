@@ -13,7 +13,7 @@ import type { FormEvent, ReactNode } from "react";
 import "./flash-service-form.css";
 import { ProjectSelector } from "@/components/shared/resource-selectors";
 import type {
-  FlashExposure,
+  FlashExposure, VpcNetwork,
   FlashEgressMode,
   FlashGpuType,
   FlashPortInput,
@@ -55,6 +55,9 @@ export interface FlashServiceFormValue {
   deniedSourceCidrs: string;
   egressMode: FlashEgressMode;
   allowSameOrganization: boolean;
+  vpcId?: string;
+  securityGroups?: string;
+  privateName?: string;
   allowedDestinationCidrs: string;
   deniedDestinationCidrs: string;
   environment: string;
@@ -472,7 +475,7 @@ export function flashSpecFromForm(
     },
     egress: {
       mode: value.egressMode,
-      allow_same_organization: value.allowSameOrganization,
+      allow_same_organization: value.vpcId ? false : value.allowSameOrganization,
       allowed_destination_cidrs: parseFlashDestinationCidrs(
         value.allowedDestinationCidrs,
         true,
@@ -481,6 +484,7 @@ export function flashSpecFromForm(
         value.deniedDestinationCidrs,
       ).cidrs,
     },
+    ...(value.vpcId ? {network: {vpc_id:value.vpcId,security_groups:(value.securityGroups ?? "default").split(/[\s,]+/).filter(Boolean),...(value.privateName?.trim() ? {private_name:value.privateName.trim()} : {})}} : {}),
     env: parseFlashEnvironment(value.environment).env,
     command,
     args,
@@ -543,6 +547,9 @@ export function flashFormFromService(
     trafficMode: service.spec.exposure.traffic_mode,
     allowedSourceCidrs: (service.spec.exposure.allowed_source_cidrs ?? []).join("\n"),
     deniedSourceCidrs: (service.spec.exposure.denied_source_cidrs ?? []).join("\n"),
+    vpcId: service.spec.network?.vpc_id,
+    securityGroups: service.spec.network?.security_groups.join("\n") ?? "default",
+    privateName: service.spec.network?.private_name ?? "",
     egressMode: egress.mode,
     allowSameOrganization: egress.allow_same_organization,
     allowedDestinationCidrs: egress.allowed_destination_cidrs.join("\n"),
@@ -567,6 +574,7 @@ export function FlashServiceForm({
   gpuTypes = [],
   gpuTypesStatus = "finished",
   quota = defaultFlashQuotaLimits,
+  vpcs = [],
   children,
 }: {
   value: FlashServiceFormValue;
@@ -579,6 +587,7 @@ export function FlashServiceForm({
   gpuTypes?: FlashGpuType[];
   gpuTypesStatus?: "loading" | "error" | "finished";
   quota?: FlashQuotaLimits;
+  vpcs?: VpcNetwork[];
   children: ReactNode;
 }) {
   const update = <Key extends keyof FlashServiceFormValue>(
@@ -1075,6 +1084,18 @@ export function FlashServiceForm({
           </FormField>
         </ColumnLayout>
         <SpaceBetween size="m">
+          <Header variant="h3">VPC</Header>
+          <FormField label="接続するVPC" description="VPC内の通信はVPCのルールで許可します。外部へ公開しない場合は、受信アクセスを内部に設定してください。">
+            <Select disabled={disabled} options={[{value:"",label:"VPCなし"},...vpcs.filter(v => v.project_id === value.projectId && v.spec.region === value.region && v.state !== "deleting").map(v => ({value:v.id,label:v.name}))]}
+              selectedOption={value.vpcId ? {value:value.vpcId,label:vpcs.find(v => v.id === value.vpcId)?.name ?? value.vpcId} : {value:"",label:"VPCなし"}}
+              onChange={({detail}) => onChange({...value,vpcId:detail.selectedOption.value ?? "",securityGroups:vpcs.find(v => v.id === detail.selectedOption.value)?.spec.security_groups[0] ?? "default",allowSameOrganization:false})} />
+          </FormField>
+          {value.vpcId && <>
+            <FormField label="セキュリティグループ" description={`使用可能: ${vpcs.find(v => v.id === value.vpcId)?.spec.security_groups.join(", ") ?? "取得中"}`}><Textarea disabled={disabled} value={value.securityGroups ?? "default"} onChange={({detail}) => update("securityGroups",detail.value)} /></FormField>
+            <FormField label="内部DNS名（省略可）" description="VPC内で一意の名前。省略するとサービスIDから自動生成します。"><Input disabled={disabled} value={value.privateName ?? ""} onChange={({detail}) => update("privateName",detail.value)} /></FormField>
+          </>}
+        </SpaceBetween>
+        <SpaceBetween size="m">
           <Header variant="h3">送信アクセス</Header>
           <ColumnLayout columns={2}>
             <FormField label="外部ネットワーク">
@@ -1102,8 +1123,8 @@ export function FlashServiceForm({
             </FormField>
             <FormField label="同一組織のFlashサービス">
               <Toggle
-                checked={value.allowSameOrganization}
-                disabled={disabled}
+                checked={value.vpcId ? false : value.allowSameOrganization}
+                disabled={disabled || !!value.vpcId}
                 onChange={({ detail }) => update("allowSameOrganization", detail.checked)}
               >
                 通信を許可

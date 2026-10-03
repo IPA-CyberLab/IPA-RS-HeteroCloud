@@ -76,6 +76,10 @@ spec:
             - --flow-endpoint={{ .Values.worker.flowEndpoint }}
             - --flash-endpoint={{ .Values.worker.flashEndpoint }}
             - --syouyu-endpoint={{ .Values.worker.syouyuEndpoint }}
+            {{- if .Values.worker.vpcEndpoint }}
+            - --vpc-endpoint={{ .Values.worker.vpcEndpoint }}
+            - --vpc-audience={{ .Values.worker.vpcAudience }}
+            {{- end }}
             - --issuer={{ .Values.worker.providerIssuer }}
             - --flow-audience={{ .Values.worker.flowAudience }}
             - --flash-audience={{ .Values.worker.flashAudience }}

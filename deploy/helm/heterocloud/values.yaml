@@ -63,6 +63,8 @@ worker:
   flowAudience: heterocloud-flow
   flashAudience: heterocloud-flash
   syouyuAudience: heterocloud-syouyu
+  vpcEndpoint: ""
+  vpcAudience: heterocloud-vpc
   providerKeyId: heterocloud-provider-1
   pollMilliseconds: 500
   databaseMaxConnections: 5

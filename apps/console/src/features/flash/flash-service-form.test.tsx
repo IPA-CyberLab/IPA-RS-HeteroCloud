@@ -586,3 +586,15 @@ describe("Flash web publishing", () => {
     expect(screen.getByRole("button", { name: /port-1のプロトコル/ })).toHaveTextContent("TCP");
   });
 });
+
+it("VPC attachment preserves private naming and disables legacy organization-wide grants", () => {
+  const spec = flashSpecFromForm({ ...defaultFlashServiceFormValue,
+    image: "example.test/child:1", vpcId: "00000000-0000-0000-0000-000000000001",
+    securityGroups: "workspaces\nssh", privateName: "child-one", allowSameOrganization: true,
+    exposureType: "internal",
+  });
+  expect(spec.network).toEqual({vpc_id:"00000000-0000-0000-0000-000000000001",security_groups:["workspaces","ssh"],private_name:"child-one"});
+  expect(spec.egress?.allow_same_organization).toBe(false);
+  expect(spec.exposure.type).toBe("internal");
+  expect(spec.exposure.endpoint_mode).toBe("ip");
+});

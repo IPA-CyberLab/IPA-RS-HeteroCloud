@@ -27,7 +27,7 @@ use heterocloud_domain::{
     FlowSpec, MAX_FLOW_RATE_LIMIT_BURST, MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, MAX_FLOW_ROOMS,
     Organization, OrganizationId, PolicyDocument, PolicyId, PrincipalId, ProjectId,
     ResourceQuotaLimits, ServiceInstance, ServiceInstanceId, ServiceState, SyouyuQuotaLimits,
-    SyouyuSpec, UserStatus,
+    SyouyuSpec, UserStatus, VpcSpec,
 };
 use heterocloud_iam::{AuthorizationRequest, Decision, authorize, semantics_digest};
 use heterocloud_store::{
@@ -98,6 +98,7 @@ pub struct AppState {
     pub config: RuntimeConfig,
     pub flow_client: reqwest::Client,
     pub flash_provider: Option<Arc<FlashProviderProxy>>,
+    pub vpc_provider: Option<Arc<crate::vpc_provider::VpcProviderProxy>>,
     pub syouyu_provider: Option<Arc<SyouyuProviderProxy>>,
     pub registry: Option<Arc<RegistryClient>>,
     pub registration_limiter: Arc<Semaphore>,
@@ -180,6 +181,14 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             get(get_realtime_service)
                 .patch(update_realtime_service)
                 .delete(delete_realtime_service),
+        )
+        .route(
+            "/organizations/{organization_id}/vpc/networks",
+            get(list_vpcs).post(create_vpc),
+        )
+        .route(
+            "/organizations/{organization_id}/vpc/networks/{vpc_id}",
+            get(get_vpc).put(update_vpc).delete(delete_vpc),
         )
         .route(
             "/organizations/{organization_id}/flash/services",
@@ -2290,6 +2299,222 @@ async fn get_flash_usage(
     }))
 }
 
+fn vpc_resource(org: Uuid, id: Option<Uuid>) -> String {
+    organization_resource(
+        org,
+        &id.map_or_else(|| "vpc/*".into(), |id| format!("vpc/network/{id}")),
+    )
+}
+
+async fn authorize_vpc_attachment(
+    state: &AppState,
+    actor: &AuthenticatedActor,
+    org: Uuid,
+    spec: &FlashSpec,
+) -> Result<(), ApiError> {
+    if let Some(network) = &spec.network {
+        for group in &network.security_groups {
+            authorize_actor(
+                state,
+                actor,
+                OrganizationId(org),
+                "vpc:AttachSecurityGroup",
+                &format!(
+                    "{}/security-group/{group}",
+                    vpc_resource(org, Some(network.vpc_id))
+                ),
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+async fn list_vpcs(
+    State(state): State<Arc<AppState>>,
+    Path(org): Path<Uuid>,
+    Query(query): Query<FlashListQuery>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(org),
+        "vpc:ListNetworks",
+        &vpc_resource(org, None),
+    )
+    .await?;
+    let items = state
+        .store
+        .list_service_instances(
+            OrganizationId(org),
+            query.project_id.map(ProjectId),
+            Some("vpc"),
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    let items = crate::vpc_provider::refresh_many(
+        state.vpc_provider.as_deref(),
+        authorization.principal_id,
+        items,
+    )
+    .await;
+    Ok(Json(json!({"items": items})))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateVpc {
+    project_id: Uuid,
+    name: String,
+    spec: VpcSpec,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateVpc {
+    name: String,
+    spec: VpcSpec,
+}
+
+async fn vpc_instance(state: &AppState, org: Uuid, id: Uuid) -> Result<ServiceInstance, ApiError> {
+    let instance = state
+        .store
+        .service_instance(ServiceInstanceId(id))
+        .await
+        .map_err(ApiError::from_store)?
+        .filter(|i| i.organization_id == OrganizationId(org) && i.provider == "vpc")
+        .ok_or(ApiError::NotFound)?;
+    Ok(instance)
+}
+
+async fn get_vpc(
+    State(state): State<Arc<AppState>>,
+    Path((org, id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<ServiceInstance>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(org),
+        "vpc:GetNetwork",
+        &vpc_resource(org, Some(id)),
+    )
+    .await?;
+    let instance = vpc_instance(&state, org, id).await?;
+    Ok(Json(
+        crate::vpc_provider::refresh(
+            state.vpc_provider.as_deref(),
+            authorization.principal_id,
+            instance,
+        )
+        .await,
+    ))
+}
+
+async fn create_vpc(
+    State(state): State<Arc<AppState>>,
+    Path(org): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<CreateVpc>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    validate_name(&request.name)?;
+    request
+        .spec
+        .validate()
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let auth = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(org),
+        "vpc:CreateNetwork",
+        &vpc_resource(org, None),
+    )
+    .await?;
+    let instance = state
+        .store
+        .create_service_instance(
+            OrganizationId(org),
+            ProjectId(request.project_id),
+            auth.principal_id,
+            "vpc",
+            &request.name,
+            serde_json::to_value(request.spec).map_err(|_| ApiError::Internal)?,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::ACCEPTED, Json(instance)))
+}
+
+async fn update_vpc(
+    State(state): State<Arc<AppState>>,
+    Path((org, id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<UpdateVpc>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    validate_name(&request.name)?;
+    request
+        .spec
+        .validate()
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let auth = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(org),
+        "vpc:UpdateNetwork",
+        &vpc_resource(org, Some(id)),
+    )
+    .await?;
+    let instance = state
+        .store
+        .update_service_instance(
+            OrganizationId(org),
+            ServiceInstanceId(id),
+            "vpc",
+            auth.principal_id,
+            &request.name,
+            serde_json::to_value(request.spec).map_err(|_| ApiError::Internal)?,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::ACCEPTED, Json(instance)))
+}
+
+async fn delete_vpc(
+    State(state): State<Arc<AppState>>,
+    Path((org, id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let auth = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(org),
+        "vpc:DeleteNetwork",
+        &vpc_resource(org, Some(id)),
+    )
+    .await?;
+    let instance = state
+        .store
+        .begin_delete_service_instance(
+            OrganizationId(org),
+            ServiceInstanceId(id),
+            "vpc",
+            auth.principal_id,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::ACCEPTED, Json(instance)))
+}
+
 async fn list_flash_services(
     State(state): State<Arc<AppState>>,
     Path(organization_id): Path<Uuid>,
@@ -2342,6 +2567,7 @@ async fn create_flash_service(
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     validate_name(&request.name)?;
     validate_flash_spec(&request.spec)?;
+    authorize_vpc_attachment(&state, &actor, organization_id, &request.spec).await?;
     if !request.spec.secret_env.is_empty() || !request.spec.secret_files.is_empty() {
         return Err(ApiError::BadRequest(
             "Create the Flash service before attaching secrets.".into(),
@@ -2417,6 +2643,7 @@ async fn update_flash_service(
     flash_service(&state, organization_id, service_instance_id).await?;
     validate_name(&request.name)?;
     validate_flash_spec(&request.spec)?;
+    authorize_vpc_attachment(&state, &actor, organization_id, &request.spec).await?;
     if request.spec.gpu_type.is_some() {
         sync_gpu_catalog_from_provider(&state).await?;
     }
@@ -5316,6 +5543,7 @@ mod tests {
                 denied_source_cidrs: Vec::new(),
             },
             egress: FlashEgress::default(),
+            network: None,
             env: Default::default(),
             secret_files: Default::default(),
             secret_env: Default::default(),

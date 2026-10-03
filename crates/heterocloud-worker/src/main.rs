@@ -43,6 +43,16 @@ struct Config {
     #[arg(long, env = "HETEROCLOUD_SYOUYU_ENDPOINT")]
     syouyu_endpoint: Url,
 
+    #[arg(long, env = "HETEROCLOUD_VPC_ENDPOINT")]
+    vpc_endpoint: Option<Url>,
+
+    #[arg(
+        long,
+        env = "HETEROCLOUD_VPC_AUDIENCE",
+        default_value = "heterocloud-vpc"
+    )]
+    vpc_audience: String,
+
     #[arg(
         long,
         env = "HETEROCLOUD_PROVIDER_ISSUER",
@@ -134,6 +144,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &signing_key,
             )?,
         },
+        vpc: config
+            .vpc_endpoint
+            .clone()
+            .map(|endpoint| {
+                ProviderSigner::from_ed25519_pem(
+                    &config.issuer,
+                    &config.vpc_audience,
+                    &config.key_id,
+                    &signing_key,
+                )
+                .map(|signer| ProviderTarget { endpoint, signer })
+            })
+            .transpose()?,
     };
     let store = Store::connect(
         database_url.expose_secret(),
@@ -535,6 +558,7 @@ struct ProviderTargets {
     flow: ProviderTarget,
     flash: ProviderTarget,
     syouyu: ProviderTarget,
+    vpc: Option<ProviderTarget>,
 }
 
 impl ProviderTargets {
@@ -543,6 +567,9 @@ impl ProviderTargets {
             "flow" => Ok(&self.flow),
             "flash" => Ok(&self.flash),
             "syouyu" => Ok(&self.syouyu),
+            "vpc" => self.vpc.as_ref().ok_or_else(|| {
+                WorkerError::UnsupportedProvider("vpc endpoint is not configured".into())
+            }),
             other => Err(WorkerError::UnsupportedProvider(other.to_owned())),
         }
     }
@@ -758,6 +785,7 @@ MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
     fn service_events_select_provider_specific_endpoint_and_audience()
     -> Result<(), Box<dyn std::error::Error>> {
         let targets = ProviderTargets {
+            vpc: None,
             flow: ProviderTarget {
                 endpoint: Url::parse("http://flow.example.test/")?,
                 signer: ProviderSigner::from_ed25519_pem(

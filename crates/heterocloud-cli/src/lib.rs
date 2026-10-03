@@ -101,6 +101,8 @@ pub enum TopLevelCommand {
     Flow(ServiceArgs),
     /// Manage Flash gVisor container services.
     Flash(ServiceArgs),
+    /// Manage private networks, connection rules and outbound NAT.
+    Vpc(ServiceArgs),
     /// Manage Syouyu S3-compatible buckets.
     Syouyu(ServiceArgs),
 }
@@ -385,6 +387,18 @@ pub async fn execute(cli: Cli) -> Result<(), CliError> {
                 output,
             )?;
             services::execute(services::ServiceKind::Flash, args, settings).await
+        }
+        TopLevelCommand::Vpc(args) => {
+            let settings = service_api_settings(
+                endpoint,
+                api_key,
+                api_key_file.as_deref(),
+                organization_id,
+                wait_timeout_seconds,
+                allow_insecure_http,
+                output,
+            )?;
+            services::execute(services::ServiceKind::Vpc, args, settings).await
         }
         TopLevelCommand::Syouyu(args) => {
             let settings = service_api_settings(

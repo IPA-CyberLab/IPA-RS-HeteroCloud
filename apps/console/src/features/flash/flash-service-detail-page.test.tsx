@@ -78,6 +78,7 @@ const quota: FlashQuotaLimits = {
 
 describe("FlashServiceDetailPage", () => {
   beforeEach(() => {
+    vi.spyOn(api.vpc, "list").mockResolvedValue({ items: [] });
     vi.spyOn(api.flash, "quota").mockResolvedValue(quota);
     vi.spyOn(api.flash.services, "get").mockResolvedValue(service);
     vi.spyOn(api.flash.services, "listContainers").mockResolvedValue({

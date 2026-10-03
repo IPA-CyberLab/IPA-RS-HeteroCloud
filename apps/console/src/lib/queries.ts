@@ -310,3 +310,7 @@ export function auditEventsQueryOptions(organizationId: string) {
     queryFn: ({ signal }) => api.auditEvents.list(organizationId, 500, signal),
   });
 }
+
+export function vpcsQueryOptions(organizationId: string) {
+  return queryOptions({queryKey:["organizations",organizationId,"vpc","networks"],queryFn:({signal}) => api.vpc.list(organizationId,signal),refetchInterval:5000});
+}

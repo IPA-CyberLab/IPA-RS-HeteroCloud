@@ -69,6 +69,9 @@ pub struct Config {
     )]
     pub flash_internal_endpoint: Url,
 
+    #[arg(long, env = "HETEROCLOUD_VPC_ENDPOINT")]
+    pub vpc_endpoint: Option<Url>,
+
     #[arg(
         long,
         env = "HETEROCLOUD_SYOUYU_INTERNAL_ENDPOINT",
@@ -355,6 +358,9 @@ impl Config {
         validate_flow_public_endpoints(&self.flow_public_endpoints, self.secure_cookie)?;
         validate_flow_internal_endpoint(&self.flow_internal_endpoint)?;
         validate_flash_internal_endpoint(&self.flash_internal_endpoint)?;
+        if let Some(endpoint) = &self.vpc_endpoint {
+            validate_flash_internal_endpoint(endpoint)?;
+        }
         validate_syouyu_internal_endpoint(&self.syouyu_internal_endpoint)?;
         validate_registry_config(
             self.registry_internal_endpoint.as_ref(),
@@ -387,6 +393,9 @@ impl Config {
         validate_flow_public_endpoints(&self.flow_public_endpoints, self.secure_cookie)?;
         validate_flow_internal_endpoint(&self.flow_internal_endpoint)?;
         validate_flash_internal_endpoint(&self.flash_internal_endpoint)?;
+        if let Some(endpoint) = &self.vpc_endpoint {
+            validate_flash_internal_endpoint(endpoint)?;
+        }
         validate_syouyu_internal_endpoint(&self.syouyu_internal_endpoint)?;
         let mut allowed_origins = vec![self.public_origin.origin().ascii_serialization()];
         for origin in &self.additional_origins {

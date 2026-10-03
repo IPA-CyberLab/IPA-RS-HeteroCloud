@@ -79,6 +79,9 @@ spec:
             - --flow-public-endpoints={{ join "," (required "flowPublicEndpoints is required" .Values.flowPublicEndpoints) }}
             - --flow-internal-endpoint={{ required "flowInternalEndpoint is required" .Values.flowInternalEndpoint }}
             - --flash-internal-endpoint={{ required "flashExec.endpoint is required" .Values.flashExec.endpoint }}
+            {{- if .Values.worker.vpcEndpoint }}
+            - --vpc-endpoint={{ .Values.worker.vpcEndpoint }}
+            {{- end }}
             - --syouyu-internal-endpoint={{ required "syouyu.internalEndpoint is required" .Values.syouyu.internalEndpoint }}
             - --syouyu-access-secret-file=/var/run/secrets/syouyu-access/hmac-secret
             - --syouyu-access-issuer={{ required "syouyu.accessIssuer is required" .Values.syouyu.accessIssuer }}

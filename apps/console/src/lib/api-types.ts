@@ -469,6 +469,7 @@ export interface FlashServiceSpec {
   ports: FlashPort[];
   exposure: FlashExposure;
   egress?: FlashEgress;
+  network?: FlashVpcAttachment;
   env: Record<string, string>;
   secret_env?: Record<string, string>;
   /** Existing services may still have this legacy field. */
@@ -514,6 +515,7 @@ export interface FlashServiceStatus {
     display_name?: string;
   };
   endpoints?: FlashServiceEndpoint[] | Record<string, unknown>;
+  private_endpoints?: FlashServiceEndpoint[];
 }
 
 export interface FlashService {
@@ -740,3 +742,9 @@ export interface ErrorEnvelope {
     message: string;
   };
 }
+
+export interface FlashVpcAttachment { vpc_id: string; security_groups: string[]; private_name?: string; }
+export type VpcPeer = {type: "security_group"; name: string} | {type: "service"; service_id: string} | {type: "all"};
+export interface VpcRule { description: string; source: VpcPeer; destination: VpcPeer; protocol: "tcp" | "udp"; port: number; end_port?: number; }
+export interface VpcSpec { region: string; description: string; nat: {enabled: boolean}; security_groups: string[]; rules: VpcRule[]; }
+export interface VpcNetwork { id: string; organization_id: string; project_id: string; provider: "vpc"; name: string; generation: number; state: ServiceState; spec: VpcSpec; status: {observation?: string; status?: {phase?: string; dns_suffix?: string; nat_gateway_node?: string; message?: string}}; created_at: string; updated_at: string; }

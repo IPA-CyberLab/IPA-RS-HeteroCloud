@@ -1,0 +1,16 @@
+{
+  "project_id": "00000000-0000-0000-0000-000000000001",
+  "name": "coder-workspaces",
+  "spec": {
+    "region": "example-region",
+    "description": "Private workspaces created by a Coder host",
+    "nat": {"enabled": false},
+    "security_groups": ["coder", "workspaces"],
+    "rules": [{
+      "source": {"type": "security_group", "name": "coder"},
+      "destination": {"type": "security_group", "name": "workspaces"},
+      "protocol": "tcp",
+      "port": 22
+    }]
+  }
+}

@@ -9,6 +9,7 @@ pub mod registry;
 pub mod routes;
 pub mod secret_manager;
 pub mod syouyu_provider;
+pub mod vpc_provider;
 
 use std::{path::Path, sync::Arc};
 

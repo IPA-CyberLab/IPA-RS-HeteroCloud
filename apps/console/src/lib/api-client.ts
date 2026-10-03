@@ -1,5 +1,5 @@
 import type {
-  AuditEvent,
+  AuditEvent, VpcNetwork, VpcSpec,
   BindingResponse,
   CliDeviceAuthorization,
   CollectionResponse,
@@ -589,6 +589,14 @@ export class HeteroCloudApiClient {
           { signal },
         ),
     },
+  };
+
+  readonly vpc = {
+    list: (org: string, signal?: AbortSignal) => this.request<CollectionResponse<VpcNetwork>>(organizationPath(org,"vpc/networks"), {signal}),
+    create: (org: string, input: {project_id: string; name: string; spec: VpcSpec}) => this.request<VpcNetwork>(organizationPath(org,"vpc/networks"), {method:"POST",body:input}),
+    get: (org: string, id: string, signal?: AbortSignal) => this.request<VpcNetwork>(organizationPath(org,`vpc/networks/${encodeURIComponent(id)}`), {signal}),
+    update: (org: string, id: string, input: {name: string; spec: VpcSpec}) => this.request<VpcNetwork>(organizationPath(org,`vpc/networks/${encodeURIComponent(id)}`), {method:"PUT",body:input}),
+    delete: (org: string, id: string) => this.request<VpcNetwork>(organizationPath(org,`vpc/networks/${encodeURIComponent(id)}`), {method:"DELETE"}),
   };
 
   readonly flash = {
