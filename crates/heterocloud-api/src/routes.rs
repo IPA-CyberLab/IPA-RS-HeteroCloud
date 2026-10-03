@@ -475,7 +475,7 @@ async fn owner_quota_overview(
     jar: CookieJar,
     PeerAddress(peer): PeerAddress,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &jar, peer, false).await?;
+    let owner = require_owner(&state, &headers, &jar, peer, false).await?;
     let defaults = state
         .store
         .resource_quota_defaults()
@@ -522,6 +522,18 @@ async fn owner_quota_overview(
                 storage_by_organization.remove(&tenant.organization.id);
         }
     }
+    let syouyu_targets = state
+        .store
+        .list_syouyu_usage_targets()
+        .await
+        .map_err(ApiError::from_store)?;
+    crate::quota_usage::populate_syouyu_usage(
+        &mut tenants,
+        syouyu_targets,
+        state.syouyu_provider.as_deref(),
+        PrincipalId(owner.user.user.id.0),
+    )
+    .await;
     Ok(Json(json!({ "defaults": defaults, "tenants": tenants })))
 }
 

@@ -1932,6 +1932,21 @@ impl Store {
             .collect())
     }
 
+    /// Control-plane inventory for the owner quota overview. Includes deleting
+    /// buckets until their provider resources have actually been removed.
+    pub async fn list_syouyu_usage_targets(&self) -> Result<Vec<ServiceInstance>, StoreError> {
+        sqlx::query_as::<_, ServiceRow>(
+            "SELECT id, organization_id, project_id, provider, name, generation,
+                    state, spec, status, created_at, updated_at
+             FROM service_instances WHERE provider = 'syouyu' ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(ServiceInstance::try_from)
+        .collect()
+    }
+
     pub async fn record_realtime_metric_sample(
         &self,
         service_instance_id: ServiceInstanceId,

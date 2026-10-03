@@ -4,6 +4,7 @@ pub mod flash_provider;
 pub mod flow_access;
 pub mod metrics;
 pub mod oidc;
+mod quota_usage;
 pub mod registry;
 pub mod routes;
 pub mod secret_manager;
