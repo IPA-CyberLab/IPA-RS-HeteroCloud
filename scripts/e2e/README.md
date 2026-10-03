@@ -1,0 +1,43 @@
+# VPC live E2E
+
+This test provisions real Flash workloads through the public API and CLI. It
+uses two disposable tenants, never existing users' services. The parent receives
+an expiring API key through Secret Manager and creates a private child with the
+HeteroCloud API. No Docker socket or privileged tenant container is involved.
+
+The administrator fixture helper requires `psycopg[binary]==3.2.10` and a mode
+0600 database URL file. Database access only provisions/removes test identities
+and scopes the parent's key to the test VPC's `children` group. It is never sent
+to containers or stored in GitHub Actions secrets. All networking resources are
+created, changed and removed using ordinary tenant APIs.
+
+```sh
+umask 077
+python3 scripts/e2e/vpc_fixture.py create --dsn-file "$PRIVATE_DIR/database-url" --fixture "$PRIVATE_DIR/fixture.json"
+python3 scripts/e2e/vpc_live.py --endpoint "$HETEROCLOUD_ENDPOINT" --cli heterocloud \
+  --fixture "$PRIVATE_DIR/fixture.json" --dsn-file "$PRIVATE_DIR/database-url" \
+  --report "$PRIVATE_DIR/report.json"
+python3 scripts/e2e/vpc_fixture.py remove --dsn-file "$PRIVATE_DIR/database-url" --fixture "$PRIVATE_DIR/fixture.json"
+```
+
+The report includes API/CLI lifecycle, cross-tenant denial, default-deny TCP/UDP,
+private DNS, group and individual-service rules, wrong-port/group/VPC/tenant
+denial, NAT enable/disable, rule revocation, no public child route, scoped parent
+authorization, no automatic secret inheritance, and cleanup. DNS failures do
+not count as successful policy-denial tests.
+
+For debugging, `--keep-on-failure` retains only these disposable resources;
+rerun with `--cleanup` before removing the fixture. Expired keys can be revoked
+by removing the fixture after its services are deleted. The parent HTTP probe
+only accepts fixed operations and predefined fixture destinations. It does not
+expose a shell, a general proxy, or secret values.
+
+NAT verification uses the deployment's `/cdn-cgi/trace` by default. For other
+hosting arrangements, pass `--trace-url` with an owned HTTPS endpoint returning
+the observed source address as `ip=...`. The product itself has no Cloudflare or
+domain dependency.
+
+The Cloud release workflow runs PostgreSQL, Rust, console and Chromium tests.
+The VPC repository's CI also exercises the real kernel guard in isolated Linux
+network namespaces, including route fallback, permit expiry, tunnel routing and
+guard restart. The live test above requires an installed VPC/Flash deployment.

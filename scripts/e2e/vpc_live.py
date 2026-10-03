@@ -61,6 +61,7 @@ def main():
     parser.add_argument("--dsn-file", type=Path, help="Administrator fixture setup only; never sent to a container")
     parser.add_argument("--cli", default="heterocloud")
     parser.add_argument("--region", default="heteronet-global")
+    parser.add_argument("--trace-url", help="Owned HTTPS endpoint returning an ip= line; defaults to endpoint /cdn-cgi/trace")
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--cleanup", action="store_true")
     parser.add_argument("--keep-on-failure", action="store_true")
@@ -106,7 +107,8 @@ def main():
     def ensure(api, collection, name, spec, use_cli=False):
         existing = [x for x in api.call("GET", collection)["items"] if x["name"] == name]
         assert len(existing) <= 1
-        value = existing[0] if existing else (cli("vpc", "create", "--no-wait", body={"project_id": api.tenant["project_id"], "name": name, "spec": spec}) if use_cli else api.call("POST", collection, {"project_id": api.tenant["project_id"], "name": name, "spec": spec}))
+        kind = "vpc" if collection == "vpc/networks" else "flash"
+        value = existing[0] if existing else (cli(kind, "create", "--no-wait", body={"project_id": api.tenant["project_id"], "name": name, "spec": spec}) if use_cli else api.call("POST", collection, {"project_id": api.tenant["project_id"], "name": name, "spec": spec}))
         report["resources"].append({"organization_id": api.tenant["organization_id"], "provider": value["provider"], "id": value["id"]})
         args.report.write_text(json.dumps(report, indent=2))
         return api.wait(collection + "/" + value["id"])
@@ -139,7 +141,7 @@ def main():
         foreign.call("GET", "vpc/networks/" + main_vpc["id"], expected=[403, 404])
         foreign.call("POST", "flash/services", {"project_id": foreign.tenant["project_id"], "name": "vpc-e2e-cross-org", "spec": flash(main_vpc, "invalid", "children")}, expected=[400, 403, 404, 409])
         record("cross_organization_api_access_and_attachment_denied")
-        ensure(api, "flash/services", "vpc-e2e-bystander", flash(main_vpc, "bystander", "other"))
+        ensure(api, "flash/services", "vpc-e2e-bystander", flash(main_vpc, "bystander", "other"), True)
         ensure(api, "flash/services", "vpc-e2e-other-vpc", flash(other_vpc, "other-vpc", "children"))
         ensure(foreign, "flash/services", "vpc-e2e-other-org", flash(foreign_vpc, "other-org", "children"))
         tenant = json.loads(args.fixture.read_text())["tenants"][0]
@@ -149,7 +151,7 @@ def main():
             tenant = json.loads(args.fixture.read_text())["tenants"][0]
         child_manifest = {"name": "vpc-e2e-child", "project_id": api.tenant["project_id"], "spec": flash(main_vpc, "child", "children")}
         parent_spec = flash(main_vpc, "parent", "parents", "vpc_parent.py", True, {
-            "E2E_API_BASE": api.base, "E2E_TRACE_URL": args.endpoint.rstrip("/") + "/cdn-cgi/trace", "E2E_CHILD_MANIFEST": json.dumps(child_manifest),
+            "E2E_API_BASE": api.base, "E2E_TRACE_URL": args.trace_url or args.endpoint.rstrip("/") + "/cdn-cgi/trace", "E2E_CHILD_MANIFEST": json.dumps(child_manifest),
             "E2E_TARGETS": json.dumps({"child": hostname(main_vpc, "child"), "bystander": hostname(main_vpc, "bystander"), "other-vpc": hostname(other_vpc, "other-vpc"), "other-org": hostname(foreign_vpc, "other-org")}),
         })
         parent = ensure(api, "flash/services", "vpc-e2e-parent", parent_spec)
@@ -228,6 +230,14 @@ def main():
         expect_probe("child-udp", False)
         expect_probe("nat", False)
         record("rule_and_nat_revocation_blocks_new_connections")
+        own_services = api.call("GET", "flash/services")["items"]
+        for item in own_services:
+            assert item["project_id"] == api.tenant["project_id"] and item["name"].startswith("vpc-e2e-")
+            api.call("DELETE", "flash/services/" + item["id"])
+        for item in own_services:
+            api.wait("flash/services/" + item["id"], deleted=True)
+        cli("vpc", "delete", main_vpc["id"], "--yes")
+        record("cli_deletes_detached_vpc_and_waits_for_cleanup")
         passed = True
     finally:
         keyfile.unlink(missing_ok=True)
