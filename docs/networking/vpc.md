@@ -30,6 +30,8 @@ NATは既定で無効です。VPCの `spec.nat.enabled` を有効にすると、
 
 Coderなどの親コンテナは、専用サービスアカウントでHeteroCloud API / CLIから子を作成します。必要なFlash操作と、子を接続するグループの `vpc:AttachSecurityGroup` だけをIAMで許可してください。APIキーは親のSecret Managerに登録し、Flash編集画面から環境変数として接続します。CLIは `HETEROCLOUD_API_KEY_FILE`（アクセス権0600のファイル）を使えます。キーをコマンド引数やイメージへ埋め込まないでください。
 
+親から公開HeteroCloud APIへアクセスする場合は、例のVPCの `spec.nat.enabled` を `true` にし、親の `spec.egress.mode` を `internet` にします。NATを有効にしても、内部向けに作成した子への外部公開は有効になりません。子の外向き通信が不要なら、子の `spec.egress.mode` は `disabled` にできます。
+
 VPCのAPIは `/api/v1/organizations/{organization_id}/vpc/networks` のPOST / GETと、その `/{id}` のGET / PUT / DELETEです。IAMリソースは `hc:org:<org>:vpc/network/<id>`、グループ接続は末尾 `/security-group/<group>` です。VPCとFlashの変更は非同期に反映され、CLIは既定でreadyまで待ちます。接続先の組織・プロジェクト・リージョンが異なる場合や、使用中のVPCの削除は拒否されます。
 
 サービスアカウントのFlash作成権限は組織単位です。秘密情報は子へ自動継承されません。接続ルール削除は新しい接続に適用されます。確立済みの接続はステートフルに扱われます。Podアドレスを変えずに分離する方式であり、独自・重複CIDRやIPv6 NATの指定はありません。
