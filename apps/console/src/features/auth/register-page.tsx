@@ -15,11 +15,12 @@ import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { sessionQueryOptions, useSession } from "@/features/auth/session";
 import { api, getApiErrorMessage } from "@/lib/api-client";
 import { PublicSiteLinks } from "@/features/auth/public-site-links";
+import { PUBLIC_HOME_URL } from "@/lib/public-site";
 
 function AuthTopNavigation() {
   return (
     <TopNavigation
-      identity={{ href: "/", title: "HeteroCloud" }}
+      identity={{ href: PUBLIC_HOME_URL, title: "HeteroCloud" }}
       utilities={[]}
       i18nStrings={{ overflowMenuTriggerText: "その他", overflowMenuTitleText: "メニュー" }}
     />

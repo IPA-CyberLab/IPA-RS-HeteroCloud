@@ -8,6 +8,7 @@ import { Navigate } from "react-router-dom";
 import { readAuthReturnPath } from "@/features/auth/auth-return";
 import { useSession } from "@/features/auth/session";
 import { PublicSiteLinks } from "@/features/auth/public-site-links";
+import { PUBLIC_HOME_URL } from "@/lib/public-site";
 
 export function LoginPage() {
   const session = useSession();
@@ -17,7 +18,7 @@ export function LoginPage() {
   return (
     <div className="auth-shell">
       <TopNavigation
-        identity={{ href: "/", title: "HeteroCloud" }}
+        identity={{ href: PUBLIC_HOME_URL, title: "HeteroCloud" }}
         utilities={[]}
         i18nStrings={{ overflowMenuTriggerText: "その他", overflowMenuTitleText: "メニュー" }}
       />

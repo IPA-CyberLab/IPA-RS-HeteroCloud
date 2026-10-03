@@ -69,7 +69,7 @@ pub fn app(state: Arc<AppState>, console_dir: Option<&Path>) -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
-fn console_files(directory: &Path) -> ServeDir<ServeFile> {
+fn console_files(directory: &Path) -> Router {
     // Public HTML is served directly; console deep links retain their SPA.
     // Keep compatibility with console artifacts built before the public site.
     let console = directory.join("console.html");
@@ -78,7 +78,15 @@ fn console_files(directory: &Path) -> ServeDir<ServeFile> {
     } else {
         directory.join("index.html")
     };
-    ServeDir::new(directory).fallback(ServeFile::new(entry))
+    // HTML at / used to be the console. Require revalidation so browsers do
+    // not retain that entry (or an obsolete JS entry) across deployments.
+    // Conditional requests can still reuse unchanged files with HTTP 304.
+    Router::new()
+        .fallback_service(ServeDir::new(directory).fallback(ServeFile::new(entry)))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache"),
+        ))
 }
 
 #[cfg(test)]
@@ -112,6 +120,7 @@ mod public_site_tests {
             .oneshot(Request::builder().uri(path).body(Body::empty())?)
             .await?;
         assert_eq!(response.status(), axum::http::StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
         let body = axum::body::to_bytes(response.into_body(), 4096).await?;
         Ok(String::from_utf8(body.to_vec())?)
     }
@@ -152,6 +161,40 @@ mod public_site_tests {
             get(router, "/cli/authorize?user_code=TEST-CODE").await?,
             "older console"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn conditional_and_head_requests_keep_revalidation_headers() -> TestResult {
+        let directory = SiteDirectory::new()?;
+        fs::write(directory.0.join("index.html"), "public introduction")?;
+        fs::write(directory.0.join("console.html"), "console application")?;
+        let router = Router::new().fallback_service(console_files(&directory.0));
+        for path in ["/", "/console"] {
+            let head = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("HEAD")
+                        .uri(path)
+                        .body(Body::empty())?,
+                )
+                .await?;
+            assert_eq!(head.status(), axum::http::StatusCode::OK);
+            assert_eq!(head.headers()[header::CACHE_CONTROL], "no-cache");
+            let modified = head.headers()[header::LAST_MODIFIED].clone();
+            let cached = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(header::IF_MODIFIED_SINCE, modified)
+                        .body(Body::empty())?,
+                )
+                .await?;
+            assert_eq!(cached.status(), axum::http::StatusCode::NOT_MODIFIED);
+            assert_eq!(cached.headers()[header::CACHE_CONTROL], "no-cache");
+        }
         Ok(())
     }
 }

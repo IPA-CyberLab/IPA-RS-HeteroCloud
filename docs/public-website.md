@@ -6,6 +6,13 @@ Console deep links and API endpoints continue to use their existing URLs.
 After OIDC sign-in, `/console` handles the saved destination (including CLI
 device authorization) and otherwise opens `/overview`.
 
+Static responses, including HEAD and HTTP 304 responses, send
+`Cache-Control: no-cache` so browsers revalidate documents after a deployment.
+The console's `/` route is also public: if browser history restores the SPA
+there, it loads `/?site=public` as a document before checking any session.
+Links back from login/registration use that same URL to bypass root HTML cached
+before the public website was deployed. `/console` remains authenticated.
+
 ## Edit and preview
 
 ```sh

@@ -10,6 +10,7 @@ import { RegisterPage } from "@/features/auth/register-page";
 import { OrganizationProvider } from "@/features/organizations/organization-context";
 import { createQueryClient } from "@/lib/query-client";
 import { NotFoundPage } from "@/app/not-found-page";
+import { PublicHomeRoute } from "@/app/public-home-route";
 import { useSession } from "@/features/auth/session";
 
 const queryClient = createQueryClient();
@@ -149,12 +150,12 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
+          <Route path="/" element={<PublicHomeRoute />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route element={<ProtectedRoute />}>
             <Route element={<OrganizationProvider />}>
               <Route element={<AppShell />}>
-              <Route index element={<PostLoginRoute />} />
               <Route path="/console" element={<PostLoginRoute />} />
               <Route
                 path="/overview"
