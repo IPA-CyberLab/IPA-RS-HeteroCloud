@@ -1,0 +1,263 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-03T15:17:10.798975+00:00",
+  "passed": true,
+  "versions": {
+    "heterocloud_and_cli": "0.1.93",
+    "flash": "0.1.41",
+    "vpc": "0.1.3",
+    "egress_gateway": "0.6.9"
+  },
+  "vpc_image": "ghcr.io/ipa-cyberlab/ipa-rs-heterocloud-vpc@sha256:acf0db7827664c0b6db687faeacb7c161b2dbbc19224b379d5575f70bd37ef93",
+  "infrastructure_revision": "74f7b316f98aded12bd12a8277d7411d81c99ff8",
+  "e2e_runner_revision": "6f9f7b3fe2a08915e0f3d9e0cee8f071a5648359",
+  "ci": [
+    {
+      "component": "cloud",
+      "conclusion": "success",
+      "createdAt": "2026-10-03T13:57:21Z",
+      "headSha": "b9ceed195dcf9832638c9f8406b9b3aa89a4f2de",
+      "status": "completed",
+      "updatedAt": "2026-10-03T14:07:39Z",
+      "url": "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/actions/runs/37127944225"
+    },
+    {
+      "component": "flash",
+      "conclusion": "success",
+      "createdAt": "2026-10-03T13:44:07Z",
+      "headSha": "80bc9fedaf2132a3e4a9a66d45d1b8520d0dd84f",
+      "status": "completed",
+      "updatedAt": "2026-10-03T13:54:39Z",
+      "url": "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud-Flash/actions/runs/37127184462"
+    },
+    {
+      "component": "vpc",
+      "conclusion": "success",
+      "createdAt": "2026-10-03T14:42:14Z",
+      "headSha": "0c3ecaa7446470b3e74045056513cbdce32a6dde",
+      "status": "completed",
+      "updatedAt": "2026-10-03T14:47:44Z",
+      "url": "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud-VPC/actions/runs/37130557563"
+    }
+  ],
+  "live": {
+    "endpoint": "https://heterocloud.mizuame.app",
+    "started_at": "2026-10-03T14:52:07Z",
+    "checks": [
+      {
+        "name": "api_and_cli_vpc_lifecycle_private_defaults",
+        "passed": true
+      },
+      {
+        "name": "cross_organization_api_access_and_attachment_denied",
+        "passed": true
+      },
+      {
+        "name": "nat_disabled_blocks_public_egress",
+        "passed": true
+      },
+      {
+        "name": "nat_enabled_allows_public_egress",
+        "passed": true,
+        "source_ip": "163.220.236.45"
+      },
+      {
+        "name": "nat_respects_workload_egress_disabled",
+        "passed": true
+      },
+      {
+        "name": "workload_egress_can_be_restored",
+        "passed": true
+      },
+      {
+        "name": "parent_creates_private_child_via_api_and_secret_key",
+        "passed": true,
+        "child_id": "01a1024b-6bab-73f0-af56-3c0e6aaf09da"
+      },
+      {
+        "name": "parent_cannot_attach_unauthorized_security_group",
+        "passed": true
+      },
+      {
+        "name": "private_traffic_default_deny_tcp_and_udp",
+        "passed": true
+      },
+      {
+        "name": "private_dns_tcp_udp_and_no_child_secret_inheritance",
+        "passed": true
+      },
+      {
+        "name": "wrong-port_denied",
+        "passed": true
+      },
+      {
+        "name": "other-group_denied",
+        "passed": true
+      },
+      {
+        "name": "other-vpc_denied",
+        "passed": true
+      },
+      {
+        "name": "other-org_denied",
+        "passed": true
+      },
+      {
+        "name": "explicit_service_to_service_rule",
+        "passed": true
+      },
+      {
+        "name": "real_console_desktop_mobile_under_three_seconds",
+        "passed": true,
+        "browsers": [
+          {
+            "browser": "desktop",
+            "ready_ms": 1539,
+            "real_api": true,
+            "passed": true
+          },
+          {
+            "browser": "mobile",
+            "ready_ms": 1142,
+            "real_api": true,
+            "passed": true
+          }
+        ]
+      },
+      {
+        "name": "private_child_has_no_public_route",
+        "passed": true
+      },
+      {
+        "name": "attached_vpc_deletion_refused",
+        "passed": true
+      },
+      {
+        "name": "rule_and_nat_revocation_blocks_new_connections",
+        "passed": true
+      },
+      {
+        "name": "cli_deletes_detached_vpc_and_waits_for_cleanup",
+        "passed": true
+      },
+      {
+        "name": "all_test_workloads_and_networks_removed",
+        "passed": true
+      }
+    ],
+    "resources": [
+      {
+        "organization_id": "b5ce2c50-12e7-4fd2-ab57-5ab2a5c007f8",
+        "provider": "vpc",
+        "id": "01a10240-43f4-7811-91f4-1e27938dbf58"
+      },
+      {
+        "organization_id": "b5ce2c50-12e7-4fd2-ab57-5ab2a5c007f8",
+        "provider": "vpc",
+        "id": "01a10240-5358-7dc0-975b-29619f2ec202"
+      },
+      {
+        "organization_id": "cd2dea3a-d53a-477d-8cd1-9e59688b2ee7",
+        "provider": "vpc",
+        "id": "01a10240-62ef-7203-822a-7ed3a2aa6934"
+      },
+      {
+        "organization_id": "b5ce2c50-12e7-4fd2-ab57-5ab2a5c007f8",
+        "provider": "flash",
+        "id": "01a10240-841a-7ac0-84cb-da3ac464d489"
+      },
+      {
+        "organization_id": "b5ce2c50-12e7-4fd2-ab57-5ab2a5c007f8",
+        "provider": "flash",
+        "id": "01a10242-8797-71d2-9915-d3c1c8394a0b"
+      },
+      {
+        "organization_id": "cd2dea3a-d53a-477d-8cd1-9e59688b2ee7",
+        "provider": "flash",
+        "id": "01a10244-7dc2-7e32-b524-9e2fa6687782"
+      },
+      {
+        "organization_id": "b5ce2c50-12e7-4fd2-ab57-5ab2a5c007f8",
+        "provider": "flash",
+        "id": "01a10245-837a-7481-bb9d-deb259a1763c"
+      }
+    ],
+    "passed": true,
+    "finished_at": "2026-10-03T15:15:44Z"
+  },
+  "supplementary": [
+    {
+      "observed_at": "2026-10-03T15:04:28.710551+00:00",
+      "passed": true,
+      "check": "real_cross_node_nat",
+      "workload_node": "ichikawap1",
+      "gateway_node": "uc-k8sp5",
+      "observed_source_ipv4": "163.220.236.45",
+      "basis": "Public HTTPS trace request from final-live-report.json; gateway and workload placement observed immediately afterwards",
+      "provider_version": "0.1.3"
+    },
+    {
+      "observed_at": "2026-10-03T15:06:45.469409+00:00",
+      "check": "public_https_asset_transfer_through_nat",
+      "passed": true,
+      "workload_node": "ichikawap1",
+      "gateway_node": "uc-k8sp5",
+      "method": "Execute an unprivileged HTTPS download inside the API-created parent Pod; compare SHA-256 with the same owned public asset downloaded by the test host",
+      "status": 200,
+      "bytes": 678136,
+      "sha256": "8d06feaa5ca396eb0c586a46360b2dba0df34364b407bfa14c1465b9cb7d074d",
+      "elapsed_seconds": 0.189
+    }
+  ],
+  "deployment": {
+    "observed_at": "2026-10-03T15:16:10.949672+00:00",
+    "test_kubernetes_resources_remaining": 0,
+    "checked_resource_types": [
+      "pods",
+      "deployments",
+      "services",
+      "persistentvolumeclaims",
+      "networkpolicies",
+      "flashservices",
+      "vpcnetworks",
+      "egresspolicies",
+      "egressgateways",
+      "namespaces"
+    ],
+    "argo_cd": [
+      {
+        "name": "heterocloud",
+        "sync": "Synced",
+        "health": "Healthy",
+        "revision": "b9ceed195dcf9832638c9f8406b9b3aa89a4f2de"
+      },
+      {
+        "name": "heterocloud-flash",
+        "sync": "Synced",
+        "health": "Healthy",
+        "revision": "80bc9fedaf2132a3e4a9a66d45d1b8520d0dd84f"
+      },
+      {
+        "name": "heterocloud-vpc",
+        "sync": "Synced",
+        "health": "Healthy",
+        "revision": "0c3ecaa7446470b3e74045056513cbdce32a6dde"
+      },
+      {
+        "name": "heterocloud-vpc-egress",
+        "sync": "Synced",
+        "health": "Healthy",
+        "revision": "0c3ecaa7446470b3e74045056513cbdce32a6dde"
+      }
+    ],
+    "terraform_plan_exit_code": 0,
+    "terraform_plan_observed_at": "2026-10-03T14:53:28.005823+00:00"
+  },
+  "fixture_identities_and_credentials_removed": true,
+  "scope_notes": [
+    "Real production API, CLI, Kubernetes/IPv4 data plane and Chromium; no API mocks.",
+    "Browser session was created for a disposable test user; interactive identity-provider login was not tested.",
+    "Kernel fail-closed and gateway rule-order tests ran in isolated Linux network namespaces on GitHub Actions.",
+    "NAT uses the selected gateway node address; custom/overlapping VPC CIDRs, fixed EIPs and IPv6 NAT are not implemented."
+  ]
+}

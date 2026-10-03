@@ -37,3 +37,5 @@ VPCのAPIは `/api/v1/organizations/{organization_id}/vpc/networks` のPOST / GE
 サービスアカウントのFlash作成権限は組織単位です。秘密情報は子へ自動継承されません。接続ルール削除は新しい接続に適用されます。確立済みの接続はステートフルに扱われます。Podアドレスを変えずに分離する方式であり、独自・重複CIDRやIPv6 NATの指定はありません。
 
 運用構成とデータプレーンの詳細: [HeteroCloud VPC](https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud-VPC)。
+
+実環境での検証結果: [2026-10-03のVPC / Flash E2E](../verification/vpc-2026-10-03.md)。
