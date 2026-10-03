@@ -1,0 +1,41 @@
+/* Deliberately small baseline. Content and layout hooks are in render.ts. */
+:root {
+  font-family: "Noto Sans Variable", "Noto Sans JP Variable", sans-serif;
+  color: #202124;
+  background: #fff;
+  line-height: 1.8;
+  font-synthesis: none;
+}
+* { box-sizing: border-box; }
+body { margin: 0; overflow-wrap: anywhere; }
+a { color: #174ea6; text-underline-offset: .2em; }
+a:hover { text-decoration-thickness: .15em; }
+:focus-visible { outline: 2px solid #174ea6; outline-offset: 4px; }
+.site-header, .site-footer, main { width: min(100% - 2rem, 72rem); margin-inline: auto; }
+.site-header, .site-footer { padding-block: 1.25rem; }
+.site-header { border-bottom: 1px solid #ddd; }
+.site-name { color: inherit; font-size: 1.25rem; font-weight: 700; }
+.site-header nav ul, .site-footer nav ul {
+  display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; padding: 0; list-style: none;
+}
+main { padding-block: 2rem 3rem; }
+article { max-width: 54rem; }
+h1, h2 { line-height: 1.5; text-wrap: balance; }
+h1 { font-size: clamp(1.65rem, 4vw, 2.25rem); margin-block: 0 1rem; }
+h2 { font-size: 1.3rem; margin-block: 0 1rem; scroll-margin-top: 1rem; }
+p { margin-block: .75rem; }
+.lead { font-size: 1.1rem; }
+section { margin-block: 2.5rem; }
+li + li { margin-top: .25rem; }
+.contents, .policy-status { padding: 1rem; border: 1px solid #ccc; margin-block: 1.5rem; }
+.contents p { margin-top: 0; font-weight: 600; }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; }
+th, td { padding: .75rem; border-bottom: 1px solid #ddd; text-align: left; vertical-align: top; }
+th[scope="row"] { min-width: 8rem; font-weight: 600; }
+pre { overflow-x: auto; padding: 1rem; background: #f5f5f5; line-height: 1.6; }
+code { font-family: ui-monospace, monospace; font-size: .9rem; }
+.site-footer, .attribution { border-top: 1px solid #ddd; font-size: .875rem; }
+.attribution { padding-top: 1rem; }
+.skip-link { position: absolute; top: .5rem; left: 1rem; transform: translateY(-200%); }
+.skip-link:focus { transform: none; background: white; padding: .5rem; }

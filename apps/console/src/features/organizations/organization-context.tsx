@@ -54,7 +54,7 @@ export function OrganizationProvider({ children }: { children?: ReactNode }) {
   }, [activeOrganization]);
 
   useEffect(() => {
-    if (location.pathname !== "/") clearAuthReturnPath();
+    if (!["/", "/console", "/console/"].includes(location.pathname)) clearAuthReturnPath();
   }, [location.pathname]);
 
   const value = useMemo<OrganizationContextValue | null>(

@@ -5,6 +5,9 @@ function safeInternalPath(value: string | null): string | null {
   try {
     const parsed = new URL(value, window.location.origin);
     if (parsed.origin !== window.location.origin) return null;
+    // Entry pages are not return destinations: remembering /console would
+    // redirect the post-login route back to itself indefinitely.
+    if (["/", "/login", "/console"].includes(parsed.pathname.replace(/\/$/, "") || "/")) return null;
     return `${parsed.pathname}${parsed.search}${parsed.hash}`;
   } catch {
     return null;
@@ -13,7 +16,7 @@ function safeInternalPath(value: string | null): string | null {
 
 export function rememberAuthReturnPath(path: string): void {
   const safePath = safeInternalPath(path);
-  if (!safePath || safePath === "/login") return;
+  if (!safePath) return;
   try {
     window.sessionStorage.setItem(RETURN_PATH_KEY, safePath);
   } catch {

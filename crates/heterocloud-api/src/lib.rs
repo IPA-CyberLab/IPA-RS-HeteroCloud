@@ -32,9 +32,7 @@ pub fn app(state: Arc<AppState>, console_dir: Option<&Path>) -> Router {
     let request_id = HeaderName::from_static("x-request-id");
     let router = Router::new().nest("/api/v1", routes::api_router(state));
     let router = match console_dir {
-        Some(directory) => router.fallback_service(
-            ServeDir::new(directory).fallback(ServeFile::new(directory.join("index.html"))),
-        ),
+        Some(directory) => router.fallback_service(console_files(directory)),
         None => router,
     };
     router
@@ -69,4 +67,91 @@ pub fn app(state: Arc<AppState>, console_dir: Option<&Path>) -> Router {
         .layer(PropagateRequestIdLayer::new(request_id.clone()))
         .layer(SetRequestIdLayer::new(request_id, MakeRequestUuid))
         .layer(TraceLayer::new_for_http())
+}
+
+fn console_files(directory: &Path) -> ServeDir<ServeFile> {
+    // Public HTML is served directly; console deep links retain their SPA.
+    // Keep compatibility with console artifacts built before the public site.
+    let console = directory.join("console.html");
+    let entry = if console.is_file() {
+        console
+    } else {
+        directory.join("index.html")
+    };
+    ServeDir::new(directory).fallback(ServeFile::new(entry))
+}
+
+#[cfg(test)]
+mod public_site_tests {
+    use super::*;
+    use axum::{body::Body, http::Request};
+    use std::{fs, path::PathBuf};
+    use tower::ServiceExt;
+
+    struct SiteDirectory(PathBuf);
+
+    impl SiteDirectory {
+        fn new() -> Self {
+            let path =
+                std::env::temp_dir().join(format!("heterocloud-site-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(path.join("technology")).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for SiteDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    async fn get(router: Router, path: &str) -> String {
+        let response = router
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        String::from_utf8(body.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn public_html_and_console_deep_links_use_distinct_entries() {
+        let directory = SiteDirectory::new();
+        fs::write(directory.0.join("index.html"), "public introduction").unwrap();
+        fs::write(
+            directory.0.join("technology/index.html"),
+            "technology article",
+        )
+        .unwrap();
+        fs::write(directory.0.join("console.html"), "console application").unwrap();
+        let router = Router::new().fallback_service(console_files(&directory.0));
+        assert_eq!(get(router.clone(), "/").await, "public introduction");
+        assert_eq!(
+            get(router.clone(), "/technology/").await,
+            "technology article"
+        );
+        for path in [
+            "/login",
+            "/console",
+            "/overview",
+            "/flash/services/example",
+            "/cli/authorize?user_code=TEST-CODE",
+        ] {
+            assert_eq!(get(router.clone(), path).await, "console application");
+        }
+    }
+
+    #[tokio::test]
+    async fn older_console_artifacts_keep_their_spa_fallback() {
+        let directory = SiteDirectory::new();
+        fs::write(directory.0.join("index.html"), "older console").unwrap();
+        let router = Router::new().fallback_service(console_files(&directory.0));
+        assert_eq!(
+            get(router, "/cli/authorize?user_code=TEST-CODE").await,
+            "older console"
+        );
+    }
 }

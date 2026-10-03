@@ -155,6 +155,7 @@ export function App() {
             <Route element={<OrganizationProvider />}>
               <Route element={<AppShell />}>
               <Route index element={<PostLoginRoute />} />
+              <Route path="/console" element={<PostLoginRoute />} />
               <Route
                 path="/overview"
                 element={<OverviewRoute />}

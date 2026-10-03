@@ -1294,7 +1294,7 @@ async fn oidc_callback(
         let (cookie, _) =
             create_session_cookie(&state, session_user.user.id, source_ip.as_deref(), "oidc")
                 .await?;
-        Ok::<_, ApiError>((jar.clone().add(cookie), Redirect::to("/")).into_response())
+        Ok::<_, ApiError>((jar.clone().add(cookie), Redirect::to("/console")).into_response())
     }
     .await;
     match result {

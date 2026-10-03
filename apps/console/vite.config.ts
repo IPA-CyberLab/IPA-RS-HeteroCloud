@@ -1,9 +1,10 @@
 import path from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
+import { publicSite } from "./site/vite-plugin.ts";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [publicSite(), react()],
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),
@@ -13,7 +14,7 @@ export default defineConfig({
     port: 4173,
   },
   test: {
-    include: ["src/**/*.test.{ts,tsx}"],
+    include: ["src/**/*.test.{ts,tsx}", "site/**/*.test.ts"],
     environment: "jsdom",
     setupFiles: "./src/test/setup.ts",
     css: true,

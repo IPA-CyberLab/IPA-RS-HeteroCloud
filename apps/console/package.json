@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node site/build.ts",
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "npm run build && playwright test",
@@ -15,6 +15,8 @@
     "@cloudscape-design/collection-hooks": "^1.0.105",
     "@cloudscape-design/components": "^3.0.1340",
     "@cloudscape-design/global-styles": "^1.0.65",
+    "@fontsource-variable/noto-sans": "5.3.0",
+    "@fontsource-variable/noto-sans-jp": "5.3.0",
     "@tanstack/react-query": "^5.101.4",
     "@tanstack/react-table": "^8.21.3",
     "@xterm/addon-fit": "^0.11.0",

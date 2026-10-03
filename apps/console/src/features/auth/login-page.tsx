@@ -7,6 +7,7 @@ import TopNavigation from "@cloudscape-design/components/top-navigation";
 import { Navigate } from "react-router-dom";
 import { readAuthReturnPath } from "@/features/auth/auth-return";
 import { useSession } from "@/features/auth/session";
+import { PublicSiteLinks } from "@/features/auth/public-site-links";
 
 export function LoginPage() {
   const session = useSession();
@@ -16,7 +17,7 @@ export function LoginPage() {
   return (
     <div className="auth-shell">
       <TopNavigation
-        identity={{ href: "/login", title: "HeteroCloud" }}
+        identity={{ href: "/", title: "HeteroCloud" }}
         utilities={[]}
         i18nStrings={{ overflowMenuTriggerText: "その他", overflowMenuTitleText: "メニュー" }}
       />
@@ -47,6 +48,7 @@ export function LoginPage() {
                 </Button>
               </SpaceBetween>
             </Container>
+            <PublicSiteLinks />
           </SpaceBetween>
         </div>
       </main>

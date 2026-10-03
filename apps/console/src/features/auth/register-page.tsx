@@ -14,11 +14,12 @@ import { type FormEvent, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { sessionQueryOptions, useSession } from "@/features/auth/session";
 import { api, getApiErrorMessage } from "@/lib/api-client";
+import { PublicSiteLinks } from "@/features/auth/public-site-links";
 
 function AuthTopNavigation() {
   return (
     <TopNavigation
-      identity={{ href: "/login", title: "HeteroCloud" }}
+      identity={{ href: "/", title: "HeteroCloud" }}
       utilities={[]}
       i18nStrings={{ overflowMenuTriggerText: "その他", overflowMenuTitleText: "メニュー" }}
     />
@@ -145,6 +146,7 @@ export function RegisterPage() {
                 </Form>
               </form>
             </Container>
+            <PublicSiteLinks />
           </SpaceBetween>
         </div>
       </main>
@@ -168,6 +170,7 @@ function MissingInvitationPage() {
           <Box color="text-body-secondary" textAlign="center" padding={{ top: "l" }}>
             招待URLを確認して、もう一度開いてください。
           </Box>
+          <PublicSiteLinks />
         </div>
       </main>
     </div>

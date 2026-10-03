@@ -24,6 +24,8 @@ selection, packet forwarding, LiveKit, TURN, or matchmaking.
 - A Lean 4 authorization kernel proving the final decision invariants.
 - IAM-authorized, five-minute-or-shorter Flow data-plane access contexts.
 - A React and TypeScript operations console served by the Rust API.
+- A static public website with service introductions, technical explanations,
+  and draft policy documents. [Content and design handoff](docs/public-website.md).
 
 There is deliberately no anonymous self-registration endpoint. Public
 registration will remain invite-gated until phone/payment verification and
