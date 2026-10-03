@@ -22,8 +22,8 @@ try {
     const started = Date.now();
     await page.goto(new URL("/vpc/networks", endpoint).href, { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "VPC", exact: true })).toBeVisible();
-    const readyMs = Date.now() - started;
     await expect(page.getByRole("heading", { name: "vpc-e2e-main", exact: true })).toBeVisible();
+    const readyMs = Date.now() - started;
     const session = await (await context.request.get(new URL("/api/v1/auth/session", endpoint).href)).json();
     if (!session.memberships.some(m => m.organization_id === fixture.tenants[0].organization_id)) throw new Error("Browser is outside the disposable tenant");
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);

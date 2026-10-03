@@ -16,7 +16,7 @@ umask 077
 python3 scripts/e2e/vpc_fixture.py create --dsn-file "$PRIVATE_DIR/database-url" --fixture "$PRIVATE_DIR/fixture.json"
 python3 scripts/e2e/vpc_live.py --endpoint "$HETEROCLOUD_ENDPOINT" --cli heterocloud \
   --fixture "$PRIVATE_DIR/fixture.json" --dsn-file "$PRIVATE_DIR/database-url" \
-  --report "$PRIVATE_DIR/report.json"
+  --report "$PRIVATE_DIR/report.json" --browser-output "$PRIVATE_DIR/browser"
 python3 scripts/e2e/vpc_fixture.py remove --dsn-file "$PRIVATE_DIR/database-url" --fixture "$PRIVATE_DIR/fixture.json"
 ```
 
@@ -42,8 +42,10 @@ The VPC repository's CI also exercises the real kernel guard in isolated Linux
 network namespaces, including route fallback, permit expiry, tunnel routing and
 guard restart. The live test above requires an installed VPC/Flash deployment.
 
-For a real console check against the same deployment, create the browser fixture
-before the live test removes the networks, then run:
+`--browser-output` runs the real console check before cleanup and automatically
+creates its disposable browser session. Install the console's Playwright
+dependencies and Chromium on the test host first. To inspect a retained test
+fixture separately, before removing its networks, run:
 
 ```sh
 python3 scripts/e2e/vpc_fixture.py browser-session \
@@ -52,7 +54,7 @@ node scripts/e2e/vpc_browser.mjs "$HETEROCLOUD_ENDPOINT" \
   "$PRIVATE_DIR/fixture.json" "$PRIVATE_DIR/browser"
 ```
 
-This exercises the production API, desktop/mobile rendering, VPC detail access,
+This exercises the production API, desktop/mobile rendering, VPC data access,
 JavaScript errors, horizontal overflow and the three-second page budget. Its
 short-lived cookie belongs to a disposable test user; it does not test the
 identity provider's interactive login. `remove` deletes this user and session.

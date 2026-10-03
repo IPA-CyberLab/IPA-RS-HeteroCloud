@@ -63,6 +63,7 @@ def main():
     parser.add_argument("--region", default="heteronet-global")
     parser.add_argument("--trace-url", help="Owned HTTPS endpoint returning an ip= line; defaults to endpoint /cdn-cgi/trace")
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--browser-output", type=Path, help="Also test desktop/mobile Chromium against the real console")
     parser.add_argument("--cleanup", action="store_true")
     parser.add_argument("--keep-on-failure", action="store_true")
     args = parser.parse_args()
@@ -76,6 +77,19 @@ def main():
         args.report.write_text(json.dumps(report, indent=2))
         print("PASS " + name, flush=True)
 
+    def delete_flash(api, item):
+        path = "flash/services/" + item["id"]
+        if item["state"] == "deleting":
+            return
+        if item["spec"].get("secret_env") or item["spec"].get("secret_files"):
+            spec = {**item["spec"], "secret_env": {}}
+            spec.pop("secret_files", None)
+            api.call("PUT", path, {"name": item["name"], "spec": spec})
+            api.wait(path)
+        for secret in api.call("GET", path + "/secrets")["items"]:
+            api.call("DELETE", path + "/secrets/" + secret)
+        api.call("DELETE", path)
+
     def clean():
         for api in apis:
             for collection in ["flash/services", "vpc/networks"]:
@@ -83,7 +97,10 @@ def main():
                 for item in items:
                     assert item["project_id"] == api.tenant["project_id"] and item["name"].startswith("vpc-e2e-"), "Refusing to delete a non-fixture service"
                     if item["state"] != "deleting":
-                        api.call("DELETE", collection + "/" + item["id"])
+                        if collection == "flash/services":
+                            delete_flash(api, item)
+                        else:
+                            api.call("DELETE", collection + "/" + item["id"])
                 for item in items:
                     api.wait(collection + "/" + item["id"], deleted=True)
         record("all_test_workloads_and_networks_removed")
@@ -220,6 +237,14 @@ def main():
         cli("vpc", "update", main_vpc["id"], body={"name": main_vpc["name"], "spec": spec})
         expect_probe("child-tcp", True)
         record("explicit_service_to_service_rule")
+        if args.browser_output:
+            assert args.dsn_file, "Browser fixture requires --dsn-file on the administrator test host"
+            if "browser_session" not in json.loads(args.fixture.read_text()):
+                subprocess.run([sys.executable, str(HERE / "vpc_fixture.py"), "browser-session", "--dsn-file", str(args.dsn_file), "--fixture", str(args.fixture)], check=True)
+            subprocess.run(["node", str(HERE / "vpc_browser.mjs"), args.endpoint, str(args.fixture), str(args.browser_output)], check=True, timeout=120)
+            browser_report = json.loads((args.browser_output / "browser-report.json").read_text())
+            assert browser_report["passed"]
+            record("real_console_desktop_mobile_under_three_seconds", browsers=browser_report["records"])
         private_status = child["status"].get("status", child["status"])
         assert private_status.get("private_endpoints"), "Private DNS missing from Flash status"
         public_host = urllib.parse.urlsplit(parent_url).hostname
@@ -244,7 +269,7 @@ def main():
         own_services = api.call("GET", "flash/services")["items"]
         for item in own_services:
             assert item["project_id"] == api.tenant["project_id"] and item["name"].startswith("vpc-e2e-")
-            api.call("DELETE", "flash/services/" + item["id"])
+            delete_flash(api, item)
         for item in own_services:
             api.wait("flash/services/" + item["id"], deleted=True)
         cli("vpc", "delete", main_vpc["id"], "--yes")
