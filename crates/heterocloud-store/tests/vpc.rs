@@ -40,7 +40,7 @@ async fn vpc_isolation_lifecycle_and_concurrent_attachment()
         .await?;
     assert_eq!(v.spec["nat"]["enabled"], false);
     assert_eq!(v.spec["rules"], json!([]));
-    let flash = |id: Uuid, name: &str| json!({"region":"test","image":"docker.io/library/nginx:alpine","replicas":1,"cpu_millis":100,"memory_mib":64,"ephemeral_storage_gib":1,"ports":[{"name":"http","protocol":"tcp","container_port":8080}],"exposure":{"type":"internal","traffic_mode":"forwarded"},"network":{"vpc_id":id,"security_groups":["child"],"private_name":name}});
+    let flash = |id: Uuid, name: &str| json!({"region":"test","image":"docker.io/library/nginx:alpine","replicas":1,"cpu_millis":100,"memory_mib":64,"ephemeral_storage_gib":1,"env":{},"command":[],"args":[],"metadata":{},"ports":[{"name":"http","protocol":"tcp","container_port":8080}],"exposure":{"type":"internal","traffic_mode":"forwarded"},"network":{"vpc_id":id,"security_groups":["child"],"private_name":name}});
     assert!(
         store
             .create_service_instance(

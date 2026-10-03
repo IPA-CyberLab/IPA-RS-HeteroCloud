@@ -24,11 +24,37 @@ def private_write(path, value):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["create", "remove"])
+    parser.add_argument("action", choices=["create", "remove", "grant-parent"])
     parser.add_argument("--dsn-file", required=True, type=Path)
     parser.add_argument("--fixture", required=True, type=Path)
+    parser.add_argument("--vpc-id")
     args = parser.parse_args()
     with psycopg.connect(args.dsn_file.read_text().strip()) as db:
+        if args.action == "grant-parent":
+            fixture = json.loads(args.fixture.read_text())
+            tenant = fixture["tenants"][0]
+            org = tenant["organization_id"]
+            owned = db.execute("SELECT id FROM service_instances WHERE id=%s AND organization_id=%s AND provider='vpc'", (args.vpc_id, org)).fetchone()
+            if not owned or not tenant["slug"].startswith("vpc-e2e-"):
+                raise RuntimeError("Parent scope requires this fixture's own VPC")
+            if "parent_api_key" in tenant:
+                raise RuntimeError("Parent credential already exists; refusing to broaden it")
+            principal, policy = str(uuid.uuid4()), str(uuid.uuid4())
+            prefix = secrets.token_hex(8)
+            token = f"hc_{prefix}_{secrets.token_urlsafe(32)}"
+            document = {"version": "2026-07-31", "statements": [
+                {"effect": "allow", "actions": ["flash:CreateInstance", "flash:ListInstances", "flash:GetInstance"], "resources": [f"hc:org:{org}:flash/*"]},
+                {"effect": "allow", "actions": ["vpc:AttachSecurityGroup"], "resources": [f"hc:org:{org}:vpc/network/{args.vpc_id}/security-group/children"]},
+            ]}
+            digest = hashlib.sha256((Path(__file__).resolve().parents[2] / "lean/HeteroCloud/IAM.lean").read_bytes()).hexdigest()
+            db.execute("INSERT INTO principals(id,organization_id,kind,name) VALUES (%s,%s,'service_account','VPC E2E parent')", (principal, org))
+            db.execute("INSERT INTO iam_policies(id,organization_id,name,document,semantics_digest) VALUES (%s,%s,'VPC E2E parent',%s,%s)", (policy, org, Jsonb(document), digest))
+            db.execute("INSERT INTO iam_bindings(id,organization_id,principal_id,policy_id) VALUES (%s,%s,%s,%s)", (str(uuid.uuid4()), org, principal, policy))
+            db.execute("INSERT INTO api_keys(id,organization_id,principal_id,name,prefix,secret_hash,expires_at) VALUES (%s,%s,%s,'VPC E2E parent',%s,%s,now()+interval '8 hours')", (str(uuid.uuid4()), org, principal, prefix, hashlib.sha256(token.encode()).digest()))
+            tenant["parent_api_key"] = token
+            args.fixture.write_text(json.dumps(fixture))
+            print("Parent key is restricted to Flash creation and the children security group")
+            return
         if args.action == "remove":
             fixture = json.loads(args.fixture.read_text())
             for tenant in fixture["tenants"]:
