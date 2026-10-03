@@ -187,6 +187,16 @@ def main():
         cli("vpc", "update", main_vpc["id"], body={"name": main_vpc["name"], "spec": spec})
         nat = expect_probe("nat", True)
         record("nat_enabled_allows_public_egress", source_ip=nat["source_ip"])
+        parent_spec["egress"] = {"mode": "disabled"}
+        api.call("PUT", "flash/services/" + parent["id"], {"name": parent["name"], "spec": parent_spec})
+        api.wait("flash/services/" + parent["id"])
+        expect_probe("nat", False)
+        record("nat_respects_workload_egress_disabled")
+        parent_spec["egress"] = {"mode": "internet"}
+        api.call("PUT", "flash/services/" + parent["id"], {"name": parent["name"], "spec": parent_spec})
+        api.wait("flash/services/" + parent["id"])
+        expect_probe("nat", True)
+        record("workload_egress_can_be_restored")
         child = expect_probe("create", True)
         child = api.wait("flash/services/" + child["child_id"])
         record("parent_creates_private_child_via_api_and_secret_key", child_id=child["id"])
