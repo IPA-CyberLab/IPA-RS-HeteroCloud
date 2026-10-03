@@ -1,0 +1,19 @@
+{
+  "project_id": "00000000-0000-0000-0000-000000000001",
+  "name": "workspace-one",
+  "spec": {
+    "region": "example-region",
+    "image": "registry.example.com/team/workspace:latest",
+    "replicas": 1,
+    "cpu_millis": 1000,
+    "memory_mib": 1024,
+    "ephemeral_storage_gib": 10,
+    "ports": [{"name": "ssh", "protocol": "tcp", "container_port": 22}],
+    "exposure": {"type": "internal", "traffic_mode": "forwarded"},
+    "network": {
+      "vpc_id": "00000000-0000-0000-0000-000000000002",
+      "security_groups": ["workspaces"],
+      "private_name": "workspace-one"
+    }
+  }
+}

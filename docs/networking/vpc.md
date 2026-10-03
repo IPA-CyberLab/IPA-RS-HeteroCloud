@@ -10,7 +10,7 @@ heterocloud vpc update VPC_ID --file vpc-update.json
 heterocloud flash create --file child.json
 ```
 
-`examples/cli/vpc.json` のプロジェクトIDとリージョンを置き換えてください。Flashの `spec.network` に `vpc_id`、`security_groups`、任意の `private_name` を指定します。外部公開しないサービスには `exposure.type: internal` を指定してください。
+`examples/cli/vpc.json` のプロジェクトIDとリージョンを置き換えてください。子の作成には `examples/cli/flash-vpc-private.json` のプロジェクトID、リージョン、イメージ、作成したVPCのIDを置き換え、`heterocloud flash create --file examples/cli/flash-vpc-private.json` を実行します。Flashの `spec.network` に `vpc_id`、`security_groups`、任意の `private_name` を指定します。外部公開しないサービスには `exposure.type: internal` を指定してください。
 
 ```json
 {

@@ -205,6 +205,7 @@ def main():
         for name in ["wrong-port", "other-group", "other-vpc", "other-org"]:
             expect_probe(name, False)
             record(name + "_denied")
+        spec["rules"][0]["source"] = {"type": "service", "service_id": parent["id"]}
         spec["rules"][0]["destination"] = {"type": "service", "service_id": child["id"]}
         cli("vpc", "update", main_vpc["id"], body={"name": main_vpc["name"], "spec": spec})
         expect_probe("child-tcp", True)
@@ -241,10 +242,17 @@ def main():
         passed = True
     finally:
         keyfile.unlink(missing_ok=True)
-        report["passed"] = passed
-        args.report.write_text(json.dumps(report, indent=2))
-        if passed or not args.keep_on_failure:
-            clean()
+        try:
+            if passed or not args.keep_on_failure:
+                clean()
+        except Exception:
+            passed = False
+            report["cleanup_failed"] = True
+            raise
+        finally:
+            report["passed"] = passed
+            report["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            args.report.write_text(json.dumps(report, indent=2))
 
 
 if __name__ == "__main__":
