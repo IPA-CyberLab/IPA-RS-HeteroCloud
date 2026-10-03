@@ -27,7 +27,7 @@ class Api:
         self.base = endpoint.rstrip("/") + "/api/v1/organizations/" + tenant["organization_id"]
 
     def call(self, method, path, body=None, expected=None):
-        request = urllib.request.Request(self.base + "/" + path, method=method, data=None if body is None else json.dumps(body).encode(), headers={"Authorization": "Bearer " + self.tenant["api_key"], "Content-Type": "application/json"})
+        request = urllib.request.Request(self.base + "/" + path, method=method, data=None if body is None else json.dumps(body).encode(), headers={"Authorization": "Bearer " + self.tenant["api_key"], "Content-Type": "application/json", "User-Agent": "HeteroCloud-VPC-E2E/1.0"})
         try:
             with opener.open(request, timeout=25) as response:
                 status = response.status

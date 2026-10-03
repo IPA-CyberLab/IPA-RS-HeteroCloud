@@ -14,7 +14,7 @@ opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def api(method, path, body=None):
-    request = urllib.request.Request(os.environ["E2E_API_BASE"] + path, data=None if body is None else json.dumps(body).encode(), method=method, headers={"Authorization": "Bearer " + os.environ["HETEROCLOUD_API_KEY"], "Content-Type": "application/json"})
+    request = urllib.request.Request(os.environ["E2E_API_BASE"] + path, data=None if body is None else json.dumps(body).encode(), method=method, headers={"Authorization": "Bearer " + os.environ["HETEROCLOUD_API_KEY"], "Content-Type": "application/json", "User-Agent": "HeteroCloud-VPC-E2E/1.0"})
     with opener.open(request, timeout=12) as response:
         return json.load(response)
 

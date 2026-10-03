@@ -43,8 +43,8 @@ def main():
             prefix = secrets.token_hex(8)
             token = f"hc_{prefix}_{secrets.token_urlsafe(32)}"
             document = {"version": "2026-07-31", "statements": [
-                {"effect": "allow", "actions": ["flash:CreateInstance", "flash:ListInstances", "flash:GetInstance"], "resources": [f"hc:org:{org}:flash/*"]},
-                {"effect": "allow", "actions": ["vpc:AttachSecurityGroup"], "resources": [f"hc:org:{org}:vpc/network/{args.vpc_id}/security-group/children"]},
+                {"effect": "Allow", "actions": ["flash:CreateInstance", "flash:ListInstances", "flash:GetInstance"], "resources": [f"hc:org:{org}:flash/*"]},
+                {"effect": "Allow", "actions": ["vpc:AttachSecurityGroup"], "resources": [f"hc:org:{org}:vpc/network/{args.vpc_id}/security-group/children"]},
             ]}
             digest = hashlib.sha256((Path(__file__).resolve().parents[2] / "lean/HeteroCloud/IAM.lean").read_bytes()).hexdigest()
             db.execute("INSERT INTO principals(id,organization_id,kind,name) VALUES (%s,%s,'service_account','VPC E2E parent')", (principal, org))
@@ -74,7 +74,7 @@ def main():
             slug = "vpc-e2e-" + secrets.token_hex(6)
             prefix = secrets.token_hex(8)
             token = f"hc_{prefix}_{secrets.token_urlsafe(32)}"
-            document = {"version": "2026-07-31", "statements": [{"effect": "allow", "actions": ["*"], "resources": [f"hc:org:{org}:*"]}]}
+            document = {"version": "2026-07-31", "statements": [{"effect": "Allow", "actions": ["*"], "resources": [f"hc:org:{org}:*"]}]}
             db.execute("INSERT INTO organizations(id,slug,name) VALUES (%s,%s,%s)", (org, slug, slug))
             db.execute("INSERT INTO projects(id,organization_id,slug,name) VALUES (%s,%s,'vpc-test','Disposable VPC test')", (project, org))
             db.execute("INSERT INTO principals(id,organization_id,kind,name) VALUES (%s,%s,'service_account','VPC E2E driver')", (principal, org))
