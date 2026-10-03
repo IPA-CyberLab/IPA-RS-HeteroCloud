@@ -88,14 +88,16 @@ mod public_site_tests {
     use std::{fs, path::PathBuf};
     use tower::ServiceExt;
 
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
     struct SiteDirectory(PathBuf);
 
     impl SiteDirectory {
-        fn new() -> Self {
+        fn new() -> std::io::Result<Self> {
             let path =
                 std::env::temp_dir().join(format!("heterocloud-site-{}", uuid::Uuid::new_v4()));
-            fs::create_dir_all(path.join("technology")).unwrap();
-            Self(path)
+            fs::create_dir_all(path.join("technology"))?;
+            Ok(Self(path))
         }
     }
 
@@ -105,32 +107,28 @@ mod public_site_tests {
         }
     }
 
-    async fn get(router: Router, path: &str) -> String {
+    async fn get(router: Router, path: &str) -> TestResult<String> {
         let response = router
-            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+            .oneshot(Request::builder().uri(path).body(Body::empty())?)
+            .await?;
         assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 4096)
-            .await
-            .unwrap();
-        String::from_utf8(body.to_vec()).unwrap()
+        let body = axum::body::to_bytes(response.into_body(), 4096).await?;
+        Ok(String::from_utf8(body.to_vec())?)
     }
 
     #[tokio::test]
-    async fn public_html_and_console_deep_links_use_distinct_entries() {
-        let directory = SiteDirectory::new();
-        fs::write(directory.0.join("index.html"), "public introduction").unwrap();
+    async fn public_html_and_console_deep_links_use_distinct_entries() -> TestResult {
+        let directory = SiteDirectory::new()?;
+        fs::write(directory.0.join("index.html"), "public introduction")?;
         fs::write(
             directory.0.join("technology/index.html"),
             "technology article",
-        )
-        .unwrap();
-        fs::write(directory.0.join("console.html"), "console application").unwrap();
+        )?;
+        fs::write(directory.0.join("console.html"), "console application")?;
         let router = Router::new().fallback_service(console_files(&directory.0));
-        assert_eq!(get(router.clone(), "/").await, "public introduction");
+        assert_eq!(get(router.clone(), "/").await?, "public introduction");
         assert_eq!(
-            get(router.clone(), "/technology/").await,
+            get(router.clone(), "/technology/").await?,
             "technology article"
         );
         for path in [
@@ -140,18 +138,20 @@ mod public_site_tests {
             "/flash/services/example",
             "/cli/authorize?user_code=TEST-CODE",
         ] {
-            assert_eq!(get(router.clone(), path).await, "console application");
+            assert_eq!(get(router.clone(), path).await?, "console application");
         }
+        Ok(())
     }
 
     #[tokio::test]
-    async fn older_console_artifacts_keep_their_spa_fallback() {
-        let directory = SiteDirectory::new();
-        fs::write(directory.0.join("index.html"), "older console").unwrap();
+    async fn older_console_artifacts_keep_their_spa_fallback() -> TestResult {
+        let directory = SiteDirectory::new()?;
+        fs::write(directory.0.join("index.html"), "older console")?;
         let router = Router::new().fallback_service(console_files(&directory.0));
         assert_eq!(
-            get(router, "/cli/authorize?user_code=TEST-CODE").await,
+            get(router, "/cli/authorize?user_code=TEST-CODE").await?,
             "older console"
         );
+        Ok(())
     }
 }
