@@ -1,0 +1,28 @@
+{
+  "project_id": "00000000-0000-0000-0000-000000000001",
+  "name": "public-web",
+  "spec": {
+    "region": "example-region",
+    "image": "nginx:stable-alpine",
+    "replicas": 1,
+    "cpu_millis": 250,
+    "memory_mib": 128,
+    "ephemeral_storage_gib": 1,
+    "ports": [{"name": "http", "protocol": "tcp", "container_port": 80}],
+    "exposure": {
+      "type": "public",
+      "traffic_mode": "forwarded",
+      "endpoint_mode": "web"
+    },
+    "network": {
+      "vpc_id": "00000000-0000-0000-0000-000000000002",
+      "security_groups": ["coder"],
+      "private_name": "public-web"
+    },
+    "egress": {"mode": "disabled"},
+    "env": {},
+    "command": [],
+    "args": [],
+    "metadata": {}
+  }
+}

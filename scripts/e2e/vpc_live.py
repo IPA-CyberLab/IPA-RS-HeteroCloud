@@ -249,13 +249,34 @@ def main():
         assert private_status.get("private_endpoints"), "Private DNS missing from Flash status"
         public_host = urllib.parse.urlsplit(parent_url).hostname
         child_public = "https://f-" + child["id"] + "." + public_host.split(".", 1)[1]
-        try:
-            with opener.open(child_public, timeout=15) as response:
-                body = response.read(8192).decode()
-                assert marker not in body, "Private child became publicly reachable"
-                raise AssertionError(f"Unexpected public child route: HTTP {response.status}")
-        except urllib.error.HTTPError as error:
-            assert error.code in (404, 421), f"Unexpected private-host response: {error.code}"
+
+        def expect_public_child(allowed, seconds=75):
+            deadline = time.monotonic() + seconds
+            last = None
+            while time.monotonic() < deadline:
+                try:
+                    # A fresh request reaches the external HTTPS gateway, with
+                    # no tenant credential. Transport/DNS failures never prove
+                    # successful route withdrawal.
+                    request = urllib.request.Request(child_public, headers={"Cache-Control": "no-cache", "Connection": "close", "User-Agent": "HeteroCloud-VPC-E2E/1.0"})
+                    with opener.open(request, timeout=15) as response:
+                        last = response.status
+                        body = response.read(8192)
+                        if allowed and response.status == 200:
+                            payload = json.loads(body)
+                            assert payload["marker"] == marker, "Public route reached the wrong workload"
+                            assert not payload["parent_key_present"]
+                            return
+                except urllib.error.HTTPError as error:
+                    last = error.code
+                    if not allowed and error.code in (404, 421):
+                        return
+                except (urllib.error.URLError, TimeoutError) as error:
+                    last = type(error).__name__
+                time.sleep(3)
+            raise AssertionError(f"Public child: expected allowed={allowed}, last={last}")
+
+        expect_public_child(False)
         record("private_child_has_no_public_route")
         api.call("DELETE", "vpc/networks/" + main_vpc["id"], expected=[400, 409])
         record("attached_vpc_deletion_refused")
@@ -266,6 +287,39 @@ def main():
         expect_probe("child-udp", False)
         expect_probe("nat", False)
         record("rule_and_nat_revocation_blocks_new_connections")
+
+        # Publishing one VPC service is independent of both NAT and private
+        # peer grants. Keep NAT disabled throughout the following transitions.
+        child_path = "flash/services/" + child["id"]
+        private_spec = {**child_manifest["spec"], "egress": {"mode": "disabled"}}
+        public_spec = {**private_spec, "ports": private_spec["ports"][:1], "exposure": {"type": "public", "traffic_mode": "forwarded", "endpoint_mode": "web"}}
+        cli("flash", "update", child["id"], body={"name": child["name"], "spec": public_spec})
+        published = api.wait(child_path)
+        observed = published["status"].get("status", published["status"])
+        assert observed.get("private_endpoints"), "Publishing lost private endpoints"
+        assert len(observed.get("endpoints", [])) == 1, "Expected one HTTPS endpoint"
+        endpoint = observed["endpoints"][0]
+        assert endpoint["protocol"] == "tcp" and endpoint["port"] == 443
+        returned_url = endpoint["host"].rstrip("/") if endpoint["host"].startswith("https://") else "https://" + endpoint["host"]
+        assert returned_url == child_public, "Returned public endpoint differs from the service hostname"
+        child_public = returned_url
+        assert published["spec"]["network"] == private_spec["network"]
+        assert not api.call("GET", "vpc/networks/" + main_vpc["id"])["spec"]["nat"]["enabled"]
+        expect_public_child(True)
+        record("selected_vpc_service_public_https_with_nat_and_egress_disabled")
+        expect_probe("child-tcp", False)
+        expect_probe("other-group", False)
+        record("publishing_does_not_grant_private_peer_access")
+        spec["rules"] = [{"source": {"type": "service", "service_id": parent["id"]}, "destination": {"type": "service", "service_id": child["id"]}, "protocol": "tcp", "port": 8080}]
+        cli("vpc", "update", main_vpc["id"], body={"name": main_vpc["name"], "spec": spec})
+        expect_probe("child-tcp", True)
+        expect_public_child(True)
+        record("public_https_and_allowed_private_dns_work_together")
+        cli("flash", "update", child["id"], body={"name": child["name"], "spec": private_spec})
+        api.wait(child_path)
+        expect_public_child(False)
+        expect_probe("child-tcp", True)
+        record("withdrawing_public_https_preserves_allowed_private_connections")
         own_services = api.call("GET", "flash/services")["items"]
         for item in own_services:
             assert item["project_id"] == api.tenant["project_id"] and item["name"].startswith("vpc-e2e-")

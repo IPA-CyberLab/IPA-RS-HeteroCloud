@@ -26,6 +26,30 @@ denial, NAT enable/disable, rule revocation, no public child route, scoped paren
 authorization, no automatic secret inheritance, and cleanup. DNS failures do
 not count as successful policy-denial tests.
 
+It also publishes the private child over HTTPS through the CLI with both NAT
+and workload egress disabled. It verifies that private peer access still needs
+an explicit VPC rule, that public and permitted private access work together,
+and that withdrawing the public route preserves the permitted private path.
+These checks use fresh unauthenticated requests to the external gateway. Route
+withdrawal requires an HTTP 404/421; DNS failures and timeouts do not pass.
+
+To exercise the documented nginx public example and the exact HTTPS endpoint
+returned by the CLI, create a separate empty fixture and run:
+
+```sh
+python3 scripts/e2e/vpc_fixture.py create --dsn-file "$PRIVATE_DIR/database-url" --fixture "$PRIVATE_DIR/example-fixture.json"
+python3 scripts/e2e/vpc_public_example.py --endpoint "$HETEROCLOUD_ENDPOINT" \
+  --region "$HETEROCLOUD_REGION" --cli heterocloud \
+  --fixture "$PRIVATE_DIR/example-fixture.json" --report "$PRIVATE_DIR/example-report.json"
+python3 scripts/e2e/vpc_fixture.py remove --dsn-file "$PRIVATE_DIR/database-url" --fixture "$PRIVATE_DIR/example-fixture.json"
+```
+
+This runs `examples/cli/vpc.json` and `examples/cli/flash-vpc-public.json` with
+fixture IDs and the selected region. It checks HTTPS access with NAT and egress
+disabled, switches to private access, checks withdrawal using the same returned
+URL, and removes its resources. Do not share this fixture with the full live
+test running at the same time.
+
 For debugging, `--keep-on-failure` retains only these disposable resources;
 rerun with `--cleanup` before removing the fixture. Expired keys can be revoked
 by removing the fixture after its services are deleted. The parent HTTP probe

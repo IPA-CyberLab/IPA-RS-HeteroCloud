@@ -1,0 +1,365 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-04T03:23:57.811860+00:00",
+  "overall_passed": false,
+  "runtime_changed": false,
+  "versions": {
+    "heterocloud_and_cli": "0.1.93",
+    "flash": "0.1.41",
+    "vpc": "0.1.3"
+  },
+  "main_e2e": {
+    "endpoint": "https://heterocloud.mizuame.app",
+    "started_at": "2026-10-04T02:47:25Z",
+    "checks": [
+      {
+        "name": "api_and_cli_vpc_lifecycle_private_defaults",
+        "passed": true
+      },
+      {
+        "name": "cross_organization_api_access_and_attachment_denied",
+        "passed": true
+      },
+      {
+        "name": "nat_disabled_blocks_public_egress",
+        "passed": true
+      },
+      {
+        "name": "nat_enabled_allows_public_egress",
+        "passed": true,
+        "source_ip": "163.220.236.61"
+      },
+      {
+        "name": "nat_respects_workload_egress_disabled",
+        "passed": true
+      },
+      {
+        "name": "workload_egress_can_be_restored",
+        "passed": true
+      },
+      {
+        "name": "parent_creates_private_child_via_api_and_secret_key",
+        "passed": true,
+        "child_id": "01a104d9-3e57-71e0-bb2b-bca229611b56"
+      },
+      {
+        "name": "parent_cannot_attach_unauthorized_security_group",
+        "passed": true
+      },
+      {
+        "name": "private_traffic_default_deny_tcp_and_udp",
+        "passed": true
+      },
+      {
+        "name": "private_dns_tcp_udp_and_no_child_secret_inheritance",
+        "passed": true
+      },
+      {
+        "name": "wrong-port_denied",
+        "passed": true
+      },
+      {
+        "name": "other-group_denied",
+        "passed": true
+      },
+      {
+        "name": "other-vpc_denied",
+        "passed": true
+      },
+      {
+        "name": "other-org_denied",
+        "passed": true
+      },
+      {
+        "name": "explicit_service_to_service_rule",
+        "passed": true
+      },
+      {
+        "name": "real_console_desktop_mobile_under_three_seconds",
+        "passed": true,
+        "browsers": [
+          {
+            "browser": "desktop",
+            "ready_ms": 1598,
+            "real_api": true,
+            "passed": true
+          },
+          {
+            "browser": "mobile",
+            "ready_ms": 1491,
+            "real_api": true,
+            "passed": true
+          }
+        ]
+      },
+      {
+        "name": "private_child_has_no_public_route",
+        "passed": true
+      },
+      {
+        "name": "attached_vpc_deletion_refused",
+        "passed": true
+      },
+      {
+        "name": "rule_and_nat_revocation_blocks_new_connections",
+        "passed": true
+      },
+      {
+        "name": "selected_vpc_service_public_https_with_nat_and_egress_disabled",
+        "passed": true
+      },
+      {
+        "name": "publishing_does_not_grant_private_peer_access",
+        "passed": true
+      },
+      {
+        "name": "public_https_and_allowed_private_dns_work_together",
+        "passed": true
+      },
+      {
+        "name": "withdrawing_public_https_preserves_allowed_private_connections",
+        "passed": true
+      },
+      {
+        "name": "cli_deletes_detached_vpc_and_waits_for_cleanup",
+        "passed": true
+      }
+    ],
+    "resources": [
+      {
+        "organization_id": "45cdfb22-ce88-453e-8538-871383c96126",
+        "provider": "vpc",
+        "id": "01a104cf-21ec-70a1-8263-d2d9b0188ed7"
+      },
+      {
+        "organization_id": "45cdfb22-ce88-453e-8538-871383c96126",
+        "provider": "vpc",
+        "id": "01a104cf-41aa-7822-bcb5-59cfccad4c25"
+      },
+      {
+        "organization_id": "4cacf700-49cf-4c9d-bc0c-0cdda1702fa5",
+        "provider": "vpc",
+        "id": "01a104cf-5123-7c90-ba3a-8a5d02019f12"
+      },
+      {
+        "organization_id": "45cdfb22-ce88-453e-8538-871383c96126",
+        "provider": "flash",
+        "id": "01a104cf-6488-7692-adc2-e23af48f32e0"
+      },
+      {
+        "organization_id": "45cdfb22-ce88-453e-8538-871383c96126",
+        "provider": "flash",
+        "id": "01a104d0-6bf6-7490-929b-b0a77fb787be"
+      },
+      {
+        "organization_id": "4cacf700-49cf-4c9d-bc0c-0cdda1702fa5",
+        "provider": "flash",
+        "id": "01a104d1-7acd-7a90-8c48-e591b95328bf"
+      },
+      {
+        "organization_id": "45cdfb22-ce88-453e-8538-871383c96126",
+        "provider": "flash",
+        "id": "01a104d2-799a-7962-9d28-bb0cc82e89aa"
+      }
+    ],
+    "cleanup_failed": true,
+    "passed": false,
+    "finished_at": "2026-10-04T03:13:49Z"
+  },
+  "public_example_attempts": [
+    {
+      "started_at": "2026-10-04T03:07:26Z",
+      "passed": false,
+      "checks": [
+        {
+          "name": "public_example_resources_removed",
+          "passed": true
+        }
+      ],
+      "resources": [
+        {
+          "provider": "vpc",
+          "id": "01a104e1-73e3-78c1-8f3b-2ebe5bfeaf54"
+        }
+      ],
+      "finished_at": "2026-10-04T03:12:14Z"
+    },
+    {
+      "started_at": "2026-10-04T03:13:11Z",
+      "passed": false,
+      "checks": [
+        {
+          "name": "documented_public_vpc_example_created_through_cli",
+          "passed": true
+        },
+        {
+          "name": "api_returned_https_endpoint_works_with_nat_and_egress_disabled",
+          "passed": true
+        },
+        {
+          "name": "returned_public_url_is_withdrawn_and_private_endpoints_are_preserved",
+          "passed": true
+        }
+      ],
+      "resources": [
+        {
+          "provider": "vpc",
+          "id": "01a104e6-b846-7e22-97d4-fd82a6fe8277"
+        },
+        {
+          "provider": "flash",
+          "id": "01a104e6-ca6b-78c2-9557-dba30bb4484b"
+        }
+      ],
+      "cleanup_failed": true,
+      "finished_at": "2026-10-04T03:17:12Z"
+    }
+  ],
+  "failures": [
+    {
+      "phase": "main_e2e_cleanup",
+      "operation": "GET vpc/networks during deletion polling",
+      "http_status": 503,
+      "resolved": false
+    },
+    {
+      "phase": "public_example_attempt_1",
+      "reason": "Docker Hub image pull TLS handshake timeout",
+      "node": "ichikawap1",
+      "subsequent_attempt_started_and_verified_https": true
+    },
+    {
+      "phase": "public_example_attempt_2_cleanup",
+      "operation": "GET vpc/networks during deletion polling",
+      "http_status": 503,
+      "resolved": false
+    },
+    {
+      "phase": "passive_endpoint_observer",
+      "operation": "GET flash/services",
+      "http_status": 503,
+      "resolved": false
+    }
+  ],
+  "subsequent_api_read_observation": {
+    "requests": 12,
+    "status_codes": [
+      200
+    ],
+    "max_seconds": 0.392,
+    "first_at": "2026-10-04T03:14:53Z",
+    "last_at": "2026-10-04T03:15:06Z",
+    "interpretation": "Subsequent successful reads do not establish that the intermittent HTTP 503 is fixed."
+  },
+  "cleanup_recovery": {
+    "main": {
+      "endpoint": "https://heterocloud.mizuame.app",
+      "started_at": "2026-10-04T03:15:27Z",
+      "checks": [
+        {
+          "name": "all_test_workloads_and_networks_removed",
+          "passed": true
+        }
+      ],
+      "resources": []
+    },
+    "example": {
+      "endpoint": "https://heterocloud.mizuame.app",
+      "started_at": "2026-10-04T03:19:55Z",
+      "checks": [
+        {
+          "name": "all_test_workloads_and_networks_removed",
+          "passed": true
+        }
+      ],
+      "resources": []
+    },
+    "audit": {
+      "observed_at": "2026-10-04T03:22:20.576856+00:00",
+      "kubernetes_remaining": {
+        "pods": 0,
+        "deployments": 0,
+        "services": 0,
+        "persistentvolumeclaims": 0,
+        "networkpolicies": 0,
+        "serviceaccounts": 0,
+        "flashservices": 0,
+        "vpcnetworks": 0,
+        "egresspolicies": 0,
+        "egressgateways": 0,
+        "namespaces": 0
+      },
+      "database_remaining": {
+        "organizations": 0,
+        "api_keys": 0,
+        "service_instances": 0,
+        "browser_users": 0,
+        "browser_sessions": 0
+      },
+      "fixture_organizations_removed": 4,
+      "argo_cd": [
+        {
+          "name": "heterocloud",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "b9ceed195dcf9832638c9f8406b9b3aa89a4f2de"
+        },
+        {
+          "name": "heterocloud-flash",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "80bc9fedaf2132a3e4a9a66d45d1b8520d0dd84f"
+        },
+        {
+          "name": "heterocloud-vpc",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "0c3ecaa7446470b3e74045056513cbdce32a6dde"
+        },
+        {
+          "name": "heterocloud-vpc-egress",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "0c3ecaa7446470b3e74045056513cbdce32a6dde"
+        }
+      ],
+      "failed_image_pull_service_checked": "01a104e1-bf08-71c0-95ed-0b02afc1f71e",
+      "failed_image_pull_service_objects_remaining": 0
+    }
+  },
+  "local_regression_tests": [
+    {
+      "repository": "IPA-RS-HeteroCloud-Flash",
+      "test": "reconcile::tests::vpc_attachment_does_not_inherit_organization_or_public_egress_grants",
+      "passed": true
+    },
+    {
+      "repository": "IPA-RS-HeteroCloud-Flash",
+      "test": "reconcile::tests::web_service_route_status_and_proxy_isolation",
+      "passed": true
+    }
+  ],
+  "agent_review": {
+    "requested": "Daybreak Blue",
+    "daybreak_blue_used": false,
+    "actual": "Ordinary Codex review sub-agent",
+    "blocking_implementation_findings": 0,
+    "coverage_improvement": "Validate the endpoint returned by the API; the public example separately exercised this endpoint.",
+    "availability": "Daybreak Blue was not available in this session’s agent selection or integration search."
+  },
+  "execution_sources": {
+    "main_executed_sha256": "4ac6a03e4b32fb2c117b5b3ac19501fb38e5031dc7dea9d01ec5da6955d97086",
+    "current_main_sha256": "7c2f6c5361019755931e0c9a3396c7b19811b09275890273d1a7c92edc9d971b",
+    "public_example_sha256": "80ed2927cf272a9e04a3048c730dcac36513f443c4698e5a246c706ec55906f8",
+    "note": "The main run started before the final returned-endpoint assertion was added. The separate public example verified the API-returned HTTPS endpoint and its withdrawal."
+  },
+  "scope_notes": [
+    "Real tenant API/CLI, VPC TCP/UDP data plane, NAT, HTTPS ingress and Chromium; no mocked network results.",
+    "Twenty-four main checks and three public-example checks passed. Both complete runs failed during cleanup polling and remain marked unsuccessful.",
+    "Cleanup was subsequently recovered and independently verified; all four fixture organizations, their keys, the browser identity and test workloads were removed.",
+    "New private connections after public withdrawal were tested; uninterrupted existing connections were not tested.",
+    "Raw public TCP/UDP and ingress source CIDRs were not included in this run.",
+    "Browser session used a disposable database fixture; interactive identity-provider login was not tested.",
+    "No Daybreak Blue execution occurred."
+  ]
+}
