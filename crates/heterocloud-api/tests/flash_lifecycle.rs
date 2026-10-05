@@ -25,6 +25,7 @@ async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
     let Ok(url) = env::var("HETEROCLOUD_TEST_DATABASE_URL") else {
         return Ok(());
     };
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let store = Store::connect(&url, 8).await?;
     let db: String = sqlx::query_scalar("SELECT current_database()")
         .fetch_one(store.pool())

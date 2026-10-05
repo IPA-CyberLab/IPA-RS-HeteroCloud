@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--cli", default="heterocloud")
     parser.add_argument("--region", default="heteronet-global")
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--browser-output", type=Path, help="Test real desktop/mobile Chromium using the fixture browser session")
     parser.add_argument("--cleanup", action="store_true")
     args = parser.parse_args()
     fixture = json.loads(args.fixture.read_text())
@@ -148,6 +149,14 @@ def main():
             repeated=api.call("POST",path+"/start")
             assert repeated["generation"]==resumed["generation"]
             record("repeated_start_is_inert")
+        if args.browser_output:
+            subprocess.run(["node", str(Path(__file__).with_name("flash_lifecycle_browser.mjs")),
+                args.endpoint, str(args.fixture), service["id"], str(args.browser_output)], check=True, timeout=700)
+            browser_report=json.loads((args.browser_output/"browser-report.json").read_text())
+            assert browser_report["passed"]
+            record("real_console_desktop_and_mobile_stop_start", records=browser_report["records"])
+            asyncio.run(exec_marker("test \"$LIFECYCLE_TOKEN\" = 'fixture-"+nonce+"' && cat /root/lifecycle-marker",marker))
+            record("persistent_file_and_secret_retained_after_console_cycles")
         report["passed"]=True
     finally:
         try:

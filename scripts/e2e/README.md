@@ -15,6 +15,10 @@ and file contents in the new container. It deletes its services/VPC afterward.
 Run `vpc_fixture.py create` before and `remove` after, as below. It additionally
 requires `websockets`; no existing user's services are modified. If cleanup
 fails, use the same command with `--cleanup` before removing the fixture.
+For real desktop/mobile console stop/start, first run the fixture helper's
+`browser-session` action, then add `--browser-output "$PRIVATE_DIR/lifecycle-browser"`.
+The browser test uses the real API, verifies a three-second page budget and
+retains the file and secret across both console cycles. It does not test OIDC.
 
 This test provisions real Flash workloads through the public API and CLI. It
 uses two disposable tenants, never existing users' services. The parent receives
