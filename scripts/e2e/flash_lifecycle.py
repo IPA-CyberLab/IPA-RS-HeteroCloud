@@ -116,7 +116,10 @@ def main():
 
         # Construct the marker at runtime; terminal echo cannot satisfy this check.
         marker = "PERSIST_"+nonce+"_OK"
-        old_pod = asyncio.run(exec_marker("printf 'PERSIST_%s_OK' '"+nonce+"' > /root/lifecycle-marker; test \"$LIFECYCLE_TOKEN\" = 'fixture-"+nonce+"' && cat /root/lifecycle-marker",marker))
+        # Kubernetes exec starts a separate process with the Pod's configured env.
+        # Secret injection happens in the application launcher, so inspect PID 1.
+        verify = "python3 -c \"from pathlib import Path; assert b'LIFECYCLE_TOKEN=fixture-"+nonce+"' in Path('/proc/1/environ').read_bytes().split(b'\\\\0'); print(Path('/root/lifecycle-marker').read_text())\""
+        old_pod = asyncio.run(exec_marker("printf 'PERSIST_%s_OK' '"+nonce+"' > /root/lifecycle-marker; "+verify,marker))
         record("persistent_file_written_and_secret_injected")
         with tempfile.TemporaryDirectory(prefix="hc-lifecycle-key-") as private:
             keyfile=Path(private)/"api-key"; keyfile.write_text(tenant["api_key"]); keyfile.chmod(0o600)
@@ -144,7 +147,7 @@ def main():
             assert resumed["id"]==original["id"] and resumed["spec"]==original["spec"]
             inner=resumed["status"].get("status",resumed["status"])
             assert not inner["stopped"] and inner["ready_replicas"]==1
-            new_pod=asyncio.run(exec_marker("test \"$LIFECYCLE_TOKEN\" = 'fixture-"+nonce+"' && cat /root/lifecycle-marker",marker))
+            new_pod=asyncio.run(exec_marker(verify,marker))
             assert new_pod!=old_pod
             record("cli_resume_creates_new_container_with_same_home_and_secret", generation=resumed["generation"])
             repeated=api.call("POST",path+"/start")
@@ -156,9 +159,13 @@ def main():
             browser_report=json.loads((args.browser_output/"browser-report.json").read_text())
             assert browser_report["passed"]
             record("real_console_desktop_and_mobile_stop_start", records=browser_report["records"])
-            asyncio.run(exec_marker("test \"$LIFECYCLE_TOKEN\" = 'fixture-"+nonce+"' && cat /root/lifecycle-marker",marker))
+            asyncio.run(exec_marker(verify,marker))
             record("persistent_file_and_secret_retained_after_console_cycles")
         report["passed"]=True
+    except Exception as error:
+        report["error_type"]=type(error).__name__
+        save()
+        raise
     finally:
         try:
             cleanup()
