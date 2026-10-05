@@ -1,6 +1,6 @@
 ---
 name: heterocloud-cli-setup
-description: Install or update the HeteroCloud CLI and complete browser sign-in on Linux, macOS, or Windows. Use for HeteroCloud CLI installation or initial setup requests, not for deploying HeteroCloud services.
+description: Install or update the HeteroCloud CLI and complete device-code sign-in on Linux, macOS, or Windows. Use for HeteroCloud CLI installation or initial setup requests, not for deploying HeteroCloud services.
 ---
 
 # HeteroCloud CLI setup
@@ -10,6 +10,22 @@ session. Use the endpoint origin and organization UUID supplied by the user or
 their HeteroCloud console. HeteroCloud may be hosted at any domain; never assume
 a particular production hostname. If either value is missing, continue the
 installation and ask for only the missing value before login.
+
+For an existing CLI that supports the update command, run
+`heterocloud update --check` to inspect the current/latest versions and
+`heterocloud update` to install the latest stable release when setup or updating
+has been requested. The command selects the native OS/CPU archive, verifies its
+SHA-256 and replaces the executable while retaining login settings. Use the
+installation user's normal privilege elevation when the binary directory requires
+it. For an older CLI without `update`, follow the download/install steps below.
+Verify `heterocloud --version` after updating. `heterocloud update --force`
+reinstalls the same stable version and never downgrades.
+
+Normal commands check for a newer release at most every six hours and print an
+update notice to stderr after execution; JSON stdout and exit status are preserved.
+Offline checks are quiet and retry after five minutes. The notice does not install
+software. `HETEROCLOUD_NO_UPDATE_CHECK=1` disables these checks for automation;
+`update --check` still performs an explicit check.
 
 1. Detect the OS and native CPU architecture. Releases support Linux, macOS,
    and Windows on x64 and ARM64. Get the current stable release from
@@ -25,11 +41,11 @@ installation and ask for only the missing value before login.
    the downloaded release.
 3. For first-time setup, or when the existing login is invalid or belongs to
    another endpoint or organization, run
-   `heterocloud --endpoint <origin> --organization-id <uuid> auth login`. For an
-   explicitly supplied HTTP origin, add `--allow-insecure-http`. In a headless
-   session, use `auth login --no-browser` and let the user open the displayed
-   URL. The user completes the configured identity-provider login and approves
-   the CLI in the browser. A successful login saves the active endpoint and
+   `heterocloud --endpoint <origin> --organization-id <uuid> auth login --device-code`.
+   For an explicitly supplied HTTP origin, add `--allow-insecure-http`. Keep
+   the CLI running while the user opens the short verification URL in a browser,
+   signs in through the configured identity provider, enters the code shown by
+   the CLI, and approves the request. The CLI then saves the active endpoint and
    organization, so persistent shell variables are optional.
 4. After the CLI exits successfully, run `heterocloud auth status`. Check that
    it returns the expected organization, user, endpoint, and token expiry. If
@@ -38,7 +54,8 @@ installation and ask for only the missing value before login.
    complete before status succeeds.
 
 Do not request or generate an API key for interactive login. Do not repeat the
-device URL, verification code, access token, or credential-file contents in
-chat, shell history, or logs. Do not create, change, or delete cloud resources
+verification code, access token, or credential-file contents in chat, shell
+history, or logs. Never put the code into a URL; the user enters it on the
+verification page. Do not create, change, or delete cloud resources
 as part of CLI setup. Report the installed binary path, version, endpoint,
 organization, and authentication status without revealing credentials.

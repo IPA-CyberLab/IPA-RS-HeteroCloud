@@ -11,6 +11,22 @@ their HeteroCloud console. HeteroCloud may be hosted at any domain; never assume
 a particular production hostname. If either value is missing, continue the
 installation and ask for only the missing value before login.
 
+For an existing CLI that supports the update command, run
+`heterocloud update --check` to inspect the current/latest versions and
+`heterocloud update` to install the latest stable release when setup or updating
+has been requested. The command selects the native OS/CPU archive, verifies its
+SHA-256 and replaces the executable while retaining login settings. Use the
+installation user's normal privilege elevation when the binary directory requires
+it. For an older CLI without `update`, follow the download/install steps below.
+Verify `heterocloud --version` after updating. `heterocloud update --force`
+reinstalls the same stable version and never downgrades.
+
+Normal commands check for a newer release at most every six hours and print an
+update notice to stderr after execution; JSON stdout and exit status are preserved.
+Offline checks are quiet and retry after five minutes. The notice does not install
+software. `HETEROCLOUD_NO_UPDATE_CHECK=1` disables these checks for automation;
+`update --check` still performs an explicit check.
+
 1. Detect the OS and native CPU architecture. Releases support Linux, macOS,
    and Windows on x64 and ARM64. Get the current stable release from
    `https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/releases/latest`. Select
