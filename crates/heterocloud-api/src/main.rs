@@ -113,7 +113,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         secrets.flow_access_secret,
         secrets.oidc_client_secret,
     )?;
+    let workload_identity =
+        heterocloud_api::workload_identity::WorkloadIdentity::from_environment()
+            .await?
+            .map(Arc::new);
     let state = Arc::new(AppState {
+        workload_identity,
         store,
         config: runtime,
         flow_client: provider_client,

@@ -199,3 +199,5 @@ mod public_site_tests {
         Ok(())
     }
 }
+
+pub mod workload_identity;

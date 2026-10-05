@@ -78,6 +78,8 @@ jobs:
             cargo test --locked -p heterocloud-api --test gpu_access
           HETEROCLOUD_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
             cargo test --locked -p heterocloud-api --test flash_lifecycle
+          HETEROCLOUD_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+            cargo test --locked -p heterocloud-api --test workload_identity
           HETEROCLOUD_STORE_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
             cargo test --locked -p heterocloud-store --test gpu_access
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings

@@ -394,3 +394,7 @@ include provider URLs, response bodies, credentials, authorization codes,
 tokens, or raw transport errors. Public error responses remain unchanged.
 
 VPC・Flashのプライベート接続: [設定方法](docs/networking/vpc.md)
+
+FlashタスクIAM: [ロールの設定と自動認証](docs/iam/workload-identity.md)
+
+ロードバランサー認証: [認証なし／OIDCの設定](docs/networking/load-balancer-oidc.md)

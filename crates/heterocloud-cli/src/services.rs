@@ -43,6 +43,11 @@ pub struct FlashArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum FlashCommand {
+    /// Write or remove credentials for optional HTTP load balancer OIDC.
+    LoadBalancerSecret {
+        #[command(subcommand)]
+        command: LoadBalancerSecretCommand,
+    },
     /// Start a stopped service with its existing settings and persistent home.
     Start {
         #[arg(value_name = "SERVICE_ID")]
@@ -59,6 +64,239 @@ pub enum FlashCommand {
     },
     #[command(flatten)]
     Service(ServiceCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LoadBalancerSecretCommand {
+    /// Read the client secret from a file or stdin, never a command line argument.
+    Set {
+        id: Uuid,
+        name: String,
+        #[arg(short, long, default_value = "-", value_name = "PATH")]
+        file: String,
+    },
+    /// Remove a detached client secret from both credential stores.
+    Delete {
+        id: Uuid,
+        name: String,
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct IamArgs {
+    #[command(subcommand)]
+    pub command: IamCommand,
+}
+#[derive(Debug, Subcommand)]
+pub enum IamCommand {
+    /// Show the current user, service account, or workload identity.
+    Whoami,
+    ServiceAccounts {
+        #[command(subcommand)]
+        command: IamAccountCommand,
+    },
+    Policies {
+        #[command(subcommand)]
+        command: IamPolicyCommand,
+    },
+    Bindings {
+        #[command(subcommand)]
+        command: IamBindingCommand,
+    },
+    ApiKeys {
+        #[command(subcommand)]
+        command: IamApiKeyCommand,
+    },
+}
+#[derive(Debug, Subcommand)]
+pub enum IamAccountCommand {
+    List,
+    Create {
+        #[arg(long)]
+        name: String,
+    },
+    SetEnabled {
+        id: Uuid,
+        #[arg(long, action=clap::ArgAction::Set)]
+        enabled: bool,
+    },
+}
+#[derive(Debug, Subcommand)]
+pub enum IamPolicyCommand {
+    List,
+    Create {
+        #[arg(short, long, default_value = "-")]
+        file: String,
+    },
+}
+#[derive(Debug, Subcommand)]
+pub enum IamBindingCommand {
+    List,
+    Create {
+        #[arg(long)]
+        principal_id: Uuid,
+        #[arg(long)]
+        policy_id: Uuid,
+    },
+    Delete {
+        id: Uuid,
+        #[arg(long)]
+        yes: bool,
+    },
+}
+#[derive(Debug, Subcommand)]
+pub enum IamApiKeyCommand {
+    List {
+        principal_id: Uuid,
+    },
+    Create {
+        principal_id: Uuid,
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value_t=30, value_parser=clap::value_parser!(u16).range(1..=365))]
+        expires_in_days: u16,
+        /// Save the one-time response to a new private file; never print its key.
+        #[arg(long)]
+        output_file: PathBuf,
+    },
+    Revoke {
+        principal_id: Uuid,
+        id: Uuid,
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+pub(crate) async fn execute_iam(args: IamArgs, settings: ApiSettings) -> Result<(), CliError> {
+    let client = ApiClient::new(settings)?;
+    let mut output_file = None;
+    let (method, path, body) = match args.command {
+        IamCommand::Whoami => (Method::GET, "api/v1/auth/identity".into(), None),
+        IamCommand::ServiceAccounts { command } => match command {
+            IamAccountCommand::List => (Method::GET, "iam/principals".into(), None),
+            IamAccountCommand::Create { name } => (
+                Method::POST,
+                "iam/principals".into(),
+                Some(json!({"name":name})),
+            ),
+            IamAccountCommand::SetEnabled { id, enabled } => (
+                Method::PATCH,
+                format!("iam/principals/{id}"),
+                Some(json!({"enabled":enabled})),
+            ),
+        },
+        IamCommand::Policies { command } => match command {
+            IamPolicyCommand::List => (Method::GET, "iam/policies".into(), None),
+            IamPolicyCommand::Create { file } => (
+                Method::POST,
+                "iam/policies".into(),
+                Some(read_manifest::<Value>(&file)?),
+            ),
+        },
+        IamCommand::Bindings { command } => match command {
+            IamBindingCommand::List => (Method::GET, "iam/bindings".into(), None),
+            IamBindingCommand::Create {
+                principal_id,
+                policy_id,
+            } => (
+                Method::POST,
+                "iam/bindings".into(),
+                Some(json!({"principal_id":principal_id,"policy_id":policy_id})),
+            ),
+            IamBindingCommand::Delete { id, yes } => {
+                require_yes(yes)?;
+                (Method::DELETE, format!("iam/bindings/{id}"), None)
+            }
+        },
+        IamCommand::ApiKeys { command } => match command {
+            IamApiKeyCommand::List { principal_id } => (
+                Method::GET,
+                format!("iam/principals/{principal_id}/api-keys"),
+                None,
+            ),
+            IamApiKeyCommand::Create {
+                principal_id,
+                name,
+                expires_in_days,
+                output_file: file,
+            } => {
+                if file.exists() {
+                    return Err(CliError::InvalidManifest(
+                        "output file already exists".into(),
+                    ));
+                }
+                output_file = Some(file);
+                (
+                    Method::POST,
+                    format!("iam/principals/{principal_id}/api-keys"),
+                    Some(json!({"name":name,"expires_in_days":expires_in_days})),
+                )
+            }
+            IamApiKeyCommand::Revoke {
+                principal_id,
+                id,
+                yes,
+            } => {
+                require_yes(yes)?;
+                (
+                    Method::DELETE,
+                    format!("iam/principals/{principal_id}/api-keys/{id}"),
+                    None,
+                )
+            }
+        },
+    };
+    let path = if path.starts_with("api/") {
+        path
+    } else {
+        format!("api/v1/organizations/{}/{path}", client.organization_id)
+    };
+    let url = client
+        .endpoint
+        .join(&path)
+        .map_err(|e| CliError::InvalidApiEndpoint(e.to_string()))?;
+    let value = client.send_json(method, url, body.as_ref()).await?;
+    if let Some(path) = output_file {
+        use std::io::Write;
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let mut file =
+            tempfile::NamedTempFile::new_in(parent).map_err(|source| CliError::InputFile {
+                path: path.display().to_string(),
+                source,
+            })?;
+        file.write_all(serde_json::to_string_pretty(&value)?.as_bytes())
+            .map_err(|source| CliError::InputFile {
+                path: path.display().to_string(),
+                source,
+            })?;
+        file.as_file()
+            .sync_all()
+            .map_err(|source| CliError::InputFile {
+                path: path.display().to_string(),
+                source,
+            })?;
+        file.persist_noclobber(&path)
+            .map_err(|e| CliError::InputFile {
+                path: path.display().to_string(),
+                source: e.error,
+            })?;
+        println!("{{\"saved\":true}}");
+    } else {
+        println!("{}", serde_json::to_string_pretty(&value)?);
+    }
+    Ok(())
+}
+fn require_yes(yes: bool) -> Result<(), CliError> {
+    if yes {
+        Ok(())
+    } else {
+        Err(CliError::InvalidManifest("operation requires --yes".into()))
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -193,6 +431,7 @@ struct ApiClient {
     endpoint: Url,
     organization_id: Uuid,
     wait_timeout: Duration,
+    workload: Option<crate::workload::WorkloadCredentials>,
 }
 
 pub(crate) async fn execute(
@@ -256,6 +495,48 @@ pub(crate) async fn execute(
 
 pub(crate) async fn execute_flash(args: FlashArgs, settings: ApiSettings) -> Result<(), CliError> {
     let (id, stopped, no_wait) = match args.command {
+        FlashCommand::LoadBalancerSecret { command } => {
+            let client = ApiClient::new(settings)?;
+            let (id, name, value) = match command {
+                LoadBalancerSecretCommand::Set { id, name, file } => {
+                    (id, name, Some(read_client_secret(&file)?))
+                }
+                LoadBalancerSecretCommand::Delete { id, name, yes } => {
+                    if !yes {
+                        return Err(CliError::InvalidManifest(
+                            "secret delete requires --yes".into(),
+                        ));
+                    }
+                    (id, name, None)
+                }
+            };
+            if name.is_empty()
+                || name.len() > 63
+                || !name.as_bytes()[0].is_ascii_alphanumeric()
+                || !name.as_bytes()[name.len() - 1].is_ascii_alphanumeric()
+                || name
+                    .bytes()
+                    .any(|b| !b.is_ascii_lowercase() && !b.is_ascii_digit() && b != b'-')
+            {
+                return Err(CliError::InvalidManifest(
+                    "client secret reference must be a lowercase DNS label".into(),
+                ));
+            }
+            let url = client
+                .endpoint
+                .join(&format!(
+                    "{}/{id}/load-balancer/secrets/{name}",
+                    ServiceKind::Flash.collection_path(client.organization_id)
+                ))
+                .map_err(|e| CliError::InvalidApiEndpoint(e.to_string()))?;
+            let (method, body) = match value {
+                Some(value) => (Method::PUT, Some(json!({"value":value}))),
+                None => (Method::DELETE, None),
+            };
+            client.send_json(method, url, body.as_ref()).await?;
+            println!("{{\"updated\":true}}");
+            return Ok(());
+        }
         FlashCommand::Service(command) => {
             return execute(ServiceKind::Flash, ServiceArgs { command }, settings).await;
         }
@@ -272,6 +553,33 @@ pub(crate) async fn execute_flash(args: FlashArgs, settings: ApiSettings) -> Res
         client.wait_ready(ServiceKind::Flash, service.id).await?
     };
     write_service(&service, output)
+}
+
+fn read_client_secret(path: &str) -> Result<String, CliError> {
+    let mut reader: Box<dyn Read> = if path == "-" {
+        Box::new(io::stdin())
+    } else {
+        Box::new(fs::File::open(path).map_err(|source| CliError::InputFile {
+            path: path.into(),
+            source,
+        })?)
+    };
+    let mut bytes = Vec::new();
+    reader
+        .by_ref()
+        .take(16_385)
+        .read_to_end(&mut bytes)
+        .map_err(|source| CliError::InputFile {
+            path: path.into(),
+            source,
+        })?;
+    if bytes.is_empty() || bytes.len() > 16_384 || bytes.contains(&0) {
+        return Err(CliError::InvalidManifest(
+            "client secret must contain 1 to 16384 bytes without NUL".into(),
+        ));
+    }
+    String::from_utf8(bytes)
+        .map_err(|_| CliError::InvalidManifest("client secret must be UTF-8".into()))
 }
 
 impl ApiClient {
@@ -306,15 +614,24 @@ impl ApiClient {
         }
         endpoint.set_path("/");
 
-        let authorization = HeaderValue::from_str(&format!("Bearer {}", settings.bearer_token))
-            .map_err(|_| CliError::InvalidApiKey)?;
-        let mut authorization = authorization;
-        authorization.set_sensitive(true);
         let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, authorization);
+        let workload = if settings.bearer_token.is_empty() {
+            Some(crate::workload::WorkloadCredentials::from_environment(
+                &endpoint,
+                settings.organization_id,
+            )?)
+        } else {
+            let mut authorization =
+                HeaderValue::from_str(&format!("Bearer {}", settings.bearer_token))
+                    .map_err(|_| CliError::InvalidApiKey)?;
+            authorization.set_sensitive(true);
+            headers.insert(AUTHORIZATION, authorization);
+            None
+        };
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         let http = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .default_headers(headers)
             .user_agent(USER_AGENT)
             .connect_timeout(API_CONNECT_TIMEOUT)
@@ -326,9 +643,22 @@ impl ApiClient {
             endpoint,
             organization_id: settings.organization_id,
             wait_timeout: Duration::from_secs(settings.wait_timeout_seconds),
+            workload,
         })
     }
 
+    async fn authorized_request(
+        &self,
+        method: Method,
+        url: Url,
+    ) -> Result<reqwest::RequestBuilder, CliError> {
+        let request = self.http.request(method, url);
+        if let Some(workload) = &self.workload {
+            Ok(request.bearer_auth(workload.token(&self.http).await?))
+        } else {
+            Ok(request)
+        }
+    }
     fn collection_url(&self, kind: ServiceKind) -> Result<Url, CliError> {
         self.endpoint
             .join(&kind.collection_path(self.organization_id))
@@ -503,8 +833,8 @@ impl ApiClient {
         loop {
             attempts += 1;
             let response = self
-                .http
-                .get(url.clone())
+                .authorized_request(Method::GET, url.clone())
+                .await?
                 .send()
                 .await
                 .map_err(CliError::ApiTransport);
@@ -532,7 +862,7 @@ impl ApiClient {
         url: Url,
         body: Option<&T>,
     ) -> Result<Value, CliError> {
-        let mut request = self.http.request(method, url);
+        let mut request = self.authorized_request(method, url).await?;
         if let Some(body) = body {
             request = request.json(body);
         }

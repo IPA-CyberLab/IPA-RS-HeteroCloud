@@ -442,6 +442,7 @@ async fn test_state() -> Result<
     let csrf_key = SecretString::from("test-csrf-key-at-least-32-bytes");
     let csrf = csrf_token(SESSION_TOKEN, &csrf_key)?;
     let state = Arc::new(AppState {
+        workload_identity: None,
         store: store.clone(),
         config: RuntimeConfig {
             public_origin: Url::parse(PUBLIC_ORIGIN)?,

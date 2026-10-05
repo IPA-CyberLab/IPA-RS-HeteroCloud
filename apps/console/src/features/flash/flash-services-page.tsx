@@ -20,6 +20,7 @@ import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { FlashService } from "@/lib/api-types";
 import {
   flashGpuTypesQueryOptions,
+  iamPrincipalsQueryOptions,
   flashQuotaQueryOptions,
   flashServicesQueryOptions,
   projectsQueryOptions,
@@ -59,17 +60,24 @@ export function FlashServicesPage() {
     ...registryImagesQueryOptions(organizationId),
     enabled: createOpen,
   });
+  const taskPrincipals = useQuery({...iamPrincipalsQueryOptions(organizationId),enabled:createOpen});
   const gpuTypes = useQuery({
     ...flashGpuTypesQueryOptions(),
     enabled: createOpen,
   });
   const createService = useMutation({
-    mutationFn: (value: FlashServiceFormValue) =>
-      api.flash.services.create(organizationId, {
+    mutationFn: async (value: FlashServiceFormValue) => {
+      const created = await api.flash.services.create(organizationId, {
         project_id: value.projectId,
         name: value.name.trim(),
         spec: flashSpecFromForm(value),
-      }),
+      });
+      // The resource remains visible and closed if credential transfer needs retry.
+      try {
+        if (value.authenticationMode === "oidc" && value.oidcClientSecret) await api.flash.services.putLoadBalancerSecret(organizationId,created.id,value.oidcSecretRef,value.oidcClientSecret);
+      } catch { navigate(`/flash/services/${created.id}`); throw new Error("サービスは作成済みです。認証のClient Secretを編集画面で再保存してください。"); }
+      return created;
+    },
     onSuccess: async (created) => {
       setCreateOpen(false);
       setForm(defaultFlashServiceFormValue);
@@ -269,6 +277,7 @@ export function FlashServicesPage() {
       >
         <FlashServiceForm
             vpcs={vpcs.data?.items ?? []}
+            principals={taskPrincipals.data?.items ?? []}
           value={form}
           onChange={setForm}
           onSubmit={submit}

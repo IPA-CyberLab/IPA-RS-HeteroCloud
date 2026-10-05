@@ -13,7 +13,7 @@ import type { FormEvent, ReactNode } from "react";
 import "./flash-service-form.css";
 import { ProjectSelector } from "@/components/shared/resource-selectors";
 import type {
-  FlashExposure, VpcNetwork,
+  FlashExposure, VpcNetwork, Principal,
   FlashEgressMode,
   FlashGpuType,
   FlashPortInput,
@@ -43,6 +43,13 @@ export interface FlashServiceFormValue {
   memoryTarget: number;
   idleTimeoutSeconds: number;
   endpointMode: NonNullable<FlashExposure["endpoint_mode"]>;
+  authenticationMode: "none" | "oidc";
+  oidcIssuer: string;
+  oidcClientId: string;
+  oidcSecretRef: string;
+  oidcClientSecret: string;
+  oidcScopes: string;
+  taskRoleId: string;
   cpuMillis: number;
   memoryMib: number;
   gpuType: string;
@@ -82,6 +89,13 @@ export const defaultFlashServiceFormValue: FlashServiceFormValue = {
   memoryTarget: 80,
   idleTimeoutSeconds: 900,
   endpointMode: "ip",
+  authenticationMode: "none",
+  oidcIssuer: "",
+  oidcClientId: "",
+  oidcSecretRef: "oidc-client-secret",
+  oidcClientSecret: "",
+  oidcScopes: "openid profile email",
+  taskRoleId: "",
   cpuMillis: 500,
   memoryMib: 512,
   gpuType: "",
@@ -377,6 +391,19 @@ export function flashFormValidationError(
       return "アイドル時間は60〜86400秒で入力してください。";
     }
   }
+  if (value.taskRoleId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.taskRoleId)) return "タスクIAMのサービスアカウントIDをUUIDで指定してください。";
+  if (value.authenticationMode === "oidc") {
+    if (value.endpointMode !== "web" || value.exposureType !== "public") return "OIDC認証にはHTTP/HTTPS公開を選択してください。";
+    try {
+      const issuer = new URL(value.oidcIssuer);
+      if (issuer.protocol !== "https:" || issuer.username || issuer.password || issuer.search || issuer.hash || value.oidcIssuer.length > 2048 || /\s/.test(value.oidcIssuer)) return "Issuer URLは資格情報・クエリ・フラグメントを含まないHTTPS URLにしてください。";
+    } catch { return "Issuer URLをHTTPS URLで入力してください。"; }
+    if (!value.oidcClientId || value.oidcClientId.length > 256 || /[\x00-\x1f\x7f]/.test(value.oidcClientId)) return "OIDC Client IDを1〜256文字で入力してください。";
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value.oidcSecretRef)) return "クライアントシークレットの参照名は小文字の英数字・ハイフンで63文字以内にしてください。";
+    const scopes = value.oidcScopes.split(/\s+/).filter(Boolean);
+    if (scopes.length > 16 || new Set(scopes).size !== scopes.length || scopes.some(scope => scope.length > 128 || /[^\x21-\x7e]|["\\]/.test(scope))) return "Scopeは重複のない16個以内のトークンにしてください。";
+    if (new TextEncoder().encode(value.oidcClientSecret).length > 16384 || value.oidcClientSecret.includes("\0")) return "クライアントシークレットは16384バイト以内で入力してください。";
+  }
   if (value.endpointMode !== "ip" && (value.exposureType !== "public" || value.trafficMode !== "forwarded")) {
     return "ドメイン公開では公開・転送モードを使用してください。";
   }
@@ -450,6 +477,7 @@ export function flashSpecFromForm(
         : [[], []];
   return {
     region: value.region,
+    ...(value.taskRoleId ? {task_role:value.taskRoleId} : {}),
     image: value.image.trim(),
     replicas: value.replicas,
     ...(value.scaleMode === "auto" ? { autoscaling: {
@@ -467,6 +495,10 @@ export function flashSpecFromForm(
     ports: value.ports,
     exposure: {
       type: value.exposureType,
+      ...(value.authenticationMode === "oidc" ? {authentication: {
+        issuer_url:value.oidcIssuer,client_id:value.oidcClientId,client_secret_ref:value.oidcSecretRef,
+        scopes:value.oidcScopes.split(/\s+/).filter(Boolean),
+      }} : {}),
       endpoint_mode: value.exposureType === "internal" ? "ip" : value.endpointMode,
       traffic_mode:
         value.exposureType === "internal" || value.endpointMode !== "ip" ? "forwarded" : value.trafficMode,
@@ -517,6 +549,7 @@ export function flashFormFromService(
     projectId: service.project_id,
     name: service.name,
     region: service.spec.region,
+    taskRoleId:service.spec.task_role ?? "",
     imageSource: registryImages.some(
       (image) => image.reference === service.spec.image,
     )
@@ -533,6 +566,12 @@ export function flashFormFromService(
     memoryTarget: service.spec.autoscaling?.target_memory_utilization_percent ?? 80,
     idleTimeoutSeconds: service.spec.autoscaling?.idle_timeout_seconds ?? 900,
     endpointMode: service.spec.exposure.endpoint_mode ?? "ip",
+    authenticationMode: service.spec.exposure.authentication ? "oidc" : "none",
+    oidcIssuer: service.spec.exposure.authentication?.issuer_url ?? "",
+    oidcClientId: service.spec.exposure.authentication?.client_id ?? "",
+    oidcSecretRef: service.spec.exposure.authentication?.client_secret_ref ?? "oidc-client-secret",
+    oidcClientSecret: "",
+    oidcScopes: service.spec.exposure.authentication?.scopes?.join(" ") ?? "openid profile email",
     cpuMillis: service.spec.cpu_millis,
     memoryMib: service.spec.memory_mib,
     gpuType: service.spec.gpu_type ?? "",
@@ -569,12 +608,14 @@ export function FlashServiceForm({
   onSubmit,
   disabled,
   projectLocked,
+  oidcCallbackUrl,
   registryImages = [],
   registryImagesStatus = "finished",
   gpuTypes = [],
   gpuTypesStatus = "finished",
   quota = defaultFlashQuotaLimits,
   vpcs = [],
+  principals = [],
   children,
 }: {
   value: FlashServiceFormValue;
@@ -582,12 +623,14 @@ export function FlashServiceForm({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   disabled?: boolean;
   projectLocked?: boolean;
+  oidcCallbackUrl?: string;
   registryImages?: RegistryImage[];
   registryImagesStatus?: "loading" | "error" | "finished";
   gpuTypes?: FlashGpuType[];
   gpuTypesStatus?: "loading" | "error" | "finished";
   quota?: FlashQuotaLimits;
   vpcs?: VpcNetwork[];
+  principals?: Principal[];
   children: ReactNode;
 }) {
   const update = <Key extends keyof FlashServiceFormValue>(
@@ -943,6 +986,8 @@ export function FlashServiceForm({
                     ...value,
                     exposureType,
                     endpointMode: exposureType === "internal" ? "ip" : value.endpointMode,
+                    authenticationMode: exposureType === "internal" ? "none" : value.authenticationMode,
+                    oidcClientSecret: exposureType === "internal" ? "" : value.oidcClientSecret,
                     minReplicas: exposureType === "internal" ? Math.max(1, value.minReplicas) : value.minReplicas,
                     trafficMode:
                       exposureType === "internal" ? "forwarded" : value.trafficMode,
@@ -983,12 +1028,39 @@ export function FlashServiceForm({
                 onChange({
                   ...value,
                   endpointMode,
+                  authenticationMode: endpointMode === "web" ? value.authenticationMode : "none",
+                  oidcClientSecret: endpointMode === "web" ? value.oidcClientSecret : "",
                   trafficMode: endpointMode !== "ip" ? "forwarded" : value.trafficMode,
                   minReplicas: endpointMode === "web" ? value.minReplicas : Math.max(1, value.minReplicas),
                 });
               }} />
           </FormField>
         ) : null}
+        <FormField label="タスクIAM" description="このコンテナがHeteroCloud APIを呼び出すサービスアカウントです。固定キーや個人用トークンを渡さず、一時認証情報を自動取得・更新します。">
+          <Select ariaLabel="タスクIAM" disabled={disabled}
+            selectedOption={value.taskRoleId ? {value:value.taskRoleId,label:principals.find(p=>p.id===value.taskRoleId)?.name ?? value.taskRoleId} : {value:"",label:"なし"}}
+            options={[{value:"",label:"なし"},...principals.filter(p=>p.kind==="service_account" && p.enabled).map(p=>({value:p.id,label:p.name}))]}
+            onChange={({detail})=>update("taskRoleId",detail.selectedOption.value ?? "")} />
+        </FormField>
+        {value.exposureType === "public" && value.endpointMode === "web" && <SpaceBetween size="m">
+          <FormField label="ロードバランサー認証" description="サービスごとに認証の有無を選択できます。OIDCを選ぶとログイン完了後にコンテナへ接続します。">
+            <SegmentedControl label="ロードバランサー認証" selectedId={value.authenticationMode}
+              options={[{id:"none",text:"認証なし",disabled},{id:"oidc",text:"OIDC",disabled}]}
+              onChange={({detail}) => { if (!disabled) onChange({...value,authenticationMode:detail.selectedId as "none" | "oidc",oidcClientSecret:""}); }} />
+          </FormField>
+          {value.authenticationMode === "oidc" && <SpaceBetween size="m">
+            <FormField label="Issuer URL"><Input value={value.oidcIssuer} disabled={disabled} onChange={({detail})=>update("oidcIssuer",detail.value)} placeholder="https://id.example.com/realms/my-realm" /></FormField>
+            <FormField label="Client ID"><Input value={value.oidcClientId} disabled={disabled} onChange={({detail})=>update("oidcClientId",detail.value)} /></FormField>
+            <FormField label="クライアントシークレットの参照名"><Input value={value.oidcSecretRef} disabled={disabled} onChange={({detail})=>update("oidcSecretRef",detail.value)} /></FormField>
+            <FormField label="Client Secret" description={projectLocked ? "空欄なら保存済みの値を維持します。値は表示・サービス設定への保存・環境変数への配置をしません。" : "値は専用のシークレットとして保存します。環境変数には配置しません。"}>
+              <Input type="password" value={value.oidcClientSecret} disabled={disabled} autoComplete="new-password" onChange={({detail})=>update("oidcClientSecret",detail.value)} />
+            </FormField>
+            <FormField label="Scope"><Input value={value.oidcScopes} disabled={disabled} onChange={({detail})=>update("oidcScopes",detail.value)} /></FormField>
+            <FormField label="IdPに登録するコールバックURL" description="公開後のサービス詳細にも表示されます。ログアウトは /_heterocloud/oidc/logout です。">
+              <span>{oidcCallbackUrl ?? "サービス作成後に確定します。"}</span>
+            </FormField>
+          </SpaceBetween>}
+        </SpaceBetween>}
         <SpaceBetween size="m">
           <Header
             variant="h3"

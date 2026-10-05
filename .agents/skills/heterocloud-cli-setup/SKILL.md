@@ -11,6 +11,14 @@ their HeteroCloud console. HeteroCloud may be hosted at any domain; never assume
 a particular production hostname. If either value is missing, continue the
 installation and ask for only the missing value before login.
 
+If setup runs inside a Flash container with `HETEROCLOUD_WORKLOAD_TOKEN_FILE`,
+install/update CLI 0.1.98 or later and use the injected HTTPS endpoint and
+organization. Verify automatic task IAM with `heterocloud iam whoami`; expect
+`type: workload` and the intended organization/service IDs. Do not run device-code
+login or copy a personal token/API key into this container. Missing or denied task
+IAM requires its administrator to attach an authorized service account; do not
+substitute a user's token. See the repository's `docs/iam/workload-identity.md`.
+
 For an existing CLI that supports the update command, run
 `heterocloud update --check` to inspect the current/latest versions and
 `heterocloud update` to install the latest stable release when setup or updating

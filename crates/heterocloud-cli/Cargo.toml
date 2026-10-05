@@ -22,7 +22,7 @@ sha2.workspace = true
 tar = "0.4"
 tempfile = "3.27"
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs"] }
 url.workspace = true
 uuid.workspace = true
 zeroize.workspace = true

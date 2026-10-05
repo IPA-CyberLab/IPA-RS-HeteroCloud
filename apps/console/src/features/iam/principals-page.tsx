@@ -42,6 +42,10 @@ export function IamPrincipalsPage() {
       });
     },
   });
+  const setEnabled = useMutation({
+    mutationFn:(principal:Principal)=>api.iam.principals.setEnabled(organizationId,principal.id,!principal.enabled),
+    onSuccess:()=>queryClient.invalidateQueries({queryKey:["organizations",organizationId,"iam","principals"]}),
+  });
   const createInvitation = useMutation({
     mutationFn: () =>
       api.invitations.create(organizationId, {
@@ -83,13 +87,14 @@ export function IamPrincipalsPage() {
         header: "ユーザーID",
         cell: ({ getValue }) => <Box variant="code">{getValue<string | null>() ?? "-"}</Box>,
       },
+      {id:"actions",header:"操作",cell:({row})=>row.original.kind==="service_account" ? <Button disabled={setEnabled.isPending} onClick={()=>setEnabled.mutate(row.original)}>{row.original.enabled ? "無効化" : "有効化"}</Button> : null},
       {
         accessorKey: "created_at",
         header: "作成日時",
         cell: ({ getValue }) => formatDateTime(getValue<string>()),
       },
     ],
-    [],
+    [setEnabled],
   );
 
   if (principals.isPending) return <PageLoading label="プリンシパルを読み込んでいます" />;
@@ -104,6 +109,7 @@ export function IamPrincipalsPage() {
 
   return (
     <SpaceBetween size="l">
+      {setEnabled.isError && <Alert type="error">{getApiErrorMessage(setEnabled.error)}</Alert>}
       <PageHeader
         title="IAMプリンシパル"
         description={`${activeOrganization.organization_name} のユーザーおよびサービスアカウントを管理します。`}

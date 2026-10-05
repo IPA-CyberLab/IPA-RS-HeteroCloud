@@ -431,10 +431,18 @@ export interface FlashPort extends FlashPortInput {
   service_port: number;
 }
 
+export interface FlashOidcAuthentication {
+  issuer_url: string;
+  client_id: string;
+  client_secret_ref: string;
+  scopes?: string[];
+}
+
 export interface FlashExposure {
   type: "internal" | "public";
   traffic_mode: "forwarded" | "direct";
   endpoint_mode?: "ip" | "load_balancer" | "web";
+  authentication?: FlashOidcAuthentication | null;
   allowed_source_cidrs?: string[];
   denied_source_cidrs?: string[];
 }
@@ -457,6 +465,7 @@ export interface FlashAutoscaling {
 }
 
 export interface FlashServiceSpec {
+  task_role?: string | null;
   region: string;
   image: string;
   replicas: number;
@@ -501,6 +510,7 @@ export interface FlashServiceStatus {
   ready_replicas?: number;
   desired_replicas?: number;
   stopped?: boolean;
+  oidc_callback_url?: string;
   available_replicas?: number;
   runtime_class?: string;
   message?: string;

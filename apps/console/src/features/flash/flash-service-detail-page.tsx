@@ -28,6 +28,7 @@ import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { FlashPort } from "@/lib/api-types";
 import {
   flashGpuTypesQueryOptions,
+  iamPrincipalsQueryOptions,
   flashQuotaQueryOptions,
   flashServiceQueryOptions,
   projectsQueryOptions,
@@ -108,6 +109,7 @@ export function FlashServiceDetailPage() {
     ...registryImagesQueryOptions(organizationId),
     enabled: editOpen,
   });
+  const taskPrincipals = useQuery({...iamPrincipalsQueryOptions(organizationId),enabled:editOpen});
   const gpuTypes = useQuery({
     ...flashGpuTypesQueryOptions(),
     enabled: editOpen,
@@ -128,8 +130,11 @@ export function FlashServiceDetailPage() {
     refetchInterval: shellOpen ? 10_000 : false,
   });
   const updateService = useMutation({
-    mutationFn: (value: FlashServiceFormValue) =>
-      api.flash.services.update(organizationId, serviceId, {
+    mutationFn: async (value: FlashServiceFormValue) => {
+      if (value.authenticationMode === "oidc" && value.oidcClientSecret) {
+        await api.flash.services.putLoadBalancerSecret(organizationId,serviceId,value.oidcSecretRef,value.oidcClientSecret);
+      }
+      return api.flash.services.update(organizationId, serviceId, {
         name: value.name.trim(),
         spec: {
           ...flashSpecFromForm(value, service.data?.spec.metadata ?? {}),
@@ -137,13 +142,15 @@ export function FlashServiceDetailPage() {
           secret_env: editSecretEnv,
           secret_files: {},
         },
-      }),
+      });
+    },
     onSuccess: async (updated) => {
       queryClient.setQueryData(
         flashServiceQueryOptions(organizationId, serviceId).queryKey,
         updated,
       );
       setEditOpen(false);
+      setEditForm(null);
       await queryClient.invalidateQueries({
         queryKey: ["organizations", organizationId, "flash", "services"],
       });
@@ -348,6 +355,13 @@ export function FlashServiceDetailPage() {
           columns={3}
           items={[
             { label: "接続", value: flashExposureLabel(item.spec.exposure) },
+            {label:"タスクIAM",value:item.spec.task_role ?? "なし"},
+            {label:"ロードバランサー認証",value:item.spec.exposure.authentication ? "OIDC" : "認証なし"},
+            ...(item.spec.exposure.authentication ? [
+              {label:"Issuer URL",value:item.spec.exposure.authentication.issuer_url},
+              {label:"Client ID",value:item.spec.exposure.authentication.client_id},
+              {label:"コールバックURL",value:providerStatus.oidc_callback_url ?? "公開アドレス確定待ち"},
+            ] : []),
             {
               label: "受信許可元IP / CIDR",
               value: allowedSources.length ? (
@@ -553,11 +567,13 @@ export function FlashServiceDetailPage() {
           <SpaceBetween size="l">
             <FlashServiceForm
             vpcs={vpcs.data?.items ?? []}
+            principals={taskPrincipals.data?.items ?? []}
               value={editForm}
               onChange={setEditForm}
               onSubmit={submitEdit}
               disabled={updateService.isPending}
               projectLocked
+              oidcCallbackUrl={providerStatus.oidc_callback_url}
               registryImages={registryImages.data?.items}
               registryImagesStatus={
                 registryImages.isError

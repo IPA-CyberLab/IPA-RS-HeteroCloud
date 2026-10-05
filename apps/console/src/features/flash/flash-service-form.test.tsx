@@ -598,3 +598,24 @@ it("VPC attachment preserves private naming and disables legacy organization-wid
   expect(spec.exposure.type).toBe("internal");
   expect(spec.exposure.endpoint_mode).toBe("ip");
 });
+
+
+describe("load balancer authentication and task IAM", () => {
+  const form = {
+    ...defaultFlashServiceFormValue, projectId: "project-1", name: "web", image: "nginx:alpine",
+    endpointMode: "web" as const, ports: [{name:"http", protocol:"tcp" as const, container_port:80}],
+  };
+  it("keeps authentication opt-in and never serializes the client secret", () => {
+    expect(flashSpecFromForm(form).exposure?.authentication).toBeUndefined();
+    const configured = {...form, authenticationMode:"oidc" as const,
+      oidcIssuer:"https://identity.example.test/realms/test", oidcClientId:"web-client",
+      oidcClientSecret:"must-stay-out-of-spec", taskRoleId:"00000000-0000-0000-0000-000000000001"};
+    const spec=flashSpecFromForm(configured);
+    expect(spec.exposure?.authentication?.client_secret_ref).toBe("oidc-client-secret");
+    expect(JSON.stringify(spec)).not.toContain("must-stay-out-of-spec");
+    expect(spec.task_role).toBe(configured.taskRoleId);
+    expect(flashFormValidationError(configured)).toBeNull();
+    expect(flashFormValidationError({...configured,oidcIssuer:"http://identity.example.test"})).toContain("HTTPS");
+    expect(flashFormValidationError({...configured,endpointMode:"ip"})).toBeTruthy();
+  });
+});

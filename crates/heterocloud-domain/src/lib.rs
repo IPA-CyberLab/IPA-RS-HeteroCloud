@@ -697,6 +697,87 @@ pub struct FlashExposure {
     pub allowed_source_cidrs: Vec<String>,
     #[serde(default)]
     pub denied_source_cidrs: Vec<String>,
+    /// Optional browser authentication at the HTTP/HTTPS load balancer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authentication: Option<FlashOidcAuthentication>,
+}
+
+/// Client credentials are written separately; specifications contain only a reference.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlashOidcAuthentication {
+    pub issuer_url: String,
+    pub client_id: String,
+    pub client_secret_ref: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+}
+
+impl FlashOidcAuthentication {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        let issuer = url::Url::parse(&self.issuer_url)
+            .map_err(|_| oidc_error("issuer_url must be an absolute HTTPS issuer URL"))?;
+        if self.issuer_url.len() > 2048
+            || issuer.scheme() != "https"
+            || issuer.host_str().is_none()
+            || !issuer.username().is_empty()
+            || issuer.password().is_some()
+            || issuer.query().is_some()
+            || issuer.fragment().is_some()
+            || self.issuer_url.chars().any(char::is_whitespace)
+            || self.issuer_url.chars().any(char::is_control)
+        {
+            return Err(oidc_error(
+                "issuer_url must be HTTPS without credentials, query or fragment",
+            ));
+        }
+        if self.client_id.is_empty()
+            || self.client_id.len() > 256
+            || self.client_id.chars().any(char::is_control)
+        {
+            return Err(oidc_error(
+                "OIDC client_id must contain 1 to 256 characters without controls",
+            ));
+        }
+        if self.client_secret_ref.is_empty()
+            || self.client_secret_ref.len() > 63
+            || !self.client_secret_ref.as_bytes()[0].is_ascii_alphanumeric()
+            || !self.client_secret_ref.as_bytes()[self.client_secret_ref.len() - 1]
+                .is_ascii_alphanumeric()
+            || self
+                .client_secret_ref
+                .bytes()
+                .any(|b| !b.is_ascii_lowercase() && !b.is_ascii_digit() && b != b'-')
+        {
+            return Err(oidc_error(
+                "client_secret_ref must be a lowercase DNS label of at most 63 characters",
+            ));
+        }
+        if self.scopes.len() > 16
+            || self.scopes.iter().any(|scope| {
+                scope.is_empty()
+                    || scope.len() > 128
+                    || scope
+                        .bytes()
+                        .any(|b| !(0x21..=0x7e).contains(&b) || b == b'"' || b == b'\\')
+            })
+            || self
+                .scopes
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != self.scopes.len()
+        {
+            return Err(oidc_error(
+                "OIDC scopes must be at most 16 unique nonempty scope tokens",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn oidc_error(message: &str) -> DomainError {
+    invalid_flash_spec(message)
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -737,6 +818,9 @@ impl Default for FlashEgress {
 pub struct FlashSpec {
     pub region: String,
     pub image: String,
+    /// IAM service account assumed only by this workload; no fixed API key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_role: Option<uuid::Uuid>,
     pub replicas: u32,
     /// Explicit operator stop; preserves the service and its persistent home.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -969,6 +1053,14 @@ impl FlashSpec {
                 "load_balancer and web endpoint_mode require public exposure and forwarded traffic_mode",
             ));
         }
+        if let Some(authentication) = &self.exposure.authentication {
+            if self.exposure.endpoint_mode != FlashEndpointMode::Web {
+                return Err(invalid_flash_spec(
+                    "OIDC authentication requires the HTTP/HTTPS web endpoint mode",
+                ));
+            }
+            authentication.validate()?;
+        }
         if self.exposure.endpoint_mode == FlashEndpointMode::Web {
             if self.ports.len() != 1 || self.ports[0].protocol != FlashProtocol::Tcp {
                 return Err(invalid_flash_spec(
@@ -1024,6 +1116,19 @@ impl FlashSpec {
                     "secret_files names must be lowercase DNS labels of at most 63 bytes",
                 ));
             }
+        }
+        if self.task_role.is_some()
+            && [
+                "HETEROCLOUD_ENDPOINT",
+                "HETEROCLOUD_ORGANIZATION_ID",
+                "HETEROCLOUD_WORKLOAD_TOKEN_FILE",
+            ]
+            .iter()
+            .any(|key| self.env.contains_key(*key) || secret_env.contains_key(*key))
+        {
+            return Err(invalid_flash_spec(
+                "task_role reserves the HeteroCloud workload identity environment settings",
+            ));
         }
         for (env_name, secret_name) in &secret_env {
             if !valid_flash_env_name(env_name) || !valid_flash_port_name(secret_name) {
@@ -1469,6 +1574,7 @@ mod tests {
             stopped: false,
             region: "heteronet-global".into(),
             image: "ghcr.io/example/game-server:v1".into(),
+            task_role: None,
             replicas: 3,
             autoscaling: None,
             cpu_millis: 500,
@@ -1483,6 +1589,7 @@ mod tests {
                 service_port: MIN_FLASH_SERVICE_PORT,
             }],
             exposure: FlashExposure {
+                authentication: None,
                 exposure_type: FlashExposureType::Public,
                 traffic_mode: FlashTrafficMode::Direct,
                 endpoint_mode: super::FlashEndpointMode::Ip,

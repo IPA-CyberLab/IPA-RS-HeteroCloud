@@ -114,6 +114,7 @@ async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
         .await?;
     let origin = Url::parse("http://cloud.example.test")?;
     let state = Arc::new(AppState {
+        workload_identity: None,
         store: store.clone(),
         config: RuntimeConfig {
             public_origin: origin,

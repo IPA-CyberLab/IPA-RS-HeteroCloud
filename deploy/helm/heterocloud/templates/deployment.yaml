@@ -60,6 +60,10 @@ spec:
           image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            - name: HETEROCLOUD_WORKLOAD_IDENTITY_ENABLED
+              value: {{ .Values.workloadIdentity.enabled | quote }}
+            - name: HETEROCLOUD_WORKLOAD_NAMESPACE
+              value: {{ .Values.workloadIdentity.namespace | quote }}
             {{- include "heterocloud.databaseTlsEnv" . | nindent 12 }}
             - name: HOST_IP
               valueFrom:
@@ -162,6 +166,11 @@ spec:
               drop:
                 - ALL
           volumeMounts:
+            {{- if .Values.workloadIdentity.enabled }}
+            - name: heterocloud-kubernetes
+              mountPath: /var/run/secrets/heterocloud-kubernetes
+              readOnly: true
+            {{- end }}
             {{- if .Values.secretManager.origin }}
             - name: openbao-identity
               mountPath: /var/run/secrets/openbao-identity
@@ -200,6 +209,20 @@ spec:
             - name: tmp
               mountPath: /tmp
       volumes:
+        {{- if .Values.workloadIdentity.enabled }}
+        - name: heterocloud-kubernetes
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+        {{- end }}
         {{- if .Values.secretManager.origin }}
         - name: openbao-identity
           projected:

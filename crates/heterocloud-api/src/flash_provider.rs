@@ -49,6 +49,36 @@ impl FlashProviderProxy {
         }
     }
 
+    /// Transfer an OIDC credential to the namespace-scoped load balancer store.
+    /// The response and provider errors never include the credential value.
+    pub async fn write_load_balancer_secret(
+        &self,
+        context: FlashProviderContext,
+        name: &str,
+        value: Option<&str>,
+    ) -> Result<(), FlashProviderError> {
+        let signed = self.sign(&context, "flash.load-balancer.secret.write")?;
+        let url = self.endpoint.join(&format!(
+            "internal/v1/service-instances/{}/load-balancer/secrets/{}",
+            context.service_instance_id, name
+        ))?;
+        let request = match value {
+            Some(value) => self.client.put(url).json(&json!({"value":value})),
+            None => self.client.delete(url),
+        };
+        let response = request
+            .bearer_auth(signed)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(FlashProviderError::ProviderStatus(
+                response.status().as_u16(),
+            ));
+        }
+        Ok(())
+    }
+
     pub async fn list_containers(
         &self,
         context: FlashProviderContext,

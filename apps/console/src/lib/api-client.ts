@@ -361,6 +361,7 @@ export class HeteroCloudApiClient {
 
   readonly iam = {
     principals: {
+      setEnabled: (organizationId:string,principalId:string,enabled:boolean)=>this.request<void>(organizationPath(organizationId,`iam/principals/${encodeURIComponent(principalId)}`),{method:"PATCH",body:{enabled}}),
       list: (organizationId: string, signal?: AbortSignal) =>
         this.request<CollectionResponse<Principal>>(
           organizationPath(organizationId, "iam/principals"),
@@ -394,6 +395,8 @@ export class HeteroCloudApiClient {
         ),
     },
     bindings: {
+      list: (organizationId:string,signal?:AbortSignal)=>this.request<CollectionResponse<{id:string;principal_id:string;policy_id:string}>>(organizationPath(organizationId,"iam/bindings"),{signal}),
+      delete: (organizationId:string,id:string)=>this.request<void>(organizationPath(organizationId,`iam/bindings/${encodeURIComponent(id)}`),{method:"DELETE"}),
       create: (organizationId: string, input: CreateBindingRequest) =>
         this.request<BindingResponse>(
           organizationPath(organizationId, "iam/bindings"),
@@ -677,6 +680,9 @@ export class HeteroCloudApiClient {
           organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/secrets/${encodeURIComponent(name)}`),
           { method: "PUT", body: { value } },
         ),
+      putLoadBalancerSecret: (organizationId: string, serviceId: string, name: string, value: string) =>
+        this.request<void>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/load-balancer/secrets/${encodeURIComponent(name)}`),
+          { method: "PUT", body: { value } }),
       deleteSecret: (organizationId: string, serviceId: string, name: string) =>
         this.request<void>(
           organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/secrets/${encodeURIComponent(name)}`),

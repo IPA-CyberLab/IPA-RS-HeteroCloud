@@ -63,7 +63,7 @@ NATは既定で無効です。VPCの `spec.nat.enabled` を有効にすると、
 
 ## 親から子を作成する
 
-Coderなどの親コンテナは、専用サービスアカウントでHeteroCloud API / CLIから子を作成します。必要なFlash操作と、子を接続するグループの `vpc:AttachSecurityGroup` だけをIAMで許可してください。APIキーは親のSecret Managerに登録し、Flash編集画面から環境変数として接続します。CLIは `HETEROCLOUD_API_KEY_FILE`（アクセス権0600のファイル）を使えます。キーをコマンド引数やイメージへ埋め込まないでください。
+Coderなどの親コンテナには、専用サービスアカウントを `spec.task_role` に割り当てます。CLI 0.1.98以降はコンテナのPod IDから短時間の認証情報を自動取得・更新するため、固定APIキーや個人のCLIログイントークンを渡す必要はありません。必要なFlash操作と、子を接続するグループの `vpc:AttachSecurityGroup` だけをIAMで許可してください。ロールを割り当てる呼び出し元には `iam:PassRole` も必要です。設定例と失効操作は [タスクIAM](../iam/workload-identity.md) を参照してください。
 
 親から公開HeteroCloud APIへアクセスする場合は、例のVPCの `spec.nat.enabled` を `true` にし、親の `spec.egress.mode` を `internet` にします。NATを有効にしても、内部向けに作成した子への外部公開は有効になりません。子の外向き通信が不要なら、子の `spec.egress.mode` は `disabled` にできます。
 

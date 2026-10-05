@@ -14,6 +14,7 @@ mod auth;
 mod external_dns;
 mod services;
 pub mod update;
+mod workload;
 
 pub use auth::AuthArgs;
 pub use external_dns::ReconcileArgs;
@@ -99,6 +100,8 @@ pub enum TopLevelCommand {
     Update(UpdateArgs),
     /// Sign in and manage CLI authentication.
     Auth(AuthArgs),
+    /// Manage service accounts, IAM policies, bindings and API keys.
+    Iam(services::IamArgs),
     /// Generate or verify public DNS records.
     Dns(DnsArgs),
     /// Manage Flow realtime services.
@@ -385,6 +388,18 @@ pub async fn execute(cli: Cli) -> Result<(), CliError> {
             )?;
             services::execute(services::ServiceKind::Flow, args, settings).await
         }
+        TopLevelCommand::Iam(args) => {
+            let settings = service_api_settings(
+                endpoint,
+                api_key,
+                api_key_file.as_deref(),
+                organization_id,
+                wait_timeout_seconds,
+                allow_insecure_http,
+                output,
+            )?;
+            services::execute_iam(args, settings).await
+        }
         TopLevelCommand::Flash(args) => {
             let settings = service_api_settings(
                 endpoint,
@@ -437,6 +452,13 @@ fn service_api_settings(
         (
             endpoint.ok_or(CliError::MissingEndpoint)?,
             load_api_key(api_key, api_key_file)?,
+            organization_id.ok_or(CliError::MissingOrganization)?,
+        )
+    } else if std::env::var_os("HETEROCLOUD_WORKLOAD_TOKEN_FILE").is_some() {
+        // An empty static token selects the rotating workload credential provider.
+        (
+            endpoint.ok_or(CliError::MissingEndpoint)?,
+            String::new(),
             organization_id.ok_or(CliError::MissingOrganization)?,
         )
     } else {

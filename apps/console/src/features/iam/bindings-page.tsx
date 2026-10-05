@@ -20,9 +20,12 @@ export function IamBindingsPage() {
   const organizationId = activeOrganization.organization_id;
   const principals = useQuery(iamPrincipalsQueryOptions(organizationId));
   const policies = useQuery(iamPoliciesQueryOptions(organizationId));
+  const bindings = useQuery({queryKey:["organizations",organizationId,"iam","bindings"],queryFn:()=>api.iam.bindings.list(organizationId)});
+  const removeBinding=useMutation({mutationFn:(id:string)=>api.iam.bindings.delete(organizationId,id),onSuccess:()=>bindings.refetch()});
   const [principalId, setPrincipalId] = useState("");
   const [policyId, setPolicyId] = useState("");
   const createBinding = useMutation({
+    onSuccess:()=>bindings.refetch(),
     mutationFn: () =>
       api.iam.bindings.create(organizationId, {
         principal_id: principalId,
@@ -51,6 +54,16 @@ export function IamBindingsPage() {
         title="IAMバインディング"
         description={`${activeOrganization.organization_name} のプリンシパルへポリシーを割り当てます。`}
       />
+      <Container header={<Header variant="h2">割り当て済みポリシー</Header>}>
+        <SpaceBetween size="m">
+          {bindings.isError && <Alert type="error">{getApiErrorMessage(bindings.error)}</Alert>}
+          {removeBinding.isError && <Alert type="error">{getApiErrorMessage(removeBinding.error)}</Alert>}
+          {bindings.data?.items.map(binding=><div key={binding.id}>
+            {principals.data.items.find(p=>p.id===binding.principal_id)?.name ?? binding.principal_id} / {policies.data.items.find(p=>p.id===binding.policy_id)?.name ?? binding.policy_id} {" "}
+            <Button disabled={removeBinding.isPending} onClick={()=>removeBinding.mutate(binding.id)}>割り当てを解除</Button>
+          </div>)}
+        </SpaceBetween>
+      </Container>
       <Container
         header={
           <Header variant="h2" description="プリンシパルと最小権限ポリシーを関連付けます。">

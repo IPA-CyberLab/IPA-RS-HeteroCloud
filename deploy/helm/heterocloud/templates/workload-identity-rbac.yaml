@@ -1,0 +1,47 @@
+{{- if .Values.workloadIdentity.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "heterocloud.fullname" . }}-workload-review
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "heterocloud.fullname" . }}-workload-review
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "heterocloud.fullname" . }}-workload-review
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "heterocloud.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "heterocloud.fullname" . }}-workload-pods
+  namespace: {{ .Values.workloadIdentity.namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "heterocloud.fullname" . }}-workload-pods
+  namespace: {{ .Values.workloadIdentity.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "heterocloud.fullname" . }}-workload-pods
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "heterocloud.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

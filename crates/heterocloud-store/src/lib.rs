@@ -1,3 +1,6 @@
+mod workload_identity;
+pub use workload_identity::WorkloadTokenPrincipal;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
@@ -2843,6 +2846,15 @@ impl Store {
             )
             .await?;
         }
+        if provider == "flash"
+            && (existing.spec.get("task_role") != spec.get("task_role")
+                || spec.get("stopped").and_then(Value::as_bool) == Some(true))
+        {
+            sqlx::query("DELETE FROM workload_access_tokens WHERE service_instance_id=$1")
+                .bind(id.0)
+                .execute(&mut *transaction)
+                .await?;
+        }
         let generation = existing
             .generation
             .checked_add(1)
@@ -2957,6 +2969,12 @@ impl Store {
                 &spec,
             )
             .await?;
+        }
+        if stopped {
+            sqlx::query("DELETE FROM workload_access_tokens WHERE service_instance_id=$1")
+                .bind(id.0)
+                .execute(&mut *transaction)
+                .await?;
         }
         let generation = existing
             .generation

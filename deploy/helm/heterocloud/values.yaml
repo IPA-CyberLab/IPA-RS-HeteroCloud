@@ -162,3 +162,9 @@ networkPolicy:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# Pod-bound identities are verified through Kubernetes TokenReview and live Pods.
+workloadIdentity:
+  enabled: false
+  namespace: heterocloud-flash-workloads
+  apiCidrs: []

@@ -228,6 +228,7 @@ async fn test_state()
     let csrf = csrf_token(SESSION_TOKEN, &csrf_key)?;
     let owner_origin = Url::parse(OWNER_ORIGIN)?;
     let state = Arc::new(AppState {
+        workload_identity: None,
         store: store.clone(),
         config: RuntimeConfig {
             public_origin: owner_origin.clone(),

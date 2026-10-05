@@ -17,6 +17,18 @@ spec:
         - port: 8443
           protocol: TCP
   egress:
+    {{- if .Values.workloadIdentity.enabled }}
+    - to:
+        {{- range (required "workloadIdentity.apiCidrs is required when workload identity is enabled" .Values.workloadIdentity.apiCidrs) }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+    {{- end }}
     - to:
         - namespaceSelector:
             matchLabels:

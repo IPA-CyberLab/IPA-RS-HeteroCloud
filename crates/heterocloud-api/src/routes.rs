@@ -102,6 +102,7 @@ pub struct AppState {
     pub syouyu_provider: Option<Arc<SyouyuProviderProxy>>,
     pub registry: Option<Arc<RegistryClient>>,
     pub registration_limiter: Arc<Semaphore>,
+    pub workload_identity: Option<Arc<crate::workload_identity::WorkloadIdentity>>,
 }
 
 pub fn api_router(state: Arc<AppState>) -> Router {
@@ -124,6 +125,8 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             "/auth/cli/device/approve",
             post(approve_cli_device_authorization),
         )
+        .route("/auth/workload/token", post(exchange_workload_identity))
+        .route("/auth/identity", get(identity_context))
         .route("/auth/cli/session", get(cli_session))
         .route("/auth/cli/logout", post(cli_logout))
         .route("/owner/quotas", get(owner_quota_overview))
@@ -152,6 +155,8 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             "/organizations/{organization_id}/projects",
             get(list_projects).post(create_project),
         )
+        .route("/organizations/{organization_id}/iam/principals/{principal_id}", axum::routing::patch(set_service_account_enabled))
+        .route("/organizations/{organization_id}/iam/bindings/{binding_id}", axum::routing::delete(delete_iam_binding))
         .route(
             "/organizations/{organization_id}/iam/principals",
             get(list_principals).post(create_service_account),
@@ -162,8 +167,9 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/organizations/{organization_id}/iam/bindings",
-            post(create_binding),
+            get(list_iam_bindings).post(create_binding),
         )
+        .route("/organizations/{organization_id}/iam/principals/{principal_id}/api-keys/{key_id}", axum::routing::delete(revoke_iam_api_key))
         .route(
             "/organizations/{organization_id}/iam/principals/{principal_id}/api-keys",
             get(list_api_keys).post(create_api_key),
@@ -220,6 +226,10 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route(
             "/organizations/{organization_id}/flash/services/{service_instance_id}/start",
             post(start_flash_service),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/services/{service_instance_id}/load-balancer/secrets/{name}",
+            axum::routing::put(put_flash_load_balancer_secret).delete(delete_flash_secret),
         )
         .route(
             "/organizations/{organization_id}/flash/services/{service_instance_id}/secrets/{name}",
@@ -1701,12 +1711,13 @@ async fn list_organizations(
 async fn list_projects(
     State(state): State<Arc<AppState>>,
     Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<Json<Value>, ApiError> {
-    let authenticated = authenticated_session(&state, &jar).await?;
-    authorize_organization(
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
         &state,
-        &authenticated.user,
+        &actor,
         OrganizationId(organization_id),
         "project:List",
         &organization_resource(organization_id, "project/*"),
@@ -1734,12 +1745,12 @@ async fn create_project(
     jar: CookieJar,
     Json(request): Json<CreateProject>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let authenticated = authenticated_mutation(&state, &headers, &jar).await?;
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     validate_slug(&request.slug)?;
     validate_name(&request.name)?;
-    authorize_organization(
+    authorize_actor(
         &state,
-        &authenticated.user,
+        &actor,
         OrganizationId(organization_id),
         "project:Create",
         &organization_resource(organization_id, "project/*"),
@@ -1760,12 +1771,13 @@ async fn create_project(
 async fn list_principals(
     State(state): State<Arc<AppState>>,
     Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<Json<Value>, ApiError> {
-    let authenticated = authenticated_session(&state, &jar).await?;
-    authorize_organization(
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
         &state,
-        &authenticated.user,
+        &actor,
         OrganizationId(organization_id),
         "iam:ListPrincipals",
         &organization_resource(organization_id, "iam/principal/*"),
@@ -1792,11 +1804,11 @@ async fn create_service_account(
     jar: CookieJar,
     Json(request): Json<CreateServiceAccount>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let authenticated = authenticated_mutation(&state, &headers, &jar).await?;
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     validate_name(&request.name)?;
-    authorize_organization(
+    authorize_actor(
         &state,
-        &authenticated.user,
+        &actor,
         OrganizationId(organization_id),
         "iam:CreatePrincipal",
         &organization_resource(organization_id, "iam/principal/*"),
@@ -1813,12 +1825,13 @@ async fn create_service_account(
 async fn list_policies(
     State(state): State<Arc<AppState>>,
     Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<Json<Value>, ApiError> {
-    let authenticated = authenticated_session(&state, &jar).await?;
-    authorize_organization(
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
         &state,
-        &authenticated.user,
+        &actor,
         OrganizationId(organization_id),
         "iam:ListPolicies",
         &organization_resource(organization_id, "iam/policy/*"),
@@ -1846,15 +1859,15 @@ async fn create_policy(
     jar: CookieJar,
     Json(request): Json<CreatePolicy>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let authenticated = authenticated_mutation(&state, &headers, &jar).await?;
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     validate_name(&request.name)?;
     request
         .document
         .validate()
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    authorize_organization(
+    authorize_actor(
         &state,
-        &authenticated.user,
+        &actor,
         OrganizationId(organization_id),
         "iam:CreatePolicy",
         &organization_resource(organization_id, "iam/policy/*"),
@@ -1887,10 +1900,10 @@ async fn create_binding(
     jar: CookieJar,
     Json(request): Json<CreateBinding>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let authenticated = authenticated_mutation(&state, &headers, &jar).await?;
-    authorize_organization(
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    authorize_actor(
         &state,
-        &authenticated.user,
+        &actor,
         OrganizationId(organization_id),
         "iam:CreateBinding",
         &organization_resource(organization_id, "iam/binding/*"),
@@ -1911,12 +1924,13 @@ async fn create_binding(
 async fn list_api_keys(
     State(state): State<Arc<AppState>>,
     Path((organization_id, principal_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<Json<Value>, ApiError> {
-    let authenticated = authenticated_session(&state, &jar).await?;
-    authorize_organization(
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
         &state,
-        &authenticated.user,
+        &actor,
         OrganizationId(organization_id),
         "iam:ListApiKeys",
         &organization_resource(organization_id, "iam/api-key/*"),
@@ -1944,7 +1958,7 @@ async fn create_api_key(
     jar: CookieJar,
     Json(request): Json<CreateApiKey>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let authenticated = authenticated_mutation(&state, &headers, &jar).await?;
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     validate_name(&request.name)?;
     if request
         .expires_in_days
@@ -1954,14 +1968,15 @@ async fn create_api_key(
             "expires_in_days must be between 1 and 365".into(),
         ));
     }
-    authorize_organization(
+    authorize_actor(
         &state,
-        &authenticated.user,
+        &actor,
         OrganizationId(organization_id),
         "iam:CreateApiKey",
         &organization_resource(organization_id, "iam/api-key/*"),
     )
     .await?;
+    authorize_task_role(&state, &actor, organization_id, Some(principal_id)).await?;
     let prefix = Uuid::now_v7().simple().to_string()[..16].to_owned();
     let secret = generate_token().map_err(|_| ApiError::Internal)?;
     let api_key = format!("hc_{prefix}_{}", secret.expose_secret());
@@ -2225,6 +2240,7 @@ async fn list_accessible_gpu_types(
     let actor = authenticated_actor(&state, &headers, &jar).await?;
     sync_gpu_catalog_from_provider(&state).await?;
     let user_id = match &actor {
+        AuthenticatedActor::Workload(_) => None,
         AuthenticatedActor::User(session) => Some(session.user.user.id),
         AuthenticatedActor::CliToken(token) => Some(token.user.user.id),
         AuthenticatedActor::ApiKey { principal_id, .. } => state
@@ -2576,6 +2592,7 @@ async fn create_flash_service(
     validate_name(&request.name)?;
     validate_flash_spec(&request.spec)?;
     authorize_vpc_attachment(&state, &actor, organization_id, &request.spec).await?;
+    authorize_task_role(&state, &actor, organization_id, request.spec.task_role).await?;
     if !request.spec.secret_env.is_empty() || !request.spec.secret_files.is_empty() {
         return Err(ApiError::BadRequest(
             "Create the Flash service before attaching secrets.".into(),
@@ -2652,6 +2669,7 @@ async fn update_flash_service(
     validate_name(&request.name)?;
     validate_flash_spec(&request.spec)?;
     authorize_vpc_attachment(&state, &actor, organization_id, &request.spec).await?;
+    authorize_task_role(&state, &actor, organization_id, request.spec.task_role).await?;
     if request.spec.gpu_type.is_some() {
         sync_gpu_catalog_from_provider(&state).await?;
     }
@@ -2836,6 +2854,50 @@ async fn put_flash_secret(
     jar: CookieJar,
     Json(request): Json<PutFlashSecret>,
 ) -> Result<StatusCode, ApiError> {
+    put_flash_secret_value(
+        state,
+        organization_id,
+        service_instance_id,
+        name,
+        headers,
+        jar,
+        request,
+        false,
+    )
+    .await
+}
+
+async fn put_flash_load_balancer_secret(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id, name)): Path<(Uuid, Uuid, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<PutFlashSecret>,
+) -> Result<StatusCode, ApiError> {
+    put_flash_secret_value(
+        state,
+        organization_id,
+        service_instance_id,
+        name,
+        headers,
+        jar,
+        request,
+        true,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn put_flash_secret_value(
+    state: Arc<AppState>,
+    organization_id: Uuid,
+    service_instance_id: Uuid,
+    name: String,
+    headers: HeaderMap,
+    jar: CookieJar,
+    request: PutFlashSecret,
+    for_load_balancer: bool,
+) -> Result<StatusCode, ApiError> {
     validate_flash_secret_name(&name)?;
     if request.value.is_empty() || request.value.len() > 16_384 || request.value.contains('\0') {
         return Err(ApiError::BadRequest(
@@ -2864,10 +2926,35 @@ async fn put_flash_secret(
             "A Flash service can store at most 32 secrets.".into(),
         ));
     }
-    manager
-        .put(service_instance_id, &name, &request.value)
-        .await
-        .map_err(map_secret_error)?;
+    let attached_oidc = spec
+        .exposure
+        .authentication
+        .as_ref()
+        .is_some_and(|auth| auth.client_secret_ref == name);
+    if for_load_balancer || attached_oidc {
+        // The signed command is bound to this organization/project/service. Store
+        // first, then materialize; a failed transfer is retryable and stays closed.
+        manager
+            .put(service_instance_id, &name, &request.value)
+            .await
+            .map_err(map_secret_error)?;
+        state
+            .flash_provider
+            .as_ref()
+            .ok_or(ApiError::FlashProviderUnavailable)?
+            .write_load_balancer_secret(
+                flash_provider_context(&service, authorization.principal_id),
+                &name,
+                Some(&request.value),
+            )
+            .await
+            .map_err(|_| ApiError::FlashProviderUnavailable)?;
+    } else {
+        manager
+            .put(service_instance_id, &name, &request.value)
+            .await
+            .map_err(map_secret_error)?;
+    }
     if spec
         .effective_secret_env()
         .map_err(|error| ApiError::BadRequest(error.to_string()))?
@@ -2898,7 +2985,7 @@ async fn delete_flash_secret(
 ) -> Result<StatusCode, ApiError> {
     validate_flash_secret_name(&name)?;
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
-    authorize_actor(
+    let authorization = authorize_actor(
         &state,
         &actor,
         OrganizationId(organization_id),
@@ -2907,7 +2994,8 @@ async fn delete_flash_secret(
     )
     .await?;
     let service = flash_service(&state, organization_id, service_instance_id).await?;
-    let spec: FlashSpec = serde_json::from_value(service.spec).map_err(|_| ApiError::Internal)?;
+    let spec: FlashSpec =
+        serde_json::from_value(service.spec.clone()).map_err(|_| ApiError::Internal)?;
     if spec
         .effective_secret_env()
         .map_err(|error| ApiError::BadRequest(error.to_string()))?
@@ -2916,6 +3004,25 @@ async fn delete_flash_secret(
     {
         return Err(ApiError::Conflict);
     }
+    if spec
+        .exposure
+        .authentication
+        .as_ref()
+        .is_some_and(|auth| auth.client_secret_ref == name)
+    {
+        return Err(ApiError::Conflict);
+    }
+    state
+        .flash_provider
+        .as_ref()
+        .ok_or(ApiError::FlashProviderUnavailable)?
+        .write_load_balancer_secret(
+            flash_provider_context(&service, authorization.principal_id),
+            &name,
+            None,
+        )
+        .await
+        .map_err(|_| ApiError::FlashProviderUnavailable)?;
     flash_secret_manager(&state)
         .await?
         .delete(service_instance_id, &name)
@@ -4695,12 +4802,233 @@ struct AuthenticatedSession {
 
 enum AuthenticatedActor {
     User(AuthenticatedSession),
+    Workload(heterocloud_store::WorkloadTokenPrincipal),
     CliToken(CliAccessTokenPrincipal),
     ApiKey {
         organization_id: OrganizationId,
         principal_id: PrincipalId,
         api_key_id: Uuid,
     },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkloadExchange {
+    grant_type: String,
+    subject_token_type: String,
+    subject_token: String,
+}
+
+async fn exchange_workload_identity(
+    State(state): State<Arc<AppState>>,
+    axum::Form(request): axum::Form<WorkloadExchange>,
+) -> Result<impl IntoResponse, ApiError> {
+    if request.grant_type != "urn:ietf:params:oauth:grant-type:token-exchange"
+        || request.subject_token_type != "urn:ietf:params:oauth:token-type:jwt"
+    {
+        return Err(ApiError::BadRequest(
+            "Use a workload JWT with the token-exchange grant".into(),
+        ));
+    }
+    let verifier = state
+        .workload_identity
+        .as_ref()
+        .ok_or(ApiError::Unauthorized)?;
+    let workload = verifier
+        .verify(&request.subject_token)
+        .await
+        .map_err(|_| ApiError::Unauthorized)?;
+    let secret = generate_token().map_err(|_| ApiError::Internal)?;
+    let access_token = format!("hcw_{}", secret.expose_secret());
+    let expires_at = Utc::now() + ChronoDuration::minutes(15);
+    let identity = state
+        .store
+        .mint_workload_token(
+            workload.service_id,
+            workload.task_role,
+            workload.pod_uid,
+            &token_hash(&access_token),
+            expires_at,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    state
+        .store
+        .append_audit(&AuditEvent {
+            organization_id: Some(OrganizationId(identity.organization_id)),
+            principal_id: Some(PrincipalId(identity.principal_id)),
+            user_id: None,
+            request_id: &Uuid::now_v7().to_string(),
+            source_ip: None,
+            action: "iam:AssumeTaskRole",
+            resource: &flash_service_resource(
+                identity.organization_id,
+                identity.service_instance_id,
+            ),
+            decision: "allow",
+            reason: "verified_pod_bound_identity",
+            metadata: json!({"pod_uid":identity.pod_uid,"token_id":identity.token_id}),
+        })
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((
+        [
+            (header::CACHE_CONTROL, "no-store"),
+            (header::PRAGMA, "no-cache"),
+        ],
+        Json(json!({
+            "access_token":access_token,"token_type":"Bearer","expires_in":900,
+            "issued_token_type":"urn:ietf:params:oauth:token-type:access_token",
+            "organization_id":identity.organization_id,"principal_id":identity.principal_id,
+            "service_instance_id":identity.service_instance_id,"expires_at":expires_at,
+        })),
+    ))
+}
+
+async fn identity_context(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    let context = match actor {
+        AuthenticatedActor::Workload(identity) => {
+            json!({"type":"workload","principal_id":identity.principal_id,"organization_id":identity.organization_id,"service_instance_id":identity.service_instance_id,"pod_uid":identity.pod_uid})
+        }
+        AuthenticatedActor::ApiKey {
+            organization_id,
+            principal_id,
+            ..
+        } => {
+            json!({"type":"service_account","organization_id":organization_id,"principal_id":principal_id})
+        }
+        AuthenticatedActor::CliToken(token) => {
+            json!({"type":"cli_oauth","organization_id":token.organization_id,"user_id":token.user.user.id})
+        }
+        AuthenticatedActor::User(session) => json!({"type":"user","user_id":session.user.user.id}),
+    };
+    Ok(Json(context))
+}
+
+async fn authorize_task_role(
+    state: &AppState,
+    actor: &AuthenticatedActor,
+    org: Uuid,
+    role: Option<Uuid>,
+) -> Result<(), ApiError> {
+    if let Some(role) = role {
+        authorize_actor(
+            state,
+            actor,
+            OrganizationId(org),
+            "iam:PassRole",
+            &organization_resource(org, &format!("iam/principal/{role}")),
+        )
+        .await?;
+        if !state
+            .store
+            .enabled_task_role(OrganizationId(org), PrincipalId(role))
+            .await
+            .map_err(ApiError::from_store)?
+        {
+            return Err(ApiError::BadRequest(
+                "task_role must be an enabled service account in this organization".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetPrincipalEnabled {
+    enabled: bool,
+}
+async fn list_iam_bindings(
+    State(state): State<Arc<AppState>>,
+    Path(org): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(org),
+        "iam:ListBindings",
+        &organization_resource(org, "iam/binding/*"),
+    )
+    .await?;
+    Ok(Json(
+        json!({"items":state.store.list_iam_bindings(OrganizationId(org)).await.map_err(ApiError::from_store)?}),
+    ))
+}
+async fn revoke_iam_api_key(
+    State(state): State<Arc<AppState>>,
+    Path((org, principal, id)): Path<(Uuid, Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(org),
+        "iam:RevokeApiKey",
+        &organization_resource(org, &format!("iam/api-key/{id}")),
+    )
+    .await?;
+    state
+        .store
+        .revoke_iam_api_key(OrganizationId(org), PrincipalId(principal), id)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn set_service_account_enabled(
+    State(state): State<Arc<AppState>>,
+    Path((org, principal)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<SetPrincipalEnabled>,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(org),
+        "iam:UpdatePrincipal",
+        &organization_resource(org, &format!("iam/principal/{principal}")),
+    )
+    .await?;
+    state
+        .store
+        .set_service_account_enabled(OrganizationId(org), PrincipalId(principal), request.enabled)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn delete_iam_binding(
+    State(state): State<Arc<AppState>>,
+    Path((org, id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(org),
+        "iam:DeleteBinding",
+        &organization_resource(org, &format!("iam/binding/{id}")),
+    )
+    .await?;
+    state
+        .store
+        .delete_binding(OrganizationId(org), id)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn issue_session(
@@ -4900,6 +5228,18 @@ async fn authenticated_actor(
         let token = authorization
             .strip_prefix("Bearer ")
             .ok_or(ApiError::Unauthorized)?;
+        if token.starts_with("hcw_") {
+            if token.len() > 256 || token.chars().any(char::is_whitespace) {
+                return Err(ApiError::Unauthorized);
+            }
+            let identity = state
+                .store
+                .authenticate_workload_token(&token_hash(token))
+                .await
+                .map_err(ApiError::from_store)?
+                .ok_or(ApiError::Unauthorized)?;
+            return Ok(AuthenticatedActor::Workload(identity));
+        }
         if token.starts_with("hcu_") {
             return authenticated_cli_access_token_value(state, token)
                 .await
@@ -5026,6 +5366,25 @@ async fn authorize_actor(
                 context,
                 Some(token.user.user.id),
                 json!({ "actor": "cli_oauth_token", "token_id": token.token_id }),
+            )
+        }
+        AuthenticatedActor::Workload(identity) => {
+            if identity.organization_id != organization_id.0 {
+                return Err(ApiError::Forbidden);
+            }
+            let context = state
+                .store
+                .authorization_context_for_principal(
+                    PrincipalId(identity.principal_id),
+                    organization_id,
+                )
+                .await
+                .map_err(ApiError::from_store)?
+                .ok_or(ApiError::Forbidden)?;
+            (
+                context,
+                None,
+                json!({"actor":"workload", "token_id":identity.token_id,"service_instance_id":identity.service_instance_id,"pod_uid":identity.pod_uid}),
             )
         }
         AuthenticatedActor::ApiKey {
@@ -5595,6 +5954,7 @@ mod tests {
             stopped: false,
             region: "heteronet-global".into(),
             image: "ghcr.io/example/udp-server:v1".into(),
+            task_role: None,
             replicas: 2,
             autoscaling: None,
             cpu_millis: 500,
@@ -5609,6 +5969,7 @@ mod tests {
                 service_port: 0,
             }],
             exposure: FlashExposure {
+                authentication: None,
                 exposure_type: FlashExposureType::Public,
                 traffic_mode: FlashTrafficMode::Direct,
                 endpoint_mode: heterocloud_domain::FlashEndpointMode::Ip,
