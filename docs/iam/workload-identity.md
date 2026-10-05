@@ -34,7 +34,7 @@ Flashの作成JSON・更新JSONの `spec.task_role` にアカウントIDを指�
 
 ## コンテナからの利用
 
-CLI 0.1.98以降をイメージへ導入すると、追加の `auth login` は不要です。
+CLI 0.1.101以降をイメージへ導入すると、追加の `auth login` は不要です。
 
 ```sh
 heterocloud iam whoami

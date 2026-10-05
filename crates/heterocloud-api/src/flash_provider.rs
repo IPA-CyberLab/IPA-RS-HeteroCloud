@@ -406,12 +406,14 @@ async fn refresh_status_before(
     mut instance: ServiceInstance,
     deadline: Instant,
 ) -> ServiceInstance {
-    if instance.provider != "flash"
-        || !instance
-            .spec
-            .get("autoscaling")
-            .is_some_and(Value::is_object)
-    {
+    let autoscaled = instance
+        .spec
+        .get("autoscaling")
+        .is_some_and(Value::is_object);
+    let oidc = instance.spec["exposure"]["authentication"].is_object();
+    // A fixed-size OIDC service may wait for its client credentials before it
+    // becomes ready. Expose the live callback URL during that setup as well.
+    if instance.provider != "flash" || !(autoscaled || oidc) {
         return instance;
     }
     if !instance.status.is_object() {
@@ -713,6 +715,33 @@ MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
         assert_eq!(claims["project_id"], original.project_id.to_string());
         assert_eq!(claims["service_instance_id"], original.id.to_string());
         assert_eq!(claims["aud"], "heterocloud-flash");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fixed_oidc_service_exposes_callback_while_setup_is_pending()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut status = live_status();
+        let callback = "https://service.example.test/_heterocloud/oidc/callback";
+        status["oidc_callback_url"] = json!(callback);
+        status["endpoints"] = json!([]);
+        let mock = mock_provider(StatusCode::OK, status.to_string(), Duration::ZERO).await?;
+        let mut original = service(1);
+        original.state = ServiceState::Updating;
+        original.spec = json!({"replicas":1,"exposure":{"endpoint_mode":"web","authentication":{"issuer_url":"https://id.example.test","client_id":"web","client_secret_ref":"credential"}}});
+        original.status = json!({});
+        let refreshed = refresh_autoscaled_status(
+            Some(&mock.proxy),
+            PrincipalId(Uuid::from_u128(4)),
+            original.clone(),
+        )
+        .await;
+        assert_eq!(refreshed.status["status"]["oidc_callback_url"], callback);
+        assert_eq!(refreshed.status["status"]["phase"], "provisioning");
+        assert_eq!(refreshed.state, original.state);
+        assert_eq!(refreshed.generation, original.generation);
+        assert_eq!(refreshed.spec, original.spec);
+        assert_eq!(refreshed.updated_at, original.updated_at);
         Ok(())
     }
 
