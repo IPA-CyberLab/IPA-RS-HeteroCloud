@@ -12,15 +12,21 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+flate2 = "1.1"
 reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+semver = "1.0"
+sha2.workspace = true
+tar = "0.4"
+tempfile = "3.27"
 thiserror.workspace = true
 tokio.workspace = true
 url.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [lints]
 workspace = true

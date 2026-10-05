@@ -68,12 +68,12 @@ same prompt can be copied when the desktop-app protocol is unavailable.
 
 Install the matching archive and adjacent checksum from the
 [latest release](https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/releases/latest).
-For Linux x64, extract `heterocloud-v0.1.87-linux-x64.tar.gz`, verify it with
+For Linux x64, extract `heterocloud-v0.1.97-linux-x64.tar.gz`, verify it with
 `sha256sum -c`, then install the binary:
 
 ```sh
-sha256sum -c heterocloud-v0.1.87-linux-x64.tar.gz.sha256
-tar -xzf heterocloud-v0.1.87-linux-x64.tar.gz
+sha256sum -c heterocloud-v0.1.97-linux-x64.tar.gz.sha256
+tar -xzf heterocloud-v0.1.97-linux-x64.tar.gz
 sudo install -m 0755 heterocloud /usr/local/bin/heterocloud
 heterocloud --version
 ```
@@ -81,15 +81,25 @@ heterocloud --version
 The release publishes native x64 and ARM64 builds for all three supported
 operating systems:
 
-- `heterocloud-v0.1.87-linux-x64.tar.gz`
-- `heterocloud-v0.1.87-linux-arm64.tar.gz`
-- `heterocloud-v0.1.87-macos-x64.tar.gz`
-- `heterocloud-v0.1.87-macos-arm64.tar.gz`
-- `heterocloud-v0.1.87-windows-x64.zip`
-- `heterocloud-v0.1.87-windows-arm64.zip`
+- `heterocloud-v0.1.97-linux-x64.tar.gz`
+- `heterocloud-v0.1.97-linux-arm64.tar.gz`
+- `heterocloud-v0.1.97-macos-x64.tar.gz`
+- `heterocloud-v0.1.97-macos-arm64.tar.gz`
+- `heterocloud-v0.1.97-windows-x64.zip`
+- `heterocloud-v0.1.97-windows-arm64.zip`
 
 Linux archives are statically linked so they do not depend on the host's glibc
 version.
+
+Update an installed CLI with `heterocloud update`; `heterocloud update --check`
+only checks the installed and latest stable versions. Releases cover Linux,
+macOS and Windows on x64/ARM64, and the updater verifies SHA-256 before replacing
+the executable. Older clients without this command need the manual install once.
+Normal commands show available updates on stderr after execution, using a six-hour
+cache; offline checks do not fail commands. Set `HETEROCLOUD_NO_UPDATE_CHECK=1`
+to disable notices in automation. `update --force` reinstalls the same release
+without downgrading. On Windows, the previous executable is retained as
+`heterocloud.previous.exe` because a running image cannot be overwritten directly.
 
 ```sh
 export HETEROCLOUD_ENDPOINT=https://cloud.example.com

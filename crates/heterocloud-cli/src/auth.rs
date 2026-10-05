@@ -463,7 +463,7 @@ pub(crate) fn normalize_endpoint(
     Ok(endpoint)
 }
 
-fn credential_file_path() -> Result<PathBuf, CliError> {
+pub(crate) fn credential_file_path() -> Result<PathBuf, CliError> {
     if let Some(path) = env::var_os("HETEROCLOUD_CREDENTIALS_FILE") {
         if path.is_empty() {
             return Err(CliError::CredentialStore(

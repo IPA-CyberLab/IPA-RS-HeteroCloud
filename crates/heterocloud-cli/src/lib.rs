@@ -13,10 +13,12 @@ use thiserror::Error;
 mod auth;
 mod external_dns;
 mod services;
+pub mod update;
 
 pub use auth::AuthArgs;
 pub use external_dns::ReconcileArgs;
 pub use services::{ApiOutputFormat, FlashArgs, ServiceArgs};
+pub use update::UpdateArgs;
 
 const NODE_SCOPED_SERVICE_PREFIXES: [&str; 1] = ["cloud"];
 const FLOW_SERVICE_PREFIX: &str = "flow";
@@ -93,6 +95,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum TopLevelCommand {
+    /// Install the latest stable CLI, or check whether an update is available.
+    Update(UpdateArgs),
     /// Sign in and manage CLI authentication.
     Auth(AuthArgs),
     /// Generate or verify public DNS records.
@@ -195,6 +199,8 @@ pub struct DnsRecord {
 
 #[derive(Debug, Error)]
 pub enum CliError {
+    #[error("CLI update failed: {0}")]
+    Update(String),
     #[error(
         "invalid DNS domain `{0}`: use a public ASCII DNS name such as heterocloud.example.com"
     )]
@@ -348,6 +354,9 @@ pub async fn execute(cli: Cli) -> Result<(), CliError> {
     let allow_insecure_http = cli.allow_insecure_http;
     let output = cli.output;
     match cli.command {
+        TopLevelCommand::Update(args) => update::execute(args, output)
+            .await
+            .map_err(|error| CliError::Update(error.to_string())),
         TopLevelCommand::Auth(args) => {
             auth::execute(
                 args,

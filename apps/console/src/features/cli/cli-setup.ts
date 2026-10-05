@@ -1,9 +1,9 @@
 const RELEASES_URL =
   "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/releases/latest";
 const SKILL_URL =
-  "https://raw.githubusercontent.com/IPA-CyberLab/IPA-RS-HeteroCloud/e5e67d8cf562557db307f2511f90ef703545520a/.agents/skills/heterocloud-cli-setup/SKILL.md";
+  "https://raw.githubusercontent.com/IPA-CyberLab/IPA-RS-HeteroCloud/40c8da5cc7d5e371dafff6e5e43bc4b08154d72b/.agents/skills/heterocloud-cli-setup/SKILL.md";
 const SKILL_SHA256 =
-  "82a5489d8179262700a171c6a01d5c516467fe409b1700d7a54ad02aee53eea8";
+  "76bcfd5204918e0aad1ab3b02053c73eb68850c7331729f1c077054dcf8cfc16";
 
 export interface CliSetupTarget {
   endpoint: string;
@@ -29,7 +29,7 @@ export function buildCliSetupPrompt({
 - 公式リリース: ${RELEASES_URL}
 
 次の条件をすべて守ってください。
-1. OS、CPUアーキテクチャ、利用中のシェルを検出し、最新リリースから一致するアーカイブを選んでください。対応対象は Linux/macOS/Windows の x64/ARM64 です。
+1. 既存のCLIが update に対応していれば、heterocloud update --check で確認し、heterocloud update で最新安定版へ更新してください。通常コマンドの実行後に新しいバージョンの通知が表示されることも案内してください。未導入または古いCLIの場合は、OS、CPUアーキテクチャ、利用中のシェルを検出し、最新リリースから一致するアーカイブを選んでください。対応対象は Linux/macOS/Windows の x64/ARM64 です。
 2. アーカイブと同名の .sha256 をダウンロードし、SHA-256 が一致した場合だけ展開してください。
 3. heterocloud（Windowsでは heterocloud.exe）を PATH 上へ配置してください。ユーザー領域で導入できない場合だけ、理由を説明して通常のOS権限昇格を求めてください。
 4. HeteroCloud CLIセットアップ用のClaude Code/Codex skillも、このユーザーへインストールしてください。公式リポジトリの固定コミットにある ${SKILL_URL} から SKILL.md を取得し、SHA-256が ${SKILL_SHA256} に一致した場合だけ配置してください。Claude Codeはユーザーの ~/.claude/skills/heterocloud-cli-setup/SKILL.md、Codexは CODEX_HOME があればその skills/heterocloud-cli-setup/SKILL.md、なければ ~/.codex/skills/heterocloud-cli-setup/SKILL.md です。Windowsでは ~ をユーザープロファイルに読み替えてください。両方の保存先を用意し、異なる既存ファイルがあればバックアップしてから更新し、保存後のファイルも同じSHA-256で検証してください。Claude CodeやCodex本体のインストールは不要です。

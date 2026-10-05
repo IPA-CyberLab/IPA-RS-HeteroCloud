@@ -89,7 +89,7 @@ class Audit:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.origin = f"http://127.0.0.1:{self.server.server_port}"
         self.env = {"PATH": str(tmp / "bin"), "HOME": str(tmp), "LANG": "C",
-                    "NO_PROXY": "*", "KUBECONFIG": str(tmp / "nonexistent-kubeconfig"),
+                    "NO_PROXY": "*", "HETEROCLOUD_NO_UPDATE_CHECK": "1", "KUBECONFIG": str(tmp / "nonexistent-kubeconfig"),
                     "AUDIT_LOG": str(tmp / "subprocess.jsonl")}
         self.defaults = ["--endpoint", self.origin, "--allow-insecure-http",
                          "--api-key", KEY, "--organization-id", ORG,

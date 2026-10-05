@@ -225,6 +225,11 @@ jobs:
           cargo build --release --locked -p heterocloud-cli
           --target ${{ matrix.rust_target }}
 
+      - name: Verify updates on the native OS and CPU
+        run: >-
+          cargo test --release --locked -p heterocloud-cli --lib update::tests
+          --target ${{ matrix.rust_target }}
+
       - name: Reject a dynamically linked Linux CLI
         if: matrix.asset_os == 'linux'
         shell: bash

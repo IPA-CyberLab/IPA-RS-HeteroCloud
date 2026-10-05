@@ -20,6 +20,9 @@ describe("CLI setup launcher", () => {
     expect(prompt).toContain("Linux/macOS/Windows の x64/ARM64");
     expect(prompt).toContain("SHA-256");
     expect(prompt).toContain("heterocloud --version");
+    expect(prompt).toContain("heterocloud update --check");
+    expect(prompt).toContain("heterocloud update で最新安定版");
+    expect(prompt).toContain("通常コマンドの実行後");
     expect(prompt).toContain("heterocloud auth login --device-code");
     expect(prompt).toContain("heterocloud auth status");
     expect(prompt).toContain("短い確認URL");
@@ -36,7 +39,7 @@ describe("CLI setup launcher", () => {
     );
     expect(prompt).toContain(".agents/skills/heterocloud-cli-setup/SKILL.md");
     expect(prompt).toContain(
-      "82a5489d8179262700a171c6a01d5c516467fe409b1700d7a54ad02aee53eea8",
+      "76bcfd5204918e0aad1ab3b02053c73eb68850c7331729f1c077054dcf8cfc16",
     );
     expect(prompt).toContain("~/.claude/skills/heterocloud-cli-setup/SKILL.md");
     expect(prompt).toContain("CODEX_HOME");
