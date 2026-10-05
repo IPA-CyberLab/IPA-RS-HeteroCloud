@@ -1,0 +1,206 @@
+{
+  "schema_version": 1,
+  "verified_at": "2026-10-05T05:23:36.580636+00:00",
+  "releases": {
+    "heterocloud": {
+      "schema_version": 1,
+      "component": "heterocloud",
+      "version": "0.1.97",
+      "commit": "873a12c2a91b12d1d903cf06734346dbe4d3eb12",
+      "image": "ghcr.io/ipa-cyberlab/ipa-rs-heterocloud@sha256:463758c1d2580c7c3d180d01dbcd913fc847617df26df83bd02bd2d3c8d9c0d8"
+    },
+    "flash": {
+      "schema_version": 1,
+      "component": "flash",
+      "version": "0.1.44",
+      "commit": "4fecd169b8f78046c944f1ba0d73098012948046",
+      "image": "ghcr.io/ipa-cyberlab/ipa-rs-heterocloud-flash@sha256:690a6f38cf643b7d8c3b309ae65fef3e8125a4a004d15ee332039bd25fa0300d"
+    }
+  },
+  "release_ci": {
+    "cloud": {
+      "run_url": "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/actions/runs/37264634551",
+      "commit": "873a12c2a91b12d1d903cf06734346dbe4d3eb12",
+      "result": "passed",
+      "native_update_platforms": 6,
+      "platform_jobs": [
+        "cli (windows-11-vs2026-arm, windows, arm64, aarch64-pc-windows-msvc, zip)",
+        "cli (ubuntu-24.04-arm, linux, arm64, aarch64-unknown-linux-musl, tar)",
+        "cli (macos-15, macos, arm64, aarch64-apple-darwin, tar)",
+        "cli (ubuntu-24.04, linux, x64, x86_64-unknown-linux-musl, tar)",
+        "cli (windows-2025, windows, x64, x86_64-pc-windows-msvc, zip)",
+        "cli (macos-15-intel, macos, x64, x86_64-apple-darwin, tar)"
+      ]
+    },
+    "flash": {
+      "run_url": "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud-Flash/actions/runs/37262224965",
+      "commit": "4fecd169b8f78046c944f1ba0d73098012948046",
+      "result": "passed"
+    }
+  },
+  "cli_update": {
+    "passed": true,
+    "platform": "linux-x64",
+    "current_version": "0.1.97",
+    "latest_version": "0.1.97",
+    "check_keeps_binary": true,
+    "force_download_and_replace": true,
+    "installed_version_verified": true,
+    "credential_canary_unchanged": true,
+    "up_to_date_is_no_op": true,
+    "before_binary_sha256": "038779f3436a805b8a7785de6aab80d27a83455b7df6914072a4d3ac62182588",
+    "after_binary_sha256": "3b005af66d63bb7b9188e284fe0b49bdf51fd6d27c4039153cbd126e4850c2a2"
+  },
+  "skills": {
+    "passed": true,
+    "skill_sha256": "76bcfd5204918e0aad1ab3b02053c73eb68850c7331729f1c077054dcf8cfc16",
+    "immutable_skill_commit": "40c8da5cc7d5e371dafff6e5e43bc4b08154d72b",
+    "repository_copies_verified": 2,
+    "installed_copies_verified": 2,
+    "installed_agents": [
+      "Claude Code",
+      "Codex"
+    ],
+    "launcher_pin_verified": true
+  },
+  "local_validation": {
+    "cli_unit_tests": 37,
+    "cli_notice_binary_tests": 1,
+    "isolated_cli_command_contracts": 299,
+    "console_setup_tests": 5,
+    "release_artifact_tests": 11,
+    "clippy_passed": true,
+    "console_build_passed": true,
+    "helm_lint_passed": true,
+    "release_version_gate_local_accept_and_reject_passed": true
+  },
+  "lifecycle": {
+    "schema_version": 1,
+    "started_at": "2026-10-05T05:10:14Z",
+    "checks": [
+      {
+        "name": "private_vpc_workspace_ready",
+        "passed": true,
+        "service_id": "01a10a78-4e10-7712-959d-81d5f18ba302"
+      },
+      {
+        "name": "persistent_file_written_and_secret_injected",
+        "passed": true
+      },
+      {
+        "name": "cli_stop_drains_all_containers_and_retains_settings_and_secret",
+        "passed": true,
+        "generation": 3
+      },
+      {
+        "name": "repeated_stop_is_inert_and_no_automatic_restart",
+        "passed": true
+      },
+      {
+        "name": "cli_resume_creates_new_container_with_same_home_and_secret",
+        "passed": true,
+        "generation": 4
+      },
+      {
+        "name": "repeated_start_is_inert",
+        "passed": true
+      },
+      {
+        "name": "real_console_desktop_and_mobile_stop_start",
+        "passed": true,
+        "records": [
+          {
+            "browser": "desktop",
+            "ready_ms": 2597,
+            "real_api": true,
+            "stopped_and_resumed": true,
+            "passed": true
+          },
+          {
+            "browser": "mobile",
+            "ready_ms": 1135,
+            "real_api": true,
+            "stopped_and_resumed": true,
+            "passed": true
+          }
+        ]
+      },
+      {
+        "name": "persistent_file_and_secret_retained_after_console_cycles",
+        "passed": true
+      },
+      {
+        "name": "disposable_services_and_vpc_deleted",
+        "passed": true
+      }
+    ],
+    "resources": [
+      {
+        "path": "vpc/networks/01a10a78-3faa-7391-96e3-e0c095ccda06"
+      },
+      {
+        "path": "flash/services/01a10a78-4e10-7712-959d-81d5f18ba302"
+      }
+    ],
+    "passed": true,
+    "finished_at": "2026-10-05T05:18:39Z"
+  },
+  "lifecycle_fixture_image": "ghcr.io/ipa-cyberlab/ipa-rs-heterocloud-flash@sha256:690a6f38cf643b7d8c3b309ae65fef3e8125a4a004d15ee332039bd25fa0300d",
+  "earlier_lifecycle_attempts": [
+    {
+      "passed": false,
+      "stage": "application_secret_check",
+      "cause": "exec shell environment does not inherit launcher-injected application secrets",
+      "cleanup_passed": true
+    },
+    {
+      "passed": false,
+      "stage": "mobile_resume",
+      "cause": "Docker Hub anonymous pull rate limit during image inspection",
+      "cleanup_passed": true
+    }
+  ],
+  "browser_auth_scope": "isolated expiring database session; identity-provider sign-in not part of the lifecycle test",
+  "network_e2e": {
+    "run_url": "https://github.com/IPA-CyberLab/IPA-RS-HeteroNetwork/actions/runs/37266582322",
+    "commit": "47987186c353d77743ec7fca18875091db9860cd",
+    "result": "passed",
+    "browser_checks": 19,
+    "minimum_open_ms": 516,
+    "maximum_open_ms": 843,
+    "limit_ms": 3000,
+    "disposable_client_removed": true
+  },
+  "workload_continuity": {
+    "passed": true,
+    "checked_at": "2026-10-05T05:24:47.058688+00:00",
+    "original_pods": 5,
+    "original_pvcs": 5,
+    "pod_uids_unchanged": true,
+    "container_ids_unchanged": true,
+    "restart_counts_unchanged": true,
+    "image_ids_unchanged": true,
+    "pvc_uids_unchanged": true
+  },
+  "fixture_cleanup": {
+    "passed": true,
+    "organizations_removed": 2,
+    "browser_identity_removed": true,
+    "test_service_ids": [
+      "01a10a5a-2801-74f2-bb7c-0f117c103947",
+      "01a10a60-8f8f-74a3-8de7-56f8cc68ea01",
+      "01a10a78-4e10-7712-959d-81d5f18ba302"
+    ],
+    "durable_test_usage_records_removed": 3,
+    "scoped_credential_files_removed": true,
+    "owned_database_tunnel_closed": true,
+    "test_pods_pvcs_and_pvs_removed": true
+  },
+  "deployment": {
+    "managed_by": "Terraform and Argo CD",
+    "heterocloud_version": "v0.1.97",
+    "flash_version": "v0.1.44",
+    "applications_synced_and_healthy": true,
+    "helper_image_retained_at": "v0.1.41"
+  }
+}
