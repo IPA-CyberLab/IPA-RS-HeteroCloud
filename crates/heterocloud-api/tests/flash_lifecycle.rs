@@ -80,7 +80,7 @@ async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
         .create_policy(org, "workspace lifecycle", &policy, &semantics_digest())
         .await?;
     store.create_binding(org, principal.id, policy.id).await?;
-    let key = "hc_0123456789abcdef_lifecycle-test-secret";
+    let key = "hc_0123456789abcdef_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG";
     store
         .create_api_key(
             org,
@@ -92,7 +92,7 @@ async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
         )
         .await?;
     let reader = store.create_service_account(org, "read-only").await?;
-    let read_key = "hc_fedcba9876543210_lifecycle-reader-secret";
+    let read_key = "hc_fedcba9876543210_ABCDEFG0123456789abcdefghijklmnopqrstuvwxyz";
     store
         .create_api_key(
             org,
