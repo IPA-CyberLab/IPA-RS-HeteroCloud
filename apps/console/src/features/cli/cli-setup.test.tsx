@@ -39,7 +39,7 @@ describe("CLI setup launcher", () => {
     );
     expect(prompt).toContain(".agents/skills/heterocloud-cli-setup/SKILL.md");
     expect(prompt).toContain(
-      "76bcfd5204918e0aad1ab3b02053c73eb68850c7331729f1c077054dcf8cfc16",
+      createHash("sha256").update(readFileSync(new URL("../../../../../.agents/skills/heterocloud-cli-setup/SKILL.md", import.meta.url))).digest("hex"),
     );
     expect(prompt).toContain("~/.claude/skills/heterocloud-cli-setup/SKILL.md");
     expect(prompt).toContain("CODEX_HOME");
@@ -84,3 +84,5 @@ describe("CLI setup launcher", () => {
     expect(prompt).toContain("HETEROCLOUD_ALLOW_INSECURE_HTTP=1");
   });
 });
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
