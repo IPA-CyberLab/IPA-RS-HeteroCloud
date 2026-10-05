@@ -84,6 +84,7 @@ def main():
             "project_id":tenant["project_id"],"name":"flash-lifecycle-workspace-"+nonce,
             "spec":{"region":args.region,"image":IMAGE,"replicas":1,"cpu_millis":100,
                 "memory_mib":128,"ephemeral_storage_gib":1,
+                "autoscaling":{"min_replicas":1,"max_replicas":1,"target_cpu_utilization_percent":80},
                 "ports":[{"name":"http","protocol":"tcp","container_port":8080}],
                 "exposure":{"type":"internal","traffic_mode":"forwarded"},
                 "egress":{"mode":"disabled"},
