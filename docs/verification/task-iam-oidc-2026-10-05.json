@@ -1,0 +1,347 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-10-05T11:27:15Z",
+  "passed": true,
+  "deployment": {
+    "observed_at": "2026-10-05T11:14:58Z",
+    "applications": [
+      {
+        "application": "heterocloud",
+        "version": "v0.1.102",
+        "sync": "Synced",
+        "health": "Healthy"
+      },
+      {
+        "application": "heterocloud-flash",
+        "version": "v0.1.46",
+        "sync": "Synced",
+        "health": "Healthy"
+      },
+      {
+        "application": "envoy-gateway",
+        "version": "v1.8.4",
+        "sync": "Synced",
+        "health": "Healthy"
+      }
+    ],
+    "oidc_application_pod_unchanged": true
+  },
+  "terraform_targeted_no_changes": true,
+  "task_iam": {
+    "passed": true,
+    "cli_version": "0.1.102",
+    "fixed_api_key": false,
+    "personal_cli_login": false,
+    "token_ttl_seconds": 900,
+    "observed_at": "2026-10-05T11:10:37Z",
+    "checks": [
+      {
+        "name": "pod_bound_short_lived_identity_without_default_kubernetes_token",
+        "passed": true
+      },
+      {
+        "name": "container_cli_authenticates_without_key_or_personal_login",
+        "passed": true
+      },
+      {
+        "name": "ungranted_iam_actions_and_cross_organization_access_denied",
+        "passed": true
+      },
+      {
+        "name": "parent_cannot_pass_a_role_without_iam_pass_role",
+        "passed": true
+      },
+      {
+        "name": "parent_creates_ready_private_child_in_vpc_without_inheriting_role",
+        "passed": true
+      },
+      {
+        "name": "disabled_role_revokes_issued_tokens_and_rejects_new_exchanges",
+        "passed": true
+      },
+      {
+        "name": "role_reenable_requires_new_credentials_and_cannot_revive_old_tokens",
+        "passed": true
+      },
+      {
+        "name": "binding_removal_applies_to_existing_workload_immediately",
+        "passed": true
+      },
+      {
+        "name": "parent_deletes_child_using_task_role",
+        "passed": true
+      }
+    ]
+  },
+  "load_balancer_oidc": {
+    "passed": true,
+    "identity_provider_mocked": false,
+    "redirect_status": 302,
+    "cookie_attributes": [
+      {
+        "secure": true,
+        "http_only": true,
+        "same_site": "Lax",
+        "host_only": true
+      },
+      {
+        "secure": true,
+        "http_only": true,
+        "same_site": "Lax",
+        "host_only": true
+      }
+    ],
+    "checks": [
+      {
+        "name": "default_no_authentication_returns_application",
+        "passed": true
+      },
+      {
+        "name": "missing_client_secret_blocks_application",
+        "passed": true
+      },
+      {
+        "name": "pending_fixed_size_service_exposes_oidc_callback",
+        "passed": true
+      },
+      {
+        "name": "attached_client_secret_cannot_be_deleted",
+        "passed": true
+      },
+      {
+        "name": "real_oidc_login_returns_original_url_desktop",
+        "passed": true
+      },
+      {
+        "name": "load_balancer_session_logout_desktop",
+        "passed": true
+      },
+      {
+        "name": "real_oidc_login_returns_original_url_mobile",
+        "passed": true
+      },
+      {
+        "name": "load_balancer_session_logout_mobile",
+        "passed": true
+      },
+      {
+        "name": "invalid_identity_provider_blocks_application",
+        "passed": true
+      },
+      {
+        "name": "credential_rewrite_and_policy_recovery_restore_oidc",
+        "passed": true
+      },
+      {
+        "name": "explicit_no_authentication_restores_public_application",
+        "passed": true
+      }
+    ]
+  },
+  "console": {
+    "schema_version": 1,
+    "passed": true,
+    "records": [
+      {
+        "browser": "desktop",
+        "ready_ms": 1257,
+        "real_api": true,
+        "fixture_session": true,
+        "task_role_selection": true,
+        "optional_oidc_controls": true,
+        "secret_not_prefilled": true,
+        "principal_and_binding_controls": true,
+        "passed": true
+      },
+      {
+        "browser": "mobile",
+        "ready_ms": 1167,
+        "real_api": true,
+        "fixture_session": true,
+        "task_role_selection": true,
+        "optional_oidc_controls": true,
+        "secret_not_prefilled": true,
+        "principal_and_binding_controls": true,
+        "passed": true
+      }
+    ]
+  },
+  "live_vpn_github_actions": {
+    "run_id": 37302126238,
+    "url": "https://github.com/IPA-CyberLab/IPA-RS-HeteroNetwork/actions/runs/37302126238",
+    "conclusion": "success",
+    "result": "passed",
+    "client_removed": true,
+    "route_convergence_ms": 12807,
+    "canonical": {
+      "port": 9781,
+      "ui_http": 200,
+      "login_button_rendered": true,
+      "open_ms": 856
+    },
+    "authenticated": {
+      "result": "passed",
+      "authenticated": true,
+      "session_restored": true,
+      "http_only_refresh_cookie": true,
+      "checks": {
+        "Authenticated overview": 200,
+        "Overview after reload": 200,
+        "Refresh cookie in new tab": 200,
+        "Authenticated overview in new tab": 200
+      }
+    },
+    "gateways": [
+      {
+        "gateway": "10.250.0.2",
+        "port": 80,
+        "open_ms": 583
+      },
+      {
+        "gateway": "10.250.0.2",
+        "port": 9781,
+        "open_ms": 427
+      },
+      {
+        "gateway": "10.250.0.4",
+        "port": 80,
+        "open_ms": 397
+      },
+      {
+        "gateway": "10.250.0.4",
+        "port": 9781,
+        "open_ms": 397
+      },
+      {
+        "gateway": "10.250.0.5",
+        "port": 80,
+        "open_ms": 505
+      },
+      {
+        "gateway": "10.250.0.5",
+        "port": 9781,
+        "open_ms": 384
+      },
+      {
+        "gateway": "10.250.0.6",
+        "port": 80,
+        "open_ms": 615
+      },
+      {
+        "gateway": "10.250.0.6",
+        "port": 9781,
+        "open_ms": 383
+      },
+      {
+        "gateway": "10.250.0.10",
+        "port": 80,
+        "open_ms": 393
+      },
+      {
+        "gateway": "10.250.0.10",
+        "port": 9781,
+        "open_ms": 383
+      },
+      {
+        "gateway": "10.250.0.11",
+        "port": 80,
+        "open_ms": 392
+      },
+      {
+        "gateway": "10.250.0.11",
+        "port": 9781,
+        "open_ms": 384
+      }
+    ],
+    "monitoring": {
+      "grafana.heteronetwork.internal": [
+        {
+          "address": "10.250.0.10",
+          "http": 200,
+          "open_ms": 520
+        },
+        {
+          "address": "10.250.0.11",
+          "http": 200,
+          "open_ms": 529
+        },
+        {
+          "address": "10.250.0.2",
+          "http": 200,
+          "open_ms": 475
+        }
+      ],
+      "prometheus.heteronetwork.internal": [
+        {
+          "address": "10.250.0.10",
+          "http": 200,
+          "open_ms": 613
+        },
+        {
+          "address": "10.250.0.11",
+          "http": 200,
+          "open_ms": 560
+        },
+        {
+          "address": "10.250.0.2",
+          "http": 200,
+          "open_ms": 552
+        }
+      ]
+    }
+  },
+  "existing_workloads": {
+    "observed_at": "2026-10-05T11:24:54Z",
+    "pod_count": 5,
+    "uids_preserved": true,
+    "nodes_preserved": true,
+    "restart_counts_preserved": true,
+    "resource_limits_preserved": true,
+    "persistent_claims_preserved": true,
+    "protected_workload_memory": "10Gi"
+  },
+  "cleanup": {
+    "usage_records_removed": 4,
+    "api_services_removed": true,
+    "idp_owned_client_and_user_removed": true,
+    "kubernetes_owned_resource_counts": {
+      "flashservices": 0,
+      "flashusagerecords": 0,
+      "pods": 0,
+      "deployments": 0,
+      "services": 0,
+      "persistentvolumeclaims": 0,
+      "serviceaccounts": 0,
+      "secrets": 0,
+      "httproutes": 0,
+      "securitypolicies": 0
+    },
+    "integration_database_removed": true,
+    "database_test_organizations_removed": true,
+    "fixture_count": 2,
+    "completed_at": "2026-10-05T11:20:50Z",
+    "database_remaining_counts": {
+      "organizations": 0,
+      "service_instances": 0,
+      "principals": 0,
+      "iam_policies": 0,
+      "iam_bindings": 0,
+      "api_keys": 0,
+      "workload_access_tokens": 0
+    }
+  },
+  "release_workflows": [
+    {
+      "repository": "IPA-RS-HeteroCloud",
+      "version": "0.1.102",
+      "conclusion": "success",
+      "url": "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/actions/runs/37297972744"
+    },
+    {
+      "repository": "IPA-RS-HeteroCloud-Flash",
+      "version": "0.1.46",
+      "conclusion": "success",
+      "url": "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud-Flash/actions/runs/37297508349"
+    }
+  ]
+}

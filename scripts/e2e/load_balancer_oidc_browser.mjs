@@ -14,6 +14,7 @@ const admin = await request.newContext({ extraHTTPHeaders: { Authorization: `Bea
 const browser = await chromium.launch();
 const report = { schema_version: 1, checks: [], passed: false, service_id: test.web_id };
 let stage = "fixture_reset";
+let activePage;
 async function record(name, details = {}) {
   report.checks.push({ name, passed: true, ...details });
   await writeFile(reportPath, JSON.stringify(report, null, 2));
@@ -72,6 +73,12 @@ try {
   stage = "missing_credential";
   await expect.poll(async () => (await context.request.get(test.web_url, { maxRedirects: 0 })).status(), { timeout: 90_000, intervals: [2000] }).toBeGreaterThanOrEqual(500);
   await record("missing_client_secret_blocks_application");
+  await expect.poll(async () => {
+    const value = await service();
+    const status = value.status?.status ?? value.status;
+    return value.state !== "ready" && status?.oidc_callback_url === test.callback_url;
+  }, { timeout: 90_000, intervals: [2000] }).toBe(true);
+  await record("pending_fixed_size_service_exposes_oidc_callback");
   await secret(oidc.client_secret);
   stage = "policy_acceptance";
   await waitReady();
@@ -80,23 +87,31 @@ try {
   await record("attached_client_secret_cannot_be_deleted");
   await context.close();
   for (const [name, profile] of [["desktop", devices["Desktop Chrome"]], ["mobile", devices["Pixel 7"]]]) {
-    stage = `real_oidc_login_${name}`;
+    stage = `unauthenticated_redirect_${name}`;
     context = await browser.newContext(profile);
     const redirect = await context.request.get(test.web_url, { maxRedirects: 0 });
+    report.redirect_status = redirect.status();
     expect(redirect.status()).toBe(302);
     expect(new URL(redirect.headers().location).pathname).toContain(`/realms/${oidc.realm}/`);
     const page = await context.newPage();
+    activePage = page;
+    stage = `identity_provider_login_form_${name}`;
     const destination = `${test.web_url}/index.html?oidc_e2e=${name}`;
     await page.goto(destination);
-    await page.locator("#username").fill(oidc.username);
+    await page.locator("#username").fill(oidc.login_username ?? oidc.username);
     await page.locator("#password").fill(oidc.password);
+    stage = `identity_provider_sign_in_${name}`;
     await page.locator("#kc-login").click();
     await expect(page.getByRole("heading", { name: "HeteroCloud OIDC E2E" })).toBeVisible({ timeout: 30_000 });
+    stage = `original_url_${name}`;
     expect(page.url() === destination).toBe(true);
     const cookies = (await context.cookies(test.web_url)).filter(c => /^Hc(Access|Id)Token-/.test(c.name));
+    stage = `session_cookie_attributes_${name}`;
+    report.cookie_attributes = cookies.map(c => ({ secure: c.secure, http_only: c.httpOnly, same_site: c.sameSite, host_only: !c.domain.startsWith(".") }));
     expect(cookies.length).toBeGreaterThan(0);
     expect(cookies.every(c => c.secure && c.httpOnly && c.sameSite === "Lax" && !c.domain.startsWith("."))).toBe(true);
     await record(`real_oidc_login_returns_original_url_${name}`);
+    stage = `session_logout_${name}`;
     await context.request.get(`${test.web_url}/_heterocloud/oidc/logout`, { maxRedirects: 0 });
     expect((await context.cookies(test.web_url)).filter(c => /^Hc(Access|Id)Token-/.test(c.name)).length).toBe(0);
     await record(`load_balancer_session_logout_${name}`);
@@ -112,6 +127,7 @@ try {
   await waitReady();
   await secret(oidc.client_secret);
   await waitReady();
+  await expect.poll(async () => (await context.request.get(test.web_url, { maxRedirects: 0 })).status(), { timeout: 30_000, intervals: [1000] }).toBe(302);
   await record("credential_rewrite_and_policy_recovery_restore_oidc");
   await auth(null);
   stage = "explicit_no_authentication";
@@ -125,6 +141,12 @@ try {
   // Playwright diagnostics may contain Authorization headers, cookie values,
   // password fill arguments or an OAuth callback code. Keep only the stage.
   report.failure_stage = stage;
+  if (activePage && !activePage.isClosed()) {
+    const url = new URL(activePage.url());
+    report.failure_page = { hostname: url.hostname, path: url.pathname,
+                            username_field_visible: await activePage.locator("#username").isVisible().catch(() => false),
+                            password_field_visible: await activePage.locator("#password").isVisible().catch(() => false) };
+  }
   await writeFile(reportPath, JSON.stringify(report, null, 2));
   console.error(`OIDC E2E failed at ${stage}; credentials are not included in diagnostics`);
   process.exitCode = 1;

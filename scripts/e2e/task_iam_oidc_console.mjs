@@ -12,6 +12,17 @@ const endpoint = new URL(test.endpoint).origin;
 const browser = await chromium.launch();
 const report = { schema_version: 1, passed: false, records: [] };
 let stage = "fixture_session";
+let dialogForDiagnostics;
+async function chooseAuthentication(page, dialog, label) {
+  const button = dialog.getByRole("button", { name: label, exact: true });
+  if (await button.isVisible()) {
+    await button.click();
+  } else {
+    // Cloudscape presents the same segmented control as a select on mobile.
+    await dialog.getByRole("button", { name: /^ロードバランサー認証/ }).click();
+    await page.getByRole("option", { name: label, exact: true }).click();
+  }
+}
 try {
   for (const [name, profile] of [["desktop", devices["Desktop Chrome"]], ["mobile", devices["Pixel 7"]]]) {
     const context = await browser.newContext(profile);
@@ -37,13 +48,14 @@ try {
     await page.goto(`${endpoint}/flash/services/${test.web_id}`, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "編集", exact: true }).click();
     dialog = page.getByRole("dialog");
+    dialogForDiagnostics = dialog;
     stage = `${name}_optional_oidc_and_callback`;
-    await dialog.getByRole("button", { name: "OIDC", exact: true }).click();
+    await chooseAuthentication(page, dialog, "OIDC");
     await expect(dialog.getByLabel("Issuer URL", { exact: true })).toBeVisible();
     await expect(dialog.getByLabel("Client ID", { exact: true })).toBeVisible();
     await expect(dialog.getByLabel("Client Secret", { exact: true })).toHaveValue("");
     await expect(dialog.getByText(test.callback_url, { exact: true })).toBeVisible();
-    await dialog.getByRole("button", { name: "認証なし", exact: true }).click();
+    await chooseAuthentication(page, dialog, "認証なし");
     await expect(dialog.getByLabel("Client Secret", { exact: true })).toHaveCount(0);
     await dialog.getByRole("button", { name: "キャンセル", exact: true }).click();
     await page.goto(`${endpoint}/iam/principals`, { waitUntil: "domcontentloaded" });
@@ -67,7 +79,12 @@ try {
   }
   report.passed = true;
   await writeFile(reportPath, JSON.stringify(report, null, 2));
-} catch {
+} catch (error) {
+  if (stage.endsWith("_optional_oidc_and_callback") && process.env.HETEROCLOUD_E2E_PRIVATE_DEBUG === "true") {
+    // Only this read-only form stage: password fields are never populated.
+    const snapshot = await dialogForDiagnostics.ariaSnapshot().catch(() => "dialog unavailable");
+    await writeFile(`${reportPath}.private-error.txt`, String(error.message) + "\n" + snapshot, { mode: 0o600 });
+  }
   report.failure_stage = stage;
   await writeFile(reportPath, JSON.stringify(report, null, 2));
   console.error(`Console E2E failed at ${stage}; session credentials are not included in diagnostics`);

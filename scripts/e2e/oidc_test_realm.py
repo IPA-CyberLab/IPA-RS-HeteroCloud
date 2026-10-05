@@ -45,28 +45,33 @@ if shared:
  prefix='/admin/realms/'+realm
  clients=call('GET',prefix+'/clients?'+urllib.parse.urlencode({'clientId':test['client_id']}),token=token)
  users=call('GET',prefix+'/users?'+urllib.parse.urlencode({'username':test['username'],'exact':'true'}),token=token)
- assert len(clients)<=1 and len(users)<=1
- assert all(c['clientId']==test['client_id'] and c.get('attributes',{}).get('hc-e2e-nonce')==test['nonce'] for c in clients)
  email=test['username']+'@example.invalid'
- assert all(u['username']==test['username'] and u['email']==email for u in users)
+ email_users=call('GET',prefix+'/users?'+urllib.parse.urlencode({'email':email,'exact':'true'}),token=token)
+ assert len(clients)<=1 and len(users)<=1 and len(email_users)<=1
+ users=list({u['id']:u for u in users+email_users}.values())
+ assert len(users)<=1
+ assert all(c['clientId']==test['client_id'] and c.get('attributes',{}).get('hc-e2e-nonce')==test['nonce'] for c in clients)
+ assert all(u['username'] in (test['username'],email) and u['email']==email for u in users)
  if request['action']=='remove':
   for client in clients: call('DELETE',prefix+'/clients/'+client['id'],token=token)
   for user in users: call('DELETE',prefix+'/users/'+user['id'],token=token)
-  print('PASS owned OIDC test client and user removed from shared realm')
+  print(json.dumps({'message':'PASS owned OIDC test client and user removed from shared realm'}))
  else:
   if not clients:
    call('POST',prefix+'/clients',{'clientId':test['client_id'],'enabled':True,'publicClient':False,'secret':test['client_secret'],'protocol':'openid-connect','standardFlowEnabled':True,'directAccessGrantsEnabled':False,'redirectUris':[test['callback_url']],'webOrigins':[],'attributes':{'hc-e2e-nonce':test['nonce']}},token)
   if not users:
    call('POST',prefix+'/users',{'username':test['username'],'enabled':True,'emailVerified':True,'email':email,'firstName':'OIDC','lastName':'E2E','requiredActions':[],'credentials':[{'type':'password','value':test['password'],'temporary':False}]},token)
-  print('PASS owned OIDC test client and user created in shared realm')
+  users=call('GET',prefix+'/users?'+urllib.parse.urlencode({'email':email,'exact':'true'}),token=token)
+  assert len(users)==1 and users[0]['email']==email and users[0]['username'] in (test['username'],email)
+  print(json.dumps({'message':'PASS owned OIDC test client and user created in shared realm','login_username':users[0]['username']}))
 elif request['action']=='remove':
  call('DELETE','/admin/realms/'+realm,token=token)
- print('PASS temporary OIDC test realm removed')
+ print(json.dumps({'message':'PASS temporary OIDC test realm removed'}))
 else:
  call('POST','/admin/realms',{'realm':realm,'enabled':True,'sslRequired':'external','registrationAllowed':False},token)
  call('POST','/admin/realms/'+realm+'/clients',{'clientId':test['client_id'],'enabled':True,'publicClient':False,'secret':test['client_secret'],'protocol':'openid-connect','standardFlowEnabled':True,'directAccessGrantsEnabled':False,'redirectUris':[test['callback_url']],'webOrigins':[]},token)
  call('POST','/admin/realms/'+realm+'/users',{'username':test['username'],'enabled':True,'emailVerified':True,'email':'oidc-e2e@example.invalid','firstName':'OIDC','lastName':'E2E','requiredActions':[],'credentials':[{'type':'password','value':test['password'],'temporary':False}]},token)
- print('PASS isolated real OIDC realm, client and test user created')
+ print(json.dumps({'message':'PASS isolated real OIDC realm, client and test user created','login_username':test['username']}))
 '''
 
 
@@ -89,7 +94,12 @@ def main():
     ], input=sudo_password + "\n" + payload, text=True, capture_output=True)
     if result.returncode:
         raise RuntimeError("Temporary OIDC realm operation failed; inspect server diagnostics privately")
-    print(result.stdout.strip())
+    result_data = json.loads(result.stdout)
+    if args.action == "create":
+        fixture = json.loads(args.fixture.read_text())
+        fixture["oidc_test"]["login_username"] = result_data["login_username"]
+        args.fixture.write_text(json.dumps(fixture))
+    print(result_data["message"])
 
 
 if __name__ == "__main__":
