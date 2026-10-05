@@ -225,6 +225,21 @@ jobs:
           cargo build --release --locked -p heterocloud-cli
           --target ${{ matrix.rust_target }}
 
+      - name: Verify CLI release version
+        shell: bash
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+          ASSET_OS: ${{ matrix.asset_os }}
+        run: |
+          python - <<'PY'
+          import os, pathlib, subprocess
+          filename = "heterocloud.exe" if os.environ["ASSET_OS"] == "windows" else "heterocloud"
+          binary = pathlib.Path("target") / os.environ["RUST_TARGET"] / "release" / filename
+          actual = subprocess.check_output([str(binary), "--version"], text=True).strip()
+          expected = "heterocloud " + os.environ["RELEASE_TAG"].removeprefix("v")
+          assert actual == expected, (actual, expected)
+          PY
+
       - name: Verify updates on the native OS and CPU
         run: >-
           cargo test --release --locked -p heterocloud-cli --lib update::tests

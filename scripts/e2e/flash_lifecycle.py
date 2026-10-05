@@ -16,7 +16,11 @@ import time
 import urllib.parse
 
 from websockets.asyncio.client import connect
-from vpc_live import Api, IMAGE
+from vpc_live import Api
+
+# Owned, immutable image with a real UDP echo process; avoids anonymous Docker
+# Hub quotas during repeated lifecycle changes.
+IMAGE = "ghcr.io/ipa-cyberlab/ipa-rs-heterocloud-flash@sha256:690a6f38cf643b7d8c3b309ae65fef3e8125a4a004d15ee332039bd25fa0300d"
 
 
 def main():
@@ -55,6 +59,11 @@ def main():
             assert value["organization_id"] == tenant["organization_id"]
             assert value["name"].startswith("flash-lifecycle-")
             if path.startswith("flash/"):
+                if value["state"] == "deleting":
+                    api.wait(path,deleted=True)
+                    continue
+                api.call("POST",path+"/stop")
+                value = api.wait(path)
                 if value["spec"].get("secret_env"):
                     spec = {**value["spec"], "secret_env":{}, "secret_files":{}}
                     api.call("PUT",path,{"name":value["name"],"spec":spec})
@@ -85,11 +94,11 @@ def main():
             "spec":{"region":args.region,"image":IMAGE,"replicas":1,"cpu_millis":100,
                 "memory_mib":128,"ephemeral_storage_gib":1,
                 "autoscaling":{"min_replicas":1,"max_replicas":1,"target_cpu_utilization_percent":80},
-                "ports":[{"name":"http","protocol":"tcp","container_port":8080}],
+                "ports":[{"name":"echo","protocol":"udp","container_port":7777}],
                 "exposure":{"type":"internal","traffic_mode":"forwarded"},
                 "egress":{"mode":"disabled"},
                 "network":{"vpc_id":vpc["id"],"security_groups":["workspace"],"private_name":"workspace"},
-                "env":{"HOME":"/root"},"command":["python3"],"args":["-m","http.server","8080"],
+                "env":{"HOME":"/root"},"command":["/usr/local/bin/flash-udp-echo"],"args":[],
                 "metadata":{"test":"flash-lifecycle"}},
         })
         path = "flash/services/"+service["id"]
@@ -118,12 +127,13 @@ def main():
         marker = "PERSIST_"+nonce+"_OK"
         # Kubernetes exec starts a separate process with the Pod's configured env.
         # Secret injection happens in the application launcher, so inspect PID 1.
-        verify = "python3 -c \"from pathlib import Path; assert b'LIFECYCLE_TOKEN=fixture-"+nonce+"' in Path('/proc/1/environ').read_bytes().split(b'\\\\0'); print(Path('/root/lifecycle-marker').read_text())\""
+        verify = "tr '\\000' '\\n' < /proc/1/environ | grep -Fxq 'LIFECYCLE_TOKEN=fixture-"+nonce+"' && cat /root/lifecycle-marker"
         old_pod = asyncio.run(exec_marker("printf 'PERSIST_%s_OK' '"+nonce+"' > /root/lifecycle-marker; "+verify,marker))
         record("persistent_file_written_and_secret_injected")
         with tempfile.TemporaryDirectory(prefix="hc-lifecycle-key-") as private:
             keyfile=Path(private)/"api-key"; keyfile.write_text(tenant["api_key"]); keyfile.chmod(0o600)
             env=os.environ.copy(); env.pop("HETEROCLOUD_API_KEY",None)
+            env["HETEROCLOUD_NO_UPDATE_CHECK"]="1"
             def cli(action):
                 result=subprocess.run([args.cli,"--endpoint",args.endpoint,"--organization-id",tenant["organization_id"],
                     "--api-key-file",str(keyfile),"--wait-timeout-seconds","600","flash",action,service["id"]],
