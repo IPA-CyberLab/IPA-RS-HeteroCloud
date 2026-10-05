@@ -460,6 +460,7 @@ export interface FlashServiceSpec {
   region: string;
   image: string;
   replicas: number;
+  stopped?: boolean;
   autoscaling?: FlashAutoscaling;
   cpu_millis: number;
   memory_mib: number;
@@ -499,6 +500,7 @@ export interface FlashServiceStatus {
   observed_generation?: number;
   ready_replicas?: number;
   desired_replicas?: number;
+  stopped?: boolean;
   available_replicas?: number;
   runtime_class?: string;
   message?: string;

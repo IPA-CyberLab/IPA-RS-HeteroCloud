@@ -663,6 +663,10 @@ export class HeteroCloudApiClient {
           ),
           { method: "DELETE" },
         ),
+      stop: (organizationId: string, serviceId: string) =>
+        this.request<FlashService>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/stop`), { method: "POST" }),
+      start: (organizationId: string, serviceId: string) =>
+        this.request<FlashService>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/start`), { method: "POST" }),
       listSecrets: (organizationId: string, serviceId: string, signal?: AbortSignal) =>
         this.request<CollectionResponse<string>>(
           organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/secrets`),

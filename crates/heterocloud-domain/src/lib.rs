@@ -738,6 +738,9 @@ pub struct FlashSpec {
     pub region: String,
     pub image: String,
     pub replicas: u32,
+    /// Explicit operator stop; preserves the service and its persistent home.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stopped: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub autoscaling: Option<FlashAutoscaling>,
     pub cpu_millis: u32,
@@ -1463,6 +1466,7 @@ mod tests {
 
     fn flash_spec() -> FlashSpec {
         FlashSpec {
+            stopped: false,
             region: "heteronet-global".into(),
             image: "ghcr.io/example/game-server:v1".into(),
             replicas: 3,

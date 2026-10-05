@@ -35,6 +35,32 @@ pub struct ServiceArgs {
     pub command: ServiceCommand,
 }
 
+#[derive(Debug, Args)]
+pub struct FlashArgs {
+    #[command(subcommand)]
+    pub command: FlashCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FlashCommand {
+    /// Start a stopped service with its existing settings and persistent home.
+    Start {
+        #[arg(value_name = "SERVICE_ID")]
+        id: Uuid,
+        #[arg(long)]
+        no_wait: bool,
+    },
+    /// Stop all replicas and retain the service, secrets and persistent home.
+    Stop {
+        #[arg(value_name = "SERVICE_ID")]
+        id: Uuid,
+        #[arg(long)]
+        no_wait: bool,
+    },
+    #[command(flatten)]
+    Service(ServiceCommand),
+}
+
 #[derive(Debug, Subcommand)]
 pub enum ServiceCommand {
     /// List service instances, optionally within one project.
@@ -228,6 +254,26 @@ pub(crate) async fn execute(
     }
 }
 
+pub(crate) async fn execute_flash(args: FlashArgs, settings: ApiSettings) -> Result<(), CliError> {
+    let (id, stopped, no_wait) = match args.command {
+        FlashCommand::Service(command) => {
+            return execute(ServiceKind::Flash, ServiceArgs { command }, settings).await;
+        }
+        FlashCommand::Start { id, no_wait } => (id, false, no_wait),
+        FlashCommand::Stop { id, no_wait } => (id, true, no_wait),
+    };
+    let output = settings.output;
+    let client = ApiClient::new(settings)?;
+    let service = client.set_flash_stopped(id, stopped).await?;
+    ensure_provider(ServiceKind::Flash, &service)?;
+    let service = if no_wait {
+        service
+    } else {
+        client.wait_ready(ServiceKind::Flash, service.id).await?
+    };
+    write_service(&service, output)
+}
+
 impl ApiClient {
     fn new(settings: ApiSettings) -> Result<Self, CliError> {
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -355,6 +401,19 @@ impl ApiClient {
         let value = self
             .send_json(method, self.service_url(kind, id)?, Some(manifest))
             .await?;
+        serde_json::from_value(value).map_err(CliError::Json)
+    }
+
+    async fn set_flash_stopped(&self, id: Uuid, stopped: bool) -> Result<ManagedService, CliError> {
+        let action = if stopped { "stop" } else { "start" };
+        let url = self
+            .endpoint
+            .join(&format!(
+                "{}/{id}/{action}",
+                ServiceKind::Flash.collection_path(self.organization_id)
+            ))
+            .map_err(|error| CliError::InvalidApiEndpoint(error.to_string()))?;
+        let value = self.send_json::<Value>(Method::POST, url, None).await?;
         serde_json::from_value(value).map_err(CliError::Json)
     }
 
@@ -574,7 +633,11 @@ fn write_services(services: &[ManagedService], format: ApiOutputFormat) -> Resul
             for service in services {
                 println!(
                     "{}\t{}\t{}\t{}\t{}",
-                    service.id, service.name, service.state, service.project_id, service.updated_at
+                    service.id,
+                    service.name,
+                    display_state(service),
+                    service.project_id,
+                    service.updated_at
                 );
             }
         }
@@ -590,7 +653,7 @@ fn write_service(service: &ManagedService, format: ApiOutputFormat) -> Result<()
             println!("id\t{}", service.id);
             println!("name\t{}", service.name);
             println!("provider\t{}", service.provider);
-            println!("state\t{}", service.state);
+            println!("state\t{}", display_state(service));
             println!("project_id\t{}", service.project_id);
             println!("generation\t{}", service.generation);
             println!("spec\t{}", compact_json(&service.spec));
@@ -613,6 +676,23 @@ fn write_deleted(id: Uuid, format: ApiOutputFormat) -> Result<(), CliError> {
         }
     }
     Ok(())
+}
+
+fn display_state(service: &ManagedService) -> &str {
+    if service.provider == "flash"
+        && service.spec.get("stopped").and_then(Value::as_bool) == Some(true)
+        && !matches!(service.state.as_str(), "error" | "deleting")
+    {
+        let status = service.status.get("status").unwrap_or(&service.status);
+        if service.state == "ready" && status.get("stopped").and_then(Value::as_bool) == Some(true)
+        {
+            "stopped"
+        } else {
+            "stopping"
+        }
+    } else {
+        &service.state
+    }
 }
 
 fn compact_json(value: &Value) -> String {
@@ -647,6 +727,33 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn flash_lifecycle_commands_do_not_leak_to_other_providers() {
+        use clap::Parser;
+        for action in ["stop", "start"] {
+            assert!(
+                crate::Cli::try_parse_from([
+                    "heterocloud",
+                    "flash",
+                    action,
+                    "00000000-0000-0000-0000-000000000007",
+                    "--no-wait"
+                ])
+                .is_ok()
+            );
+            assert!(
+                crate::Cli::try_parse_from([
+                    "heterocloud",
+                    "flow",
+                    action,
+                    "00000000-0000-0000-0000-000000000007"
+                ])
+                .is_err()
+            );
+        }
+        assert!(crate::Cli::try_parse_from(["heterocloud", "flash", "list"]).is_ok());
+    }
 
     fn settings(endpoint: &str, allow_insecure_http: bool) -> ApiSettings {
         ApiSettings {

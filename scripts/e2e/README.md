@@ -1,5 +1,21 @@
 # VPC live E2E
 
+For stop/start and persistent workspace storage, use a separate empty fixture:
+
+```sh
+python3 scripts/e2e/flash_lifecycle.py --endpoint "$HETEROCLOUD_ENDPOINT" \
+  --cli heterocloud --fixture "$PRIVATE_DIR/lifecycle-fixture.json" \
+  --report "$PRIVATE_DIR/lifecycle-report.json"
+```
+
+This provisions a real private VPC workspace, writes a marker through public
+WebSocket exec, injects a disposable secret, stops/starts through the CLI, and
+checks zero containers while stopped, idempotency, the same settings and secret,
+and file contents in the new container. It deletes its services/VPC afterward.
+Run `vpc_fixture.py create` before and `remove` after, as below. It additionally
+requires `websockets`; no existing user's services are modified. If cleanup
+fails, use the same command with `--cleanup` before removing the fixture.
+
 This test provisions real Flash workloads through the public API and CLI. It
 uses two disposable tenants, never existing users' services. The parent receives
 an expiring API key through Secret Manager and creates a private child with the

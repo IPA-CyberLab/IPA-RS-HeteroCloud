@@ -133,6 +133,7 @@ export function FlashServiceDetailPage() {
         name: value.name.trim(),
         spec: {
           ...flashSpecFromForm(value, service.data?.spec.metadata ?? {}),
+          ...(service.data?.spec.stopped ? { stopped: true } : {}),
           secret_env: editSecretEnv,
           secret_files: {},
         },
@@ -155,6 +156,16 @@ export function FlashServiceDetailPage() {
         queryKey: ["organizations", organizationId, "flash", "services"],
       });
       navigate("/flash/services", { replace: true });
+    },
+  });
+  const changeExecution = useMutation({
+    mutationFn: (stopped: boolean) => stopped
+      ? api.flash.services.stop(organizationId, serviceId)
+      : api.flash.services.start(organizationId, serviceId),
+    onSuccess: async (updated) => {
+      queryClient.setQueryData(flashServiceQueryOptions(organizationId, serviceId).queryKey, updated);
+      setShellOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["organizations", organizationId, "flash", "services"] });
     },
   });
 
@@ -253,6 +264,13 @@ export function FlashServiceDetailPage() {
         actions={
           <SpaceBetween direction="horizontal" size="xs">
             <Button
+              disabled={disabled || editOpen || updateService.isPending || deleteService.isPending}
+              loading={changeExecution.isPending}
+              onClick={() => changeExecution.mutate(!item.spec.stopped)}
+            >
+              {item.spec.stopped ? "開始" : "停止"}
+            </Button>
+            <Button
               variant="icon"
               iconName="refresh"
               ariaLabel="更新"
@@ -260,7 +278,7 @@ export function FlashServiceDetailPage() {
             />
             <Button
               iconName="script"
-              disabled={disabled || Boolean(gpuQueueMessage)}
+              disabled={disabled || Boolean(item.spec.stopped) || Boolean(gpuQueueMessage)}
               onClick={() => {
                 setShellPod(null);
                 setShellSession(0);
@@ -290,6 +308,8 @@ export function FlashServiceDetailPage() {
           </SpaceBetween>
         }
       />
+      {changeExecution.isError && <Alert type="error">{getApiErrorMessage(changeExecution.error)}</Alert>}
+      {item.spec.stopped && <Alert type="info">サービスを停止しています。ホーム領域・シークレット・設定は保持され、開始すると同じホーム領域を使用します。コンテナの書き込み領域は再作成されます。</Alert>}
       <Container>
         <ColumnLayout columns={3} variant="text-grid">
           {[

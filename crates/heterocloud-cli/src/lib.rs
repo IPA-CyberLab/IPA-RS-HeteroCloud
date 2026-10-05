@@ -16,7 +16,7 @@ mod services;
 
 pub use auth::AuthArgs;
 pub use external_dns::ReconcileArgs;
-pub use services::{ApiOutputFormat, ServiceArgs};
+pub use services::{ApiOutputFormat, FlashArgs, ServiceArgs};
 
 const NODE_SCOPED_SERVICE_PREFIXES: [&str; 1] = ["cloud"];
 const FLOW_SERVICE_PREFIX: &str = "flow";
@@ -100,7 +100,7 @@ pub enum TopLevelCommand {
     /// Manage Flow realtime services.
     Flow(ServiceArgs),
     /// Manage Flash gVisor container services.
-    Flash(ServiceArgs),
+    Flash(FlashArgs),
     /// Manage private networks, connection rules and outbound NAT.
     Vpc(ServiceArgs),
     /// Manage Syouyu S3-compatible buckets.
@@ -386,7 +386,7 @@ pub async fn execute(cli: Cli) -> Result<(), CliError> {
                 allow_insecure_http,
                 output,
             )?;
-            services::execute(services::ServiceKind::Flash, args, settings).await
+            services::execute_flash(args, settings).await
         }
         TopLevelCommand::Vpc(args) => {
             let settings = service_api_settings(

@@ -35,6 +35,52 @@ the writable budget to the container filesystem and assigns the rest to
 filesystem allocation cannot be changed after creation because that would
 require shrinking the existing persistent volume.
 
+## Explicit stop and start
+
+`POST /api/v1/organizations/{organization_id}/flash/services/{id}/stop` stops
+every replica without deleting the Flash service, its persistent `/root`
+volume, stored secrets, ports, VPC attachment, or resume configuration.
+`POST .../start` starts the same service again. Both require
+`flash:UpdateInstance` on that service and return HTTP 202. Repeating a request
+for the already-requested state does not increment generation or enqueue more
+reconciliation work. The transaction changes only the execution flag, so it
+cannot overwrite a concurrent configuration edit.
+
+```sh
+heterocloud flash stop SERVICE_ID
+heterocloud flash start SERVICE_ID
+```
+
+The CLI waits for completion by default; `--no-wait` returns after acceptance.
+Endpoints use the configured CLI domain, organization and credentials.
+For a Coder workspace, create a separate Flash service per workspace with
+`replicas: 1` and internal VPC exposure, then stop/start its stable service ID.
+Use `/root` for persistent home/project data (for example `HOME=/root`). Files
+in the container's writable filesystem outside the persistent mount, including
+an unmounted `/home/coder`, are recreated with the container on start.
+
+`spec.stopped` is an optional boolean, defaulting to false. `replicas` and
+`autoscaling` still describe the resume configuration; they do not need to be
+changed to zero. Full-spec PUT updates replace this flag too: include
+`stopped: true` when editing a service that must remain stopped. The console
+preserves it during edits. The lifecycle endpoints avoid replacing the spec.
+Internal/VPC services can be explicitly stopped; HTTP idle scaling's web-only
+restriction does not apply to this operation.
+
+The outer `state: ready` means reconciliation completed. Confirm execution
+state using `spec.stopped` and `status.status.stopped`: the latter becomes true
+only when all workload Pods have disappeared and any GPU reservation has been
+released. While draining, the outer state remains `updating`. Stored CPU/memory
+configuration is retained, but runtime usage stops accruing once replicas reach
+zero; disk and allocation quota reservations remain. A stopped HTTP service
+does not wake on incoming requests. Starting rechecks current quotas, GPU
+access, and the VPC attachment.
+
+The controller can stop even when OCI inspection or VPC reconciliation has
+failed. It drains replicas before releasing a GPU and retains the existing
+Deployment template/PVC. Image or capacity failure during the later start is
+reported as a start failure and must not be treated as successful execution.
+
 ## GPU selection
 
 `spec.gpu_type` is optional. A canonical type such as

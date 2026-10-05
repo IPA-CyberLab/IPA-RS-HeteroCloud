@@ -99,6 +99,34 @@ describe("FlashServiceDetailPage", () => {
     });
   });
 
+  it("stops and starts through lifecycle endpoints while keeping the service", async () => {
+    const user = userEvent.setup();
+    const stopped: FlashService = { ...service, spec: { ...service.spec, stopped: true },
+      status: { ...service.status, stopped: true, ready_replicas: 0, desired_replicas: 0 } };
+    const stop = vi.spyOn(api.flash.services, "stop").mockImplementation(async () => {
+      vi.mocked(api.flash.services.get).mockResolvedValue(stopped);
+      return stopped;
+    });
+    const start = vi.spyOn(api.flash.services, "start").mockImplementation(async () => {
+      vi.mocked(api.flash.services.get).mockResolvedValue(service);
+      return service;
+    });
+    const remove = vi.spyOn(api.flash.services, "delete");
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={[`/flash/services/${service.id}`]}>
+      <Routes><Route path="/flash/services/:serviceId" element={<FlashServiceDetailPage />} /></Routes>
+    </MemoryRouter></QueryClientProvider>);
+    await user.click(await screen.findByRole("button", { name: "停止" }));
+    expect(stop).toHaveBeenCalledWith("organization-1", "flash-1");
+    expect(await screen.findByRole("button", { name: "開始" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Web Shell" })).toBeDisabled();
+    expect(screen.getByText(/ホーム領域・シークレット・設定は保持/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "開始" }));
+    expect(start).toHaveBeenCalledWith("organization-1", "flash-1");
+    expect(await screen.findByRole("button", { name: "停止" })).toBeEnabled();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
   it("links web domains without exposing internal service ports", async () => {
     vi.mocked(api.flash.services.get).mockResolvedValue({ ...service,
       spec: { ...service.spec, exposure: { ...service.spec.exposure, endpoint_mode: "web" },

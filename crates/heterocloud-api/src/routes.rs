@@ -214,6 +214,14 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             get(list_flash_secrets),
         )
         .route(
+            "/organizations/{organization_id}/flash/services/{service_instance_id}/stop",
+            post(stop_flash_service),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/services/{service_instance_id}/start",
+            post(start_flash_service),
+        )
+        .route(
             "/organizations/{organization_id}/flash/services/{service_instance_id}/secrets/{name}",
             axum::routing::put(put_flash_secret).delete(delete_flash_secret),
         )
@@ -2683,6 +2691,70 @@ async fn update_flash_service(
             authorization.principal_id,
             &request.name,
             serde_json::to_value(request.spec).map_err(|_| ApiError::Internal)?,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::ACCEPTED, Json(instance)))
+}
+
+async fn stop_flash_service(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, ApiError> {
+    set_flash_service_execution(
+        state,
+        organization_id,
+        service_instance_id,
+        headers,
+        jar,
+        true,
+    )
+    .await
+}
+
+async fn start_flash_service(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, ApiError> {
+    set_flash_service_execution(
+        state,
+        organization_id,
+        service_instance_id,
+        headers,
+        jar,
+        false,
+    )
+    .await
+}
+
+async fn set_flash_service_execution(
+    state: Arc<AppState>,
+    organization_id: Uuid,
+    service_instance_id: Uuid,
+    headers: HeaderMap,
+    jar: CookieJar,
+    stopped: bool,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:UpdateInstance",
+        &flash_service_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let instance = state
+        .store
+        .set_flash_service_stopped(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_instance_id),
+            authorization.principal_id,
+            stopped,
         )
         .await
         .map_err(ApiError::from_store)?;
@@ -5520,6 +5592,7 @@ mod tests {
             format!("hc:org:{organization_id}:flash/instance/{service_id}")
         );
         let spec = FlashSpec {
+            stopped: false,
             region: "heteronet-global".into(),
             image: "ghcr.io/example/udp-server:v1".into(),
             replicas: 2,

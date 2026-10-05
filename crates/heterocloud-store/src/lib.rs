@@ -2893,6 +2893,115 @@ impl Store {
         ServiceInstance::try_from(row)
     }
 
+    /// Toggle execution without replacing configuration or deleting storage.
+    /// The row lock prevents a concurrent edit from being overwritten by a
+    /// read/modify/write performed in the API handler. Repeated calls are inert.
+    pub async fn set_flash_service_stopped(
+        &self,
+        organization_id: OrganizationId,
+        id: ServiceInstanceId,
+        principal_id: PrincipalId,
+        stopped: bool,
+    ) -> Result<ServiceInstance, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        lock_tenant_allocations(&mut transaction, organization_id).await?;
+        lock_flash_allocations(&mut transaction).await?;
+        let existing = sqlx::query_as::<_, ServiceRow>(
+            "SELECT id, organization_id, project_id, provider, name, generation,
+                    state, spec, status, created_at, updated_at
+             FROM service_instances
+             WHERE id = $1 AND organization_id = $2 AND provider = 'flash' FOR UPDATE",
+        )
+        .bind(id.0)
+        .bind(organization_id.0)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        if existing.state == "deleting" {
+            return Err(StoreError::Conflict);
+        }
+        let current: FlashSpec = serde_json::from_value(existing.spec.clone())?;
+        if current.stopped == stopped {
+            transaction.commit().await?;
+            return ServiceInstance::try_from(existing);
+        }
+        let mut spec = existing.spec.clone();
+        let object = spec
+            .as_object_mut()
+            .ok_or(StoreError::Invariant("invalid Flash spec"))?;
+        if stopped {
+            object.insert("stopped".into(), Value::Bool(true));
+        } else {
+            object.remove("stopped");
+        }
+        if !stopped {
+            // A stop is always permitted, including after a quota/access
+            // reduction. Starting must pass the current allocation and GPU
+            // access checks; stopped services retain their quota reservation.
+            let quota = resource_quota_in_transaction(&mut transaction, organization_id).await?;
+            spec = prepare_flash_spec(
+                &mut transaction,
+                organization_id,
+                principal_id,
+                Some(id),
+                Some(&existing.spec),
+                spec,
+                &quota,
+            )
+            .await?;
+            validate_vpc_attachment(
+                &mut transaction,
+                organization_id,
+                ProjectId(existing.project_id),
+                id,
+                &spec,
+            )
+            .await?;
+        }
+        let generation = existing
+            .generation
+            .checked_add(1)
+            .ok_or(StoreError::Invariant("service generation overflow"))?;
+        let row = sqlx::query_as::<_, ServiceRow>(
+            "UPDATE service_instances SET spec = $3, generation = $4,
+                 state = 'updating', status = '{}'::jsonb, updated_at = now()
+             WHERE id = $1 AND organization_id = $2 AND provider = 'flash'
+             RETURNING id, organization_id, project_id, provider, name, generation,
+                       state, spec, status, created_at, updated_at",
+        )
+        .bind(id.0)
+        .bind(organization_id.0)
+        .bind(spec)
+        .bind(generation)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if !stopped {
+            replace_flash_gpu_service_request(
+                &mut transaction,
+                id,
+                organization_id,
+                principal_id,
+                &row.spec,
+            )
+            .await?;
+        }
+        sqlx::query(
+            "INSERT INTO outbox_events (id, topic, aggregate_id, payload)
+             VALUES ($1, 'service-instance.reconcile', $2, $3)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(id.0)
+        .bind(serde_json::json!({
+            "service_instance_id": id, "organization_id": organization_id,
+            "project_id": ProjectId(existing.project_id), "principal_id": principal_id,
+            "provider": "flash", "generation": generation,
+        }))
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        ServiceInstance::try_from(row)
+    }
+
     pub async fn begin_delete_service_instance(
         &self,
         organization_id: OrganizationId,

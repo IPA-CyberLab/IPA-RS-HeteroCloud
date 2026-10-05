@@ -38,8 +38,12 @@ export function flashGpuQueueMessage(status: FlashServiceStatus): string | null 
 }
 
 export function flashDisplayState(
-  service: Pick<FlashService, "state" | "status">,
-): FlashService["state"] | "queued" {
+  service: Pick<FlashService, "state" | "status"> & Partial<Pick<FlashService, "spec">>,
+): FlashService["state"] | "queued" | "stopped" | "stopping" {
+  if (service.state === "deleting" || service.state === "error") return service.state;
+  if (service.spec?.stopped) {
+    return service.state === "ready" && flashProviderStatus(service.status).stopped === true ? "stopped" : "stopping";
+  }
   return flashGpuQueueMessage(service.status) ? "queued" : service.state;
 }
 
@@ -164,6 +168,7 @@ export function readyReplicas(service: Pick<FlashService, "status">): number | n
 }
 
 export function requestedReplicas(service: Pick<FlashService, "status" | "spec">): number | null {
+  if (service.spec.stopped) return 0;
   const status = flashProviderStatus(service.status);
   if (status.live_status_unavailable === true) return null;
   const value = status.desired_replicas ?? status.requested_replicas ?? status.replicas;

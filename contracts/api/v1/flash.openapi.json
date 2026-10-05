@@ -404,6 +404,136 @@
           }
         }
       }
+    },
+    "/api/v1/organizations/{organization_id}/flash/services/{service_instance_id}/start": {
+      "post": {
+        "responses": {
+          "202": {
+            "description": "Accepted service instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "spec"
+                  ],
+                  "properties": {
+                    "spec": {
+                      "$ref": "#/components/schemas/FlashSpec"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid specification or quota exceeded"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Project or service not found"
+          },
+          "422": {
+            "description": "Malformed request body"
+          },
+          "503": {
+            "description": "Flash provider GPU catalog unavailable when gpu_type is requested"
+          }
+        },
+        "operationId": "startFlashService",
+        "summary": "Start with retained settings and persistent home",
+        "description": "Requires flash:UpdateInstance on this service. Idempotent; repeated calls for the same desired state do not increment generation. The ready lifecycle state means reconciliation completed; inspect spec.stopped and status.status.stopped for execution state.",
+        "parameters": [
+          {
+            "name": "organization_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "service_instance_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/organizations/{organization_id}/flash/services/{service_instance_id}/stop": {
+      "post": {
+        "responses": {
+          "202": {
+            "description": "Accepted service instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "spec"
+                  ],
+                  "properties": {
+                    "spec": {
+                      "$ref": "#/components/schemas/FlashSpec"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid specification or quota exceeded"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Project or service not found"
+          },
+          "422": {
+            "description": "Malformed request body"
+          },
+          "503": {
+            "description": "Flash provider GPU catalog unavailable when gpu_type is requested"
+          }
+        },
+        "operationId": "stopFlashService",
+        "summary": "Stop execution and retain persistent home",
+        "description": "Requires flash:UpdateInstance on this service. Idempotent; repeated calls for the same desired state do not increment generation. The ready lifecycle state means reconciliation completed; inspect spec.stopped and status.status.stopped for execution state.",
+        "parameters": [
+          {
+            "name": "organization_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "service_instance_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -471,6 +601,11 @@
           },
           "live_status_unavailable": {
             "type": "boolean"
+          },
+          "stopped": {
+            "type": "boolean",
+            "default": false,
+            "description": "True only after an explicit stop has drained all Pods and released the GPU reservation."
           }
         },
         "allOf": [
@@ -918,6 +1053,11 @@
           },
           "metadata": {
             "type": "object"
+          },
+          "stopped": {
+            "type": "boolean",
+            "default": false,
+            "description": "Explicitly stop execution while retaining the service, secrets and persistent /root volume. replicas and autoscaling remain the resume configuration."
           }
         }
       },
