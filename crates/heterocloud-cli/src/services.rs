@@ -43,6 +43,11 @@ pub struct FlashArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum FlashCommand {
+    /// Manage custom hostnames without restarting the container.
+    Domains {
+        #[command(subcommand)]
+        command: FlashDomainCommand,
+    },
     /// Write or remove credentials for optional HTTP load balancer OIDC.
     LoadBalancerSecret {
         #[command(subcommand)]
@@ -64,6 +69,24 @@ pub enum FlashCommand {
     },
     #[command(flatten)]
     Service(ServiceCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FlashDomainCommand {
+    List {
+        id: Uuid,
+    },
+    Add {
+        id: Uuid,
+        #[arg(long)]
+        hostname: String,
+    },
+    Delete {
+        id: Uuid,
+        domain_id: Uuid,
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -495,6 +518,38 @@ pub(crate) async fn execute(
 
 pub(crate) async fn execute_flash(args: FlashArgs, settings: ApiSettings) -> Result<(), CliError> {
     let (id, stopped, no_wait) = match args.command {
+        FlashCommand::Domains { command } => {
+            let client = ApiClient::new(settings)?;
+            let (id, method, suffix, body) = match command {
+                FlashDomainCommand::List { id } => (id, Method::GET, "domains".to_owned(), None),
+                FlashDomainCommand::Add { id, hostname } => (
+                    id,
+                    Method::POST,
+                    "domains".to_owned(),
+                    Some(
+                        json!({"hostname":hostname.trim().trim_end_matches('.').to_ascii_lowercase()}),
+                    ),
+                ),
+                FlashDomainCommand::Delete { id, domain_id, yes } => {
+                    if !yes {
+                        return Err(CliError::InvalidManifest(
+                            "domain delete requires --yes".into(),
+                        ));
+                    }
+                    (id, Method::DELETE, format!("domains/{domain_id}"), None)
+                }
+            };
+            let url = client
+                .endpoint
+                .join(&format!(
+                    "{}/{id}/{suffix}",
+                    ServiceKind::Flash.collection_path(client.organization_id)
+                ))
+                .map_err(|e| CliError::InvalidApiEndpoint(e.to_string()))?;
+            let result = client.send_json(method, url, body.as_ref()).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            return Ok(());
+        }
         FlashCommand::LoadBalancerSecret { command } => {
             let client = ApiClient::new(settings)?;
             let (id, name, value) = match command {

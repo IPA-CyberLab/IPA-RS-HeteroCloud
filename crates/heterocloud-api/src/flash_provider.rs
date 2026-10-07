@@ -41,6 +41,74 @@ pub struct FlashProviderProxy {
 }
 
 impl FlashProviderProxy {
+    pub async fn list_custom_domains(
+        &self,
+        context: FlashProviderContext,
+    ) -> Result<Value, FlashProviderError> {
+        let signed = self.sign(&context, "flash.domains.list")?;
+        let url = self.endpoint.join(&format!(
+            "internal/v1/service-instances/{}/domains",
+            context.service_instance_id
+        ))?;
+        let response = self
+            .client
+            .get(url)
+            .bearer_auth(signed)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(FlashProviderError::ProviderStatus(
+                response.status().as_u16(),
+            ));
+        }
+        Ok(response.json().await?)
+    }
+
+    pub async fn put_custom_domain(
+        &self,
+        context: FlashProviderContext,
+        hostname: &str,
+        binding_id: uuid::Uuid,
+        verification: &str,
+    ) -> Result<(), FlashProviderError> {
+        let signed = self.sign(&context, "flash.domains.write")?;
+        let url = self.endpoint.join(&format!(
+            "internal/v1/service-instances/{}/domains",
+            context.service_instance_id
+        ))?;
+        let response=self.client.post(url).bearer_auth(signed).json(&json!({"hostname":hostname,"binding_id":binding_id,"verification_value":verification})).timeout(Duration::from_secs(5)).send().await?;
+        if !response.status().is_success() {
+            return Err(FlashProviderError::ProviderStatus(
+                response.status().as_u16(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub async fn delete_custom_domain(
+        &self,
+        context: FlashProviderContext,
+        hostname: &str,
+    ) -> Result<bool, FlashProviderError> {
+        let signed = self.sign(&context, "flash.domains.write")?;
+        let url = self.endpoint.join(&format!(
+            "internal/v1/service-instances/{}/domains/{hostname}",
+            context.service_instance_id
+        ))?;
+        let response = self
+            .client
+            .delete(url)
+            .bearer_auth(signed)
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() && status != reqwest::StatusCode::NOT_FOUND {
+            return Err(FlashProviderError::ProviderStatus(status.as_u16()));
+        }
+        Ok(status == reqwest::StatusCode::NO_CONTENT || status == reqwest::StatusCode::NOT_FOUND)
+    }
     pub fn new(endpoint: Url, signer: ProviderSigner, client: Client) -> Self {
         Self {
             endpoint,

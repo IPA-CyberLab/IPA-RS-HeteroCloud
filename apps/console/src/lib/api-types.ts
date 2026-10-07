@@ -760,3 +760,14 @@ export type VpcPeer = {type: "security_group"; name: string} | {type: "service";
 export interface VpcRule { description: string; source: VpcPeer; destination: VpcPeer; protocol: "tcp" | "udp"; port: number; end_port?: number; }
 export interface VpcSpec { region: string; description: string; nat: {enabled: boolean}; security_groups: string[]; rules: VpcRule[]; }
 export interface VpcNetwork { id: string; organization_id: string; project_id: string; provider: "vpc"; name: string; generation: number; state: ServiceState; spec: VpcSpec; status: {observation?: string; status?: {phase?: string; dns_suffix?: string; nat_gateway_node?: string; message?: string}}; created_at: string; updated_at: string; }
+
+export interface FlashDomain {
+  id: string;
+  hostname: string;
+  phase: "queued" | "pending_dns" | "pending_certificate" | "pending_gateway" | "routing" | "ready" | "deleting" | "error";
+  cname_target: string | null;
+  verification: { type: "TXT"; name: string; value: string };
+  oidc_callback_url: string;
+  certificate_expires_at?: string | null;
+  message?: string | null;
+}

@@ -60,6 +60,10 @@ spec:
           image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            - name: HETEROCLOUD_CUSTOM_DOMAIN_RESERVED_NAMES
+              value: {{ join "," .Values.customDomains.reservedNames | quote }}
+            - name: HETEROCLOUD_CUSTOM_DOMAIN_RESERVED_SUFFIXES
+              value: {{ join "," .Values.customDomains.reservedSuffixes | quote }}
             - name: HETEROCLOUD_WORKLOAD_IDENTITY_ENABLED
               value: {{ .Values.workloadIdentity.enabled | quote }}
             - name: HETEROCLOUD_WORKLOAD_NAMESPACE

@@ -129,6 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         registration_limiter: Arc::new(Semaphore::new(4)),
     });
     let _metrics_collector = spawn_realtime_metrics_collector(Arc::clone(&state));
+    let _domain_reconciler = heterocloud_api::flash_domains::spawn_reconciler(Arc::clone(&state));
     let router = app(state, config.console_dir.as_deref());
     if let (Some(cert), Some(key)) = (&config.tls_cert_file, &config.tls_key_file) {
         let tls = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key).await?;

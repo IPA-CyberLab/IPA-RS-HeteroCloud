@@ -222,6 +222,18 @@ def run_suite(a):
     a.run("missing-command", [], rc=2, contains="Usage:")
     a.run("unknown-command", ["not-a-command"], rc=2, contains="unrecognized")
 
+    domain_id = "00000000-0000-4000-8000-000000000004"
+    domain_path = f"/api/v1/organizations/{ORG}/flash/services/{ID}/domains"
+    def domain_check(method, path, body=None):
+        def check(out, err, requests, children, elapsed):
+            require(len(requests)==1, "domain command must send one request")
+            require(requests[0]["method"]==method and requests[0]["path"]==path, "incorrect domain API path")
+            require(requests[0]["body"]==body, "incorrect domain request JSON")
+        return check
+    a.run("flash-domains-list", ["flash", "domains", "list", ID], api=True, responses=[reply({"items":[]})], check=domain_check("GET",domain_path))
+    a.run("flash-domains-add", ["flash", "domains", "add", ID, "--hostname", "APP.example.org."], api=True, responses=[reply({"id":domain_id},202)], check=domain_check("POST",domain_path,{"hostname":"app.example.org"}))
+    a.run("flash-domains-delete", ["flash", "domains", "delete", ID, domain_id, "--yes"], api=True, responses=[reply({"phase":"deleting"},202)], check=domain_check("DELETE",domain_path+"/"+domain_id))
+
     cli_token = "hcu_0123456789abcdef_" + "x" * 43
     identity = {
         "user": {"email": "audit@example.test", "display_name": "CLI Audit"},

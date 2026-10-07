@@ -240,6 +240,14 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             get(list_flash_containers),
         )
         .route(
+            "/organizations/{organization_id}/flash/services/{service_instance_id}/domains",
+            get(list_flash_domains).post(add_flash_domain),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/services/{service_instance_id}/domains/{domain_id}",
+            axum::routing::delete(remove_flash_domain),
+        )
+        .route(
             "/organizations/{organization_id}/flash/services/{service_instance_id}/exec",
             get(exec_flash_container),
         )
@@ -6408,4 +6416,137 @@ mod tests {
             .is_err()
         );
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AddFlashDomain {
+    hostname: String,
+}
+
+async fn list_flash_domains(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:GetInstance",
+        &flash_service_resource(organization_id, service_id),
+    )
+    .await?;
+    let service = flash_service(&state, organization_id, service_id).await?;
+    let bindings = state
+        .store
+        .flash_domain_bindings(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_id),
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    let remote = if bindings.is_empty() {
+        json!({"items":[]})
+    } else if let Some(provider) = &state.flash_provider {
+        provider
+            .list_custom_domains(flash_provider_context(&service, authorization.principal_id))
+            .await
+            .unwrap_or_else(|_| json!({"items":[],"provider_unavailable":true}))
+    } else {
+        json!({"items":[],"provider_unavailable":true})
+    };
+    let items: Vec<Value> = bindings
+        .iter()
+        .map(|binding| {
+            let mut value = remote["items"]
+                .as_array()
+                .and_then(|a| a.iter().find(|x| x["hostname"] == binding.hostname))
+                .cloned()
+                .unwrap_or_else(|| crate::flash_domains::pending_status(binding));
+            value["id"] = json!(binding.id);
+            if binding.delete_requested {
+                value["phase"] = json!("deleting");
+            }
+            value
+        })
+        .collect();
+    Ok(Json(
+        json!({"items":items,"provider_unavailable":remote.get("provider_unavailable").and_then(Value::as_bool).unwrap_or(false)}),
+    ))
+}
+
+async fn add_flash_domain(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<AddFlashDomain>,
+) -> Result<impl IntoResponse, ApiError> {
+    crate::flash_domains::validate_hostname(&request.hostname)
+        .map_err(|s| ApiError::BadRequest(s.into()))?;
+    let names = std::env::var("HETEROCLOUD_CUSTOM_DOMAIN_RESERVED_NAMES").unwrap_or_default();
+    let suffixes = std::env::var("HETEROCLOUD_CUSTOM_DOMAIN_RESERVED_SUFFIXES").unwrap_or_default();
+    if crate::flash_domains::reserved_hostname(&request.hostname, &names, &suffixes) {
+        return Err(ApiError::BadRequest(
+            "This hostname is reserved by the platform.".into(),
+        ));
+    }
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:UpdateInstance",
+        &flash_service_resource(organization_id, service_id),
+    )
+    .await?;
+    flash_service(&state, organization_id, service_id).await?;
+    let binding = state
+        .store
+        .reserve_flash_domain(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_id),
+            authorization.principal_id,
+            &request.hostname,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(crate::flash_domains::pending_status(&binding)),
+    ))
+}
+
+async fn remove_flash_domain(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_id, domain_id)): Path<(Uuid, Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:UpdateInstance",
+        &flash_service_resource(organization_id, service_id),
+    )
+    .await?;
+    flash_service(&state, organization_id, service_id).await?;
+    state
+        .store
+        .request_flash_domain_delete(
+            OrganizationId(organization_id),
+            ServiceInstanceId(service_id),
+            domain_id,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({"id":domain_id,"phase":"deleting"})),
+    ))
 }

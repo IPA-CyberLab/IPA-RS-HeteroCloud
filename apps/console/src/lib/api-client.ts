@@ -670,6 +670,12 @@ export class HeteroCloudApiClient {
         this.request<FlashService>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/stop`), { method: "POST" }),
       start: (organizationId: string, serviceId: string) =>
         this.request<FlashService>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/start`), { method: "POST" }),
+      listDomains: (organizationId: string, serviceId: string, signal?: AbortSignal) =>
+        this.request<{ items: import("./api-types").FlashDomain[]; provider_unavailable: boolean }>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/domains`), { signal }),
+      addDomain: (organizationId: string, serviceId: string, hostname: string) =>
+        this.request<import("./api-types").FlashDomain>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/domains`), { method: "POST", body: { hostname } }),
+      deleteDomain: (organizationId: string, serviceId: string, domainId: string) =>
+        this.request(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/domains/${encodeURIComponent(domainId)}`), { method: "DELETE" }),
       listSecrets: (organizationId: string, serviceId: string, signal?: AbortSignal) =>
         this.request<CollectionResponse<string>>(
           organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/secrets`),

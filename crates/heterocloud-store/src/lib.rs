@@ -1,4 +1,6 @@
+mod flash_domains;
 mod workload_identity;
+pub use flash_domains::FlashDomainBinding;
 pub use workload_identity::WorkloadTokenPrincipal;
 
 use std::collections::{BTreeMap, BTreeSet};

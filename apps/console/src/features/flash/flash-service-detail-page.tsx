@@ -35,6 +35,7 @@ import {
   registryImagesQueryOptions,
 } from "@/lib/queries";
 import { formatDateTime, formatNumber } from "@/lib/utils";
+import { FlashDomainsPanel } from "./flash-domains-panel";
 import { FlashEndpoints } from "./flash-endpoints";
 import { FlashSecretsPanel } from "./flash-secrets-panel";
 import {
@@ -455,6 +456,7 @@ export function FlashServiceDetailPage() {
           emptyDescription="編集画面からエンドポイントを追加してください。"
         />
       </Container>
+      <FlashDomainsPanel organizationId={organizationId} serviceId={serviceId} oidc={Boolean(service.spec.exposure.authentication)} />
       <Modal
         visible={shellOpen}
         onDismiss={() => {
@@ -600,6 +602,7 @@ export function FlashServiceDetailPage() {
                 }
               />
             </FlashServiceForm>
+            <FlashDomainsPanel organizationId={organizationId} serviceId={serviceId} editable oidc={editForm.authenticationMode === "oidc"} />
             <FlashSecretsPanel
               organizationId={organizationId}
               service={item}
