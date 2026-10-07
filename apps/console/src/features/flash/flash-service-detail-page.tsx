@@ -456,7 +456,7 @@ export function FlashServiceDetailPage() {
           emptyDescription="編集画面からエンドポイントを追加してください。"
         />
       </Container>
-      <FlashDomainsPanel organizationId={organizationId} serviceId={serviceId} oidc={Boolean(service.spec.exposure.authentication)} />
+      <FlashDomainsPanel organizationId={organizationId} serviceId={serviceId} oidc={Boolean(item.spec.exposure.authentication)} />
       <Modal
         visible={shellOpen}
         onDismiss={() => {
