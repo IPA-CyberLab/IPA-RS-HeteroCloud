@@ -58,7 +58,7 @@ if shared:
   print(json.dumps({'message':'PASS owned OIDC test client and user removed from shared realm'}))
  else:
   if not clients:
-   call('POST',prefix+'/clients',{'clientId':test['client_id'],'enabled':True,'publicClient':False,'secret':test['client_secret'],'protocol':'openid-connect','standardFlowEnabled':True,'directAccessGrantsEnabled':False,'redirectUris':[test['callback_url']],'webOrigins':[],'attributes':{'hc-e2e-nonce':test['nonce']}},token)
+   call('POST',prefix+'/clients',{'clientId':test['client_id'],'enabled':True,'publicClient':False,'secret':test['client_secret'],'protocol':'openid-connect','standardFlowEnabled':True,'directAccessGrantsEnabled':False,'redirectUris':test.get('callback_urls',[test['callback_url']]),'webOrigins':[],'attributes':{'hc-e2e-nonce':test['nonce']}},token)
   if not users:
    call('POST',prefix+'/users',{'username':test['username'],'enabled':True,'emailVerified':True,'email':email,'firstName':'OIDC','lastName':'E2E','requiredActions':[],'credentials':[{'type':'password','value':test['password'],'temporary':False}]},token)
   users=call('GET',prefix+'/users?'+urllib.parse.urlencode({'email':email,'exact':'true'}),token=token)
@@ -69,7 +69,7 @@ elif request['action']=='remove':
  print(json.dumps({'message':'PASS temporary OIDC test realm removed'}))
 else:
  call('POST','/admin/realms',{'realm':realm,'enabled':True,'sslRequired':'external','registrationAllowed':False},token)
- call('POST','/admin/realms/'+realm+'/clients',{'clientId':test['client_id'],'enabled':True,'publicClient':False,'secret':test['client_secret'],'protocol':'openid-connect','standardFlowEnabled':True,'directAccessGrantsEnabled':False,'redirectUris':[test['callback_url']],'webOrigins':[]},token)
+ call('POST','/admin/realms/'+realm+'/clients',{'clientId':test['client_id'],'enabled':True,'publicClient':False,'secret':test['client_secret'],'protocol':'openid-connect','standardFlowEnabled':True,'directAccessGrantsEnabled':False,'redirectUris':test.get('callback_urls',[test['callback_url']]),'webOrigins':[]},token)
  call('POST','/admin/realms/'+realm+'/users',{'username':test['username'],'enabled':True,'emailVerified':True,'email':'oidc-e2e@example.invalid','firstName':'OIDC','lastName':'E2E','requiredActions':[],'credentials':[{'type':'password','value':test['password'],'temporary':False}]},token)
  print(json.dumps({'message':'PASS isolated real OIDC realm, client and test user created','login_username':test['username']}))
 '''

@@ -16,11 +16,11 @@ class Test:
     def save(self):
         self.state_file.write_text(json.dumps(self.state));self.state_file.chmod(0o600)
     def call(self,base,path,method='GET',body=None,key=None,statuses=(200,)):
-        headers={};data=None
+        headers={'User-Agent':'HeteroCloud-Custom-Domains-E2E/1.0'};data=None
         if key:headers['Authorization']='Bearer '+key
         if body is not None:data=json.dumps(body).encode();headers['Content-Type']='application/json'
         try:
-            with urllib.request.urlopen(urllib.request.Request(base.rstrip('/')+path,data=data,headers=headers,method=method),timeout=20) as r:status=r.status;raw=r.read(1024*1024)
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(urllib.request.Request(base.rstrip('/')+path,data=data,headers=headers,method=method),timeout=20) as r:status=r.status;raw=r.read(1024*1024)
         except urllib.error.HTTPError as r:status=r.code;raw=r.read(1024*1024)
         if status not in statuses:raise RuntimeError(f'{method} {path}: unexpected HTTP {status}')
         return json.loads(raw) if raw else {},status
@@ -65,9 +65,9 @@ class Test:
             time.sleep(5)
         else:raise RuntimeError('Custom domain readiness deadline exceeded')
         for url in ['https://'+self.state['hostname'],'https://'+d['cname_target']]:
-            with urllib.request.urlopen(url,timeout=15) as r:assert r.status==200 and b'Welcome to nginx!' in r.read(65536)
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(url,timeout=15) as r:assert r.status==200 and b'Welcome to nginx!' in r.read(65536)
         for ip in self.a.origins.split(','):
-            r=subprocess.run(['curl','--fail','--silent','--show-error','--max-time','15','--resolve',self.state['hostname']+':443:'+ip,'https://'+self.state['hostname']],capture_output=True)
+            r=subprocess.run(['curl','--noproxy','*','--fail','--silent','--show-error','--max-time','15','--resolve',self.state['hostname']+':443:'+ip,'https://'+self.state['hostname']],capture_output=True)
             assert r.returncode==0 and b'Welcome to nginx!' in r.stdout,'Origin HTTPS validation failed'
         self.state['https_verified']=True;self.save();print(json.dumps({'https_verified':True,'default_url_verified':True,'origins_verified':len(self.a.origins.split(',')),'hostname':self.state['hostname']}),flush=True)
     def cleanup(self):
