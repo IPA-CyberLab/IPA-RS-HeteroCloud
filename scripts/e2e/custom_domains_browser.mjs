@@ -16,6 +16,7 @@ async function record(name){report.checks.push({name,passed:true});await writeFi
 async function service(){const r=await admin.get(base,{maxRedirects:0});if(!r.ok())throw new Error(`Service API HTTP ${r.status()}`);const v=await r.json();if(v.organization_id!==tenant.organization_id||v.name!=='custom-domain-e2e')throw new Error('Fixture scope changed');return v;}
 async function auth(value){const s=await service();const r=await admin.put(base,{data:{name:s.name,spec:{...s.spec,exposure:{...s.spec.exposure,authentication:value}}},maxRedirects:0});if(!r.ok())throw new Error(`OIDC setup HTTP ${r.status()}`);}
 try{
+ await expect.poll(async()=>{const r=await admin.get(`${base}/domains`);return (await r.json()).items.find(d=>d.id===state.domain_id)?.phase;},{timeout:240000,intervals:[2000]}).toBe('ready');
  for(const [name,options] of [['desktop',devices['Desktop Chrome']],['mobile',devices['Pixel 7']]]){
   const context=await browser.newContext(options);
   await context.addCookies([{name:'hc_session',value:fixture.browser_session,url:new URL(endpoint).origin,httpOnly:true,secure:true,sameSite:'Lax'}]);
