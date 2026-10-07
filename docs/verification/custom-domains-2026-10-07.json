@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "verified_at_utc": "2026-10-07",
+  "api_cli_version": "0.1.104",
+  "console_version": "0.1.66",
+  "flash_version": "0.1.47",
+  "public_origins_verified": 2,
+  "cname_https_and_default_url_verified": true,
+  "flattened_a_records_with_txt_verified": true,
+  "actual_browser_checks": [
+    {
+      "name": "deployed_console_domains_desktop",
+      "passed": true
+    },
+    {
+      "name": "deployed_console_domains_mobile",
+      "passed": true
+    },
+    {
+      "name": "custom_domain_real_oidc_desktop",
+      "passed": true
+    },
+    {
+      "name": "custom_domain_real_oidc_mobile",
+      "passed": true
+    },
+    {
+      "name": "oidc_removed_and_public_access_restored",
+      "passed": true
+    }
+  ],
+  "certificate_rotated": true,
+  "uninterrupted_https_probes_during_rotation": 62,
+  "published_cli_add_list_delete_verified": true,
+  "existing_workload_count": 7,
+  "existing_pod_uids_and_limits_preserved": true,
+  "owned_aliases_and_dns_removed": true,
+  "ci": {
+    "api_all_six_cli_architectures": "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/actions/runs/37592961047",
+    "flash_multiplatform": "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud-Flash/actions/runs/37591830448",
+    "vpn_chromium": "https://github.com/IPA-CyberLab/IPA-RS-HeteroNetwork/actions/runs/37596147940",
+    "stable_image_promotion": "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/actions/runs/37597678528"
+  },
+  "vpn_browser_canonical_open_ms": 827,
+  "vpn_route_convergence_ms": 19925,
+  "synthetic_console_session": true,
+  "actual_oidc_identity_provider_login": true
+}

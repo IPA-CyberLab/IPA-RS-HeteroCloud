@@ -83,7 +83,12 @@ class Test:
             assert current['name']==self.state['hostname'] and current['type']=='CNAME','DNS fixture identity changed'
             self.cf('/zones/'+record['zone_id']+'/dns_records/'+record['id'],'DELETE')
         self.state['dns_records']=[];self.save()
-        if sid:self.api('/flash/services/'+sid,'DELETE',statuses=(202,404))
+        if sid:
+            # The real OIDC browser test uses this fixture-owned reference only.
+            names=self.api('/flash/services/'+sid+'/secrets')['items']
+            if 'domain-oidc-secret' in names:
+                self.api('/flash/services/'+sid+'/load-balancer/secrets/domain-oidc-secret','DELETE',statuses=(204,404))
+            self.api('/flash/services/'+sid,'DELETE',statuses=(202,404))
         print('Owned custom-domain alias, DNS and service cleanup requested',flush=True)
 
 def main():
