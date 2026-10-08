@@ -1,0 +1,45 @@
+{
+  "verified_at_utc": "2026-10-08",
+  "workspace": "mizuame/Reverse",
+  "workspace_id": "0dfd2a69-beb4-4dc9-acf0-849a5895fee0",
+  "stable_flash_service_id": "01a11083-9bfc-70d1-a9ba-f3a8e4f4ee31",
+  "template_id": "14e0910e-b43c-43a8-be19-99a2ece2bb29",
+  "old_template_version_id": "8d38ea8e-3ebc-48f1-8998-9efe3ff9f755",
+  "fixed_template_version_id": "9b6608ba-5a48-40e0-a26c-90263f3ca8cc",
+  "recovered_build_number": 5,
+  "build_id": "bc99256a-7e20-494e-a460-e77ba32d52b3",
+  "build_status": "running",
+  "healthy": true,
+  "agent_connected": true,
+  "agent_lifecycle_ready": true,
+  "apps": [
+    {
+      "slug": "code-server",
+      "health": "healthy"
+    },
+    {
+      "slug": "filebrowser",
+      "health": "healthy"
+    }
+  ],
+  "private_agent_download_repaired": true,
+  "provider_retry_check": {
+    "provider": "Mastercard/restapi 3.0.0",
+    "temporary_503_responses": 2,
+    "recovered": true,
+    "get_requests": 4,
+    "mutations": 0
+  },
+  "browser_check": {
+    "workspace": "Reverse",
+    "browser_status": "Running",
+    "ide_link_visible": true,
+    "hostname": "coder.mizuame.app"
+  },
+  "terraform_plan": {
+    "create": 0,
+    "change": 1,
+    "destroy": 0
+  },
+  "pvc_preserved": "flash-01a11083-9bfc-70d1-a9ba-f3a8e4f4ee31-home"
+}
