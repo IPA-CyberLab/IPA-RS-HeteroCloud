@@ -9,3 +9,5 @@ Set `coder_private_url` to the Coder endpoint reachable from the workspace's VPC
 The `coder_url` variable is retained for compatibility with older template variable sets. Bootstrap rewriting uses the live deployment's access URL. Set the other organization, project, VPC and image variables for the target installation.
 
 The checked-in lock file pins the provider versions used in the deployed template. Coder validates the provider schema and performs template import before promotion. Workspace build verification must also confirm the agent connects; a successful Terraform apply alone is insufficient.
+
+The IDE runs under a detached, single-instance supervisor in the persistent home. The supervisor restarts code-server after an unexpected exit. The agent startup shell returning does not terminate the IDE. Installing or starting this supervisor in an existing workspace does not restart its Pod or interactive processes.

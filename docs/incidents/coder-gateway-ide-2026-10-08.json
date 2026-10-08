@@ -1,0 +1,47 @@
+{
+  "verified_at_utc": "2026-10-08",
+  "host": "coder.mizuame.app",
+  "gateway_regression": {
+    "old": {
+      "application_errors": [
+        500,
+        500
+      ],
+      "following_healthy_page": 503
+    },
+    "fixed": {
+      "application_errors": [
+        500,
+        500
+      ],
+      "following_healthy_page": 200
+    }
+  },
+  "production_browser": {
+    "workspace": "Reverse",
+    "ui_ide_navigation_passes": 3,
+    "ide_workbench_rendered": true,
+    "request_count": 198,
+    "gateway_502_503_count": 0,
+    "optional_application_500_count": 1
+  },
+  "per_origin_requests": 60,
+  "per_origin_errors": 0,
+  "prior_no_upstream_errors_on_uc_k8sp4_3h": 73,
+  "after_fix_no_upstream_errors_10m": 0,
+  "supervisor_test": {
+    "unexpected_exit_restarted": true,
+    "single_supervisor_enforced": true,
+    "restart_samples": 3
+  },
+  "template_version_id": "27f66537-2468-45cc-83db-4a889a78ee8f",
+  "workspace_next_start": {
+    "workspace_id": "0dfd2a69-beb4-4dc9-acf0-849a5895fee0",
+    "automatic_updates": "always",
+    "live_build_id_unchanged": true,
+    "active_template_on_next_start": "27f66537-2468-45cc-83db-4a889a78ee8f"
+  },
+  "workspace_pod_uid_preserved": "ac7b4213-344a-446a-9d17-9cd3b1b0f48c",
+  "workspace_pod_restart_count": 0,
+  "ci": "https://github.com/IPA-CyberLab/IPA-RS-HeteroNetwork/actions/runs/37750022200"
+}
