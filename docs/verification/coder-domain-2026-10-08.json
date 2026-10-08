@@ -1,0 +1,39 @@
+{
+  "verified_at_utc": "2026-10-08",
+  "hostname": "coder.mizuame.app",
+  "url": "https://coder.mizuame.app/workspaces",
+  "service_id": "01a10c3a-2de7-7e13-b433-f99559f44349",
+  "organization_id": "019fbda8-eff3-7610-bdd5-8fe89e746c14",
+  "cname_target": "f-01a10c3a-2de7-7e13-b433-f99559f44349.flash.heterocloud.mizuame.app",
+  "dns_proxy_enabled": false,
+  "dns_ttl_seconds": 60,
+  "coder_access_url": "https://coder.mizuame.app",
+  "domain_id": "01a11978-2f44-7880-9e69-df86a5c2fa27",
+  "public_tls_origins_verified": 2,
+  "certificate_expires_at": "2027-01-06T02:07:41Z",
+  "browser": {
+    "passed": true,
+    "authenticated_user_login_tested": false,
+    "checks": [
+      {
+        "device": "desktop",
+        "https": true,
+        "github_signin_visible": true,
+        "hostname": "coder.mizuame.app",
+        "path": "/login",
+        "page_title": "",
+        "runtime_error_count": 0
+      },
+      {
+        "device": "mobile",
+        "https": true,
+        "github_signin_visible": true,
+        "hostname": "coder.mizuame.app",
+        "path": "/login",
+        "page_title": "",
+        "runtime_error_count": 0
+      }
+    ]
+  },
+  "coder_update": "only CODER_ACCESS_URL changed; existing Coder PVC and other services preserved"
+}
