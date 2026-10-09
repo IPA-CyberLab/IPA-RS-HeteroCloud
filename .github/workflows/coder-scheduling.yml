@@ -1,0 +1,31 @@
+name: Coder scheduling checks
+
+on:
+  push:
+    paths:
+      - 'examples/coder/scheduling.json'
+      - 'scripts/reconcile-coder-scheduling.py'
+      - 'scripts/tests/test_coder_scheduling.py'
+      - '.github/workflows/coder-scheduling.yml'
+  pull_request:
+    paths:
+      - 'examples/coder/scheduling.json'
+      - 'scripts/reconcile-coder-scheduling.py'
+      - 'scripts/tests/test_coder_scheduling.py'
+      - '.github/workflows/coder-scheduling.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  scheduling:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify scheduling ownership, manual stop preservation and idempotency
+        run: python3 -m unittest discover -s scripts/tests -p test_coder_scheduling.py -v
+      - name: Validate reconciler syntax and declarative policy
+        run: |
+          python3 -m py_compile scripts/reconcile-coder-scheduling.py
+          python3 -c 'import json; p=json.load(open("examples/coder/scheduling.json")); assert p == {"default_ttl_ms": 0, "allow_user_autostop": True}'

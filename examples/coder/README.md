@@ -11,3 +11,17 @@ The `coder_url` variable is retained for compatibility with older template varia
 The checked-in lock file pins the provider versions used in the deployed template. Coder validates the provider schema and performs template import before promotion. Workspace build verification must also confirm the agent connects; a successful Terraform apply alone is insufficient.
 
 The IDE runs under a detached, single-instance supervisor in the persistent home. The supervisor restarts code-server after an unexpected exit. The agent startup shell returning does not terminate the IDE. Installing or starting this supervisor in an existing workspace does not restart its Pod or interactive processes.
+
+Scheduling defaults are declared in `scheduling.json`: automatic time-based
+stopping is disabled. Apply them separately from the workspace Terraform:
+
+```sh
+python3 scripts/reconcile-coder-scheduling.py --endpoint "$CODER_ENDPOINT" \
+  --template-id "$CODER_TEMPLATE_ID" --token-file "$CODER_TOKEN_FILE" --apply
+```
+
+The token file must have owner-only permissions. The reconciler disables the
+existing user's workspace TTLs without rebuilding running workspaces. Add
+`--resume-autostopped` to resume workspaces whose latest stop reason is
+`autostop`; manually stopped workspaces remain stopped. New workspaces inherit
+the disabled default, and users can still opt into a stop timer explicitly.
