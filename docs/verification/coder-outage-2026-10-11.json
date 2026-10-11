@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-11T17:44:32.974543+00:00",
+  "observed_at": "2026-10-11T17:53:47.413412+00:00",
   "incident": "Coder, Whisper and HyperEVM availability incident",
   "confirmed_findings": {
     "hyper_workspace_id": "113cd3bd-9242-45d6-9d20-d1e1b7e1723e",
@@ -338,9 +338,115 @@
       },
       "storage_heartbeat_e2e": {
         "run": 38160730945,
-        "conclusion": "in_progress",
-        "phase": "isolated VM and storage setup",
-        "source_commit": "ef5b9751e077e6a2353f986d8983d1a648aca557"
+        "url": "https://github.com/IPA-CyberLab/IPA-RS-HeteroNetwork/actions/runs/38160730945",
+        "conclusion": "success",
+        "source_commit": "ef5b9751e077e6a2353f986d8983d1a648aca557",
+        "isolated_environment_cleaned_up": true,
+        "scenarios": [
+          {
+            "name": "fixed_policy_brief_heartbeat_loss",
+            "passed": true,
+            "grace_seconds": 60,
+            "heartbeat_pause_seconds": 35,
+            "http_status_counts": {
+              "200": 74
+            },
+            "status_zero_meaning": "HTTP request timed out or transport failure",
+            "node_states": {
+              "True": 18
+            },
+            "before": {
+              "pod_uid": "210f9693-e824-44cd-b687-b825a17e3b2c",
+              "pod_name": "persistent-web-68974c9794-4cmqz",
+              "restarts": 0,
+              "pvc_uid": "8d88a021-2d57-4ee2-ab90-613cf9f4604f",
+              "volume": "pvc-8d88a021-2d57-4ee2-ab90-613cf9f4604f",
+              "share_uid": "9cfa0072-d348-4247-8fc0-4f833e698742",
+              "share_node": "hnn-heartbeat-e2e-worker2"
+            },
+            "after": {
+              "pod_uid": "210f9693-e824-44cd-b687-b825a17e3b2c",
+              "pod_name": "persistent-web-68974c9794-4cmqz",
+              "restarts": 0,
+              "pvc_uid": "8d88a021-2d57-4ee2-ab90-613cf9f4604f",
+              "volume": "pvc-8d88a021-2d57-4ee2-ab90-613cf9f4604f",
+              "share_uid": "9cfa0072-d348-4247-8fc0-4f833e698742",
+              "share_node": "hnn-heartbeat-e2e-worker2"
+            },
+            "persistent_data_verified_after_automatic_recovery": true
+          },
+          {
+            "name": "old_policy_reproduces_503_and_rwx_remount",
+            "passed": true,
+            "grace_seconds": 20,
+            "heartbeat_pause_seconds": 35,
+            "http_status_counts": {
+              "200": 41,
+              "503": 13,
+              "0": 3
+            },
+            "status_zero_meaning": "HTTP request timed out or transport failure",
+            "node_states": {
+              "True": 8,
+              "Unknown": 10
+            },
+            "before": {
+              "pod_uid": "210f9693-e824-44cd-b687-b825a17e3b2c",
+              "pod_name": "persistent-web-68974c9794-4cmqz",
+              "restarts": 0,
+              "pvc_uid": "8d88a021-2d57-4ee2-ab90-613cf9f4604f",
+              "volume": "pvc-8d88a021-2d57-4ee2-ab90-613cf9f4604f",
+              "share_uid": "9cfa0072-d348-4247-8fc0-4f833e698742",
+              "share_node": "hnn-heartbeat-e2e-worker2"
+            },
+            "after": {
+              "pod_uid": "210f9693-e824-44cd-b687-b825a17e3b2c",
+              "pod_name": "persistent-web-68974c9794-4cmqz",
+              "restarts": 0,
+              "pvc_uid": "8d88a021-2d57-4ee2-ab90-613cf9f4604f",
+              "volume": "pvc-8d88a021-2d57-4ee2-ab90-613cf9f4604f",
+              "share_uid": "6c8de681-6c9e-4be4-9f9f-2586d3ef3a68",
+              "share_node": "hnn-heartbeat-e2e-worker"
+            },
+            "persistent_data_verified_after_automatic_recovery": true
+          },
+          {
+            "name": "fixed_policy_still_detects_sustained_failure",
+            "passed": true,
+            "grace_seconds": 60,
+            "heartbeat_pause_seconds": 95,
+            "http_status_counts": {
+              "200": 161,
+              "503": 14,
+              "0": 2
+            },
+            "status_zero_meaning": "HTTP request timed out or transport failure",
+            "node_states": {
+              "True": 30,
+              "Unknown": 17
+            },
+            "before": {
+              "pod_uid": "210f9693-e824-44cd-b687-b825a17e3b2c",
+              "pod_name": "persistent-web-68974c9794-4cmqz",
+              "restarts": 0,
+              "pvc_uid": "8d88a021-2d57-4ee2-ab90-613cf9f4604f",
+              "volume": "pvc-8d88a021-2d57-4ee2-ab90-613cf9f4604f",
+              "share_uid": "6c8de681-6c9e-4be4-9f9f-2586d3ef3a68",
+              "share_node": "hnn-heartbeat-e2e-worker"
+            },
+            "after": {
+              "pod_uid": "210f9693-e824-44cd-b687-b825a17e3b2c",
+              "pod_name": "persistent-web-68974c9794-4cmqz",
+              "restarts": 0,
+              "pvc_uid": "8d88a021-2d57-4ee2-ab90-613cf9f4604f",
+              "volume": "pvc-8d88a021-2d57-4ee2-ab90-613cf9f4604f",
+              "share_uid": "0f7e7ae6-0374-49d6-9950-1a60b7021ea8",
+              "share_node": "hnn-heartbeat-e2e-worker2"
+            },
+            "persistent_data_verified_after_automatic_recovery": true
+          }
+        ],
+        "limitation": "This execution recreated share-manager Pods and reproduced HTTP 503, but the application Pod recovered with its UID unchanged. It does not reproduce gVisor memory exhaustion or assert application Pod deletion."
       },
       "storage_heartbeat_attempts": [
         {
@@ -598,14 +704,27 @@
       "all_ready": true,
       "all_restart_counts_zero": true,
       "excluded_preincident_terminating_whisper_pod_uid": "56483bab-bbca-4f30-ba83-c926fd640b52"
+    },
+    "hyper_app_late_verification": {
+      "at": "2026-10-11T17:51:01.642527+00:00",
+      "apps": [
+        {
+          "slug": "code-server",
+          "health": "healthy"
+        },
+        {
+          "slug": "filebrowser",
+          "health": "healthy"
+        }
+      ]
     }
   },
   "remaining_uncertainty": [
     "Initial API/etcd delay has confirmed request timeouts and slow fdatasync evidence; contribution of physical disk versus network and load is not fully isolated.",
     "Finite memory limits can still be exhausted by unbounded application allocations.",
-    "Fault injection E2E has been added and started; no pass is claimed until its recorded conclusion."
+    "The isolated fault E2E verifies heartbeat loss, RWX share-manager recovery, HTTP 503 and persistent data recovery; physical I/O stalls and application memory exhaustion are outside its scope."
   ],
   "secrets": "No credentials or secret values are included in this record.",
-  "status": "services_recovered_fault_e2e_running",
+  "status": "services_recovered_infrastructure_applied_fault_e2e_passed",
   "report": "https://github.com/IPA-CyberLab/IPA-RS-HeteroNetwork/blob/master/docs/incident-2026-10-11-coder-whisper.md"
 }
