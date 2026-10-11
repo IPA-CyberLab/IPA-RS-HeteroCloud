@@ -3,9 +3,10 @@
 
 provider "registry.terraform.io/coder/coder" {
   version     = "2.19.0"
-  constraints = "~> 2.0"
+  constraints = "~> 2.0, >= 2.5.0"
   hashes = [
     "h1:35bLxvjO9M/Q304tb4LdQm3HRoMULXtJ+Ai3JL9plEA=",
+    "h1:OLlF1i7oKEIPD+YYeU/Atfhg4UcgIBTawbw/p/fSinE=",
     "zh:0a156f42a41970b04d76760468308e0de37a6ec8b8e345c9fe961b9249255f24",
     "zh:227de4b5b7189037aa140d8efb4ffc12fdfbfffb4cd6fdd7a7237ff2c35dbe3b",
     "zh:4f311b7991268021092ce8d69a080c62b13a6fecc0e2e76c552fda0dd469b451",
@@ -27,6 +28,7 @@ provider "registry.terraform.io/mastercard/restapi" {
   version     = "3.0.0"
   constraints = "3.0.0"
   hashes = [
+    "h1:Fqxoc6bsydl6iWGx6ZvyqUDdGt7Cb4sW/BSHhBeHGgw=",
     "h1:y1I3azDHOqRySTyDHsb3Xh1waP/99KfykZRagbRx1qI=",
     "zh:0b63bd3c25a31f090a41933f90b7dd6e984add1c4261d8f5caa73f4d5aa065a4",
     "zh:1c3e89cf19118fc07d7b04257251fc9897e722c16e0a0df7b07fcd261f8c12e7",

@@ -10,6 +10,18 @@ The `coder_url` variable is retained for compatibility with older template varia
 
 The checked-in lock file pins the provider versions used in the deployed template. Coder validates the provider schema and performs template import before promotion. Workspace build verification must also confirm the agent connects; a successful Terraform apply alone is insufficient.
 
+The default allocation is 4 vCPU, 8 GiB RAM, 37 GiB total disk and 10 GiB for
+the container filesystem. Increasing the container filesystem from 3 to 10 GiB
+also increased the total disk budget by 7 GiB to preserve the existing home.
+`workspace_storage_overrides` retains larger disk budgets by workspace ID.
+`workspace_memory_overrides` sets memory in MiB by workspace ID, for example
+`{"workspace-uuid":32768}` for 32 GiB. Store these values as template variables
+and rebuild the affected workspace. A subsequent stop/start preserves the
+allocation, and workspaces without an override retain the default. Both
+Kubernetes memory requests and limits use the configured value; an eligible
+node must have sufficient unallocated memory. A memory change recreates the
+container while retaining the same persistent `/root` volume.
+
 The IDE runs under a detached, single-instance supervisor in the persistent home. The supervisor restarts code-server after an unexpected exit. The agent startup shell returning does not terminate the IDE. Installing or starting this supervisor in an existing workspace does not restart its Pod or interactive processes.
 
 Scheduling defaults are declared in `scheduling.json`: automatic time-based

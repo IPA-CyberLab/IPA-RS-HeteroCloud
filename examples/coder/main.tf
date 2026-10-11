@@ -34,6 +34,27 @@ variable "coder_url" {
 variable "coder_private_url" {
   type = string
 }
+variable "workspace_memory_overrides" {
+  description = "Memory limits in MiB by workspace ID; retain allocations across stop/start."
+  type        = map(number)
+  default     = {}
+  validation {
+    condition = alltrue([
+      for memory_mib in values(var.workspace_memory_overrides) :
+      memory_mib >= 16 && memory_mib <= 1048576 && floor(memory_mib) == memory_mib
+    ])
+    error_message = "Workspace memory must be a whole number between 16 and 1048576 MiB."
+  }
+}
+
+variable "workspace_storage_overrides" {
+  description = "Keep retained persistent homes and larger allocations when increasing temporary storage."
+  type = map(object({
+    total_disk_gib     = number
+    rootfs_storage_gib = number
+  }))
+  default = {}
+}
 
 provider "restapi" {
   uri                  = var.provisioner_api_url
@@ -140,15 +161,20 @@ module "filebrowser" {
 
 locals {
   service_name = "coder-ws-${data.coder_workspace.me.id}"
+  workspace_storage = lookup(var.workspace_storage_overrides, data.coder_workspace.me.id, {
+    total_disk_gib     = 37
+    rootfs_storage_gib = 10
+  })
+  workspace_memory_mib = lookup(var.workspace_memory_overrides, data.coder_workspace.me.id, 8192)
   service_spec = {
     region                = "heteronet-global"
     image                 = var.workspace_image
     replicas              = 1
     stopped               = data.coder_workspace.me.start_count == 0
     cpu_millis            = 4000
-    memory_mib            = 8192
-    ephemeral_storage_gib = 30
-    rootfs_storage_gib    = 3
+    memory_mib            = local.workspace_memory_mib
+    ephemeral_storage_gib = local.workspace_storage.total_disk_gib
+    rootfs_storage_gib    = local.workspace_storage.rootfs_storage_gib
     ports                 = []
     exposure = {
       type         = "internal"
@@ -210,7 +236,7 @@ resource "coder_metadata" "workspace" {
   }
   item {
     key   = "Resources"
-    value = "4 vCPU / 8 GiB RAM / 30 GiB total disk"
+    value = "4 vCPU / ${local.workspace_memory_mib / 1024} GiB RAM / ${local.workspace_storage.total_disk_gib} GiB total disk / ${local.workspace_storage.rootfs_storage_gib} GiB container filesystem"
   }
   item {
     key   = "Persistent directory"

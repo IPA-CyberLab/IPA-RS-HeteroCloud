@@ -1,0 +1,96 @@
+{
+  "observed_at": "2026-10-11T15:28:42.243050+00:00",
+  "incident": "Coder upstream connection failures and HyperEVM IDE unavailable",
+  "confirmed_findings": {
+    "hyper_workspace_id": "113cd3bd-9242-45d6-9d20-d1e1b7e1723e",
+    "hyper_service_id": "01a11ad4-9917-74b3-a34d-192aaf2a4c76",
+    "old_memory_limit_mib": 8192,
+    "old_container_restarts": 2,
+    "last_termination": {
+      "reason": "OOMKilled",
+      "exit_code": 128,
+      "finished_at": "2026-10-11T10:04:06Z"
+    },
+    "pod_cgroup_memory_events": {
+      "max": 407040,
+      "oom": 6,
+      "oom_kill": 2
+    },
+    "gvisor_exec_and_metrics_unresponsive": true,
+    "coder_parent_recreated_at": "2026-10-11T14:18:06Z",
+    "envoy_controller_failures": [
+      "Kubernetes lease requests timed out after 5 seconds",
+      "leader election lost",
+      "etcdserver request timed out"
+    ],
+    "host_boot_ids_unchanged": true
+  },
+  "corrections": {
+    "hyper_memory_mib": 32768,
+    "hyper_recovery_build": 9,
+    "hyper_node": "ichikawap1",
+    "retained_persistent_home": {
+      "name": "flash-01a11ad4-9917-74b3-a34d-192aaf2a4c76-home",
+      "uid": "856a597c-1676-423f-8d16-26752b85bf80",
+      "volume": "pvc-856a597c-1676-423f-8d16-26752b85bf80",
+      "capacity": {
+        "storage": "26730Mi"
+      },
+      "phase": "Bound"
+    },
+    "workspace_template": "examples/coder/main.tf",
+    "memory_overrides_retained_across_stop_start": true,
+    "storage_overrides_and_existing_inputs_preserved": true,
+    "envoy_controller_requests": {
+      "cpu": "100m",
+      "memory": "128Mi"
+    },
+    "envoy_leader_election": {
+      "enabled": true,
+      "lease_duration": "45s",
+      "renew_deadline": "30s",
+      "retry_period": "2s"
+    },
+    "etcd_leadership_transferred_to": "uc-k8sp4",
+    "etcd_members_preserved": 6,
+    "terraform_apply_exit": 0,
+    "argo_sync": "Synced",
+    "argo_health": "Healthy"
+  },
+  "verification": {
+    "terraform_template_tests": 8,
+    "scheduling_tests": 4,
+    "browser": [
+      {
+        "path": "/workspaces",
+        "status": 200,
+        "elapsed_ms": 2207,
+        "error_page": false
+      },
+      {
+        "path": "/@mizuame/HyperEVM.main/apps/code-server/?folder=/root/projects/HyperEVM",
+        "status": 200,
+        "elapsed_ms": 5458,
+        "workbench": true,
+        "error_page": false
+      }
+    ],
+    "public_coder_health": {
+      "samples": 15,
+      "successes": 15,
+      "max_elapsed_ms": 235
+    },
+    "hyper_agent": "connected",
+    "hyper_ide_health": "healthy",
+    "reverse_agent": "connected",
+    "reverse_ide_health": "healthy",
+    "manually_stopped_coconel": "stopped",
+    "protected_exec_only_service_pod_uid_unchanged": "d55175f3-45c8-4081-bbdb-8885917917e2"
+  },
+  "remaining_uncertainty": [
+    "The actor or trigger that recreated the parent Coder Pod is not established; Kubernetes audit was not configured.",
+    "Delayed gateway endpoint updates during API stalls are a possible contributor to the public 503; no direct stale-endpoint snapshot established every failing request.",
+    "The storage latency underlying etcd/API stalls remains to be investigated; leadership transfer and longer renewal tolerance are mitigations."
+  ],
+  "secrets": "No credentials or secret values are included in this record."
+}

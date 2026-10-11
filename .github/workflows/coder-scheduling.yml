@@ -1,15 +1,15 @@
-name: Coder scheduling checks
+name: Coder template and scheduling checks
 
 on:
   push:
     paths:
-      - 'examples/coder/scheduling.json'
+      - 'examples/coder/**'
       - 'scripts/reconcile-coder-scheduling.py'
       - 'scripts/tests/test_coder_scheduling.py'
       - '.github/workflows/coder-scheduling.yml'
   pull_request:
     paths:
-      - 'examples/coder/scheduling.json'
+      - 'examples/coder/**'
       - 'scripts/reconcile-coder-scheduling.py'
       - 'scripts/tests/test_coder_scheduling.py'
       - '.github/workflows/coder-scheduling.yml'
@@ -18,6 +18,22 @@ permissions:
   contents: read
 
 jobs:
+  template:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: examples/coder
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4.0.1
+        with:
+          terraform_version: 1.16.4
+          terraform_wrapper: false
+      - run: terraform init -backend=false -input=false -lockfile=readonly
+      - run: terraform fmt -check -recursive
+      - name: Verify disk retention and memory across workspace stop/start
+        run: terraform test -no-color
   scheduling:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
