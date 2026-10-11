@@ -129,6 +129,16 @@ def main():
         assert asyncio.run(probe("test -f /root/flash-update-marker")) == pod, "persistent expansion must not replace an unchanged container"
         asyncio.run(probe("test $(df -B1 --output=size /root | tail -n1) -gt 1600000000"))
         record("persistent_disk_and_filesystem_expanded_in_place_without_container_restart")
+        service = update({**service["spec"], "exposure": {"type": "public", "traffic_mode": "forwarded"}})
+        actual_service = kget("service", "flash-" + service["id"])
+        assert actual_service["spec"]["type"] == "LoadBalancer"
+        verify_disk(2, 2)
+        service = update({**service["spec"], "exposure": {"type": "internal", "traffic_mode": "forwarded"}})
+        actual_service = kget("service", "flash-" + service["id"])
+        assert actual_service["spec"]["type"] == "ClusterIP"
+        assert "loadBalancerClass" not in actual_service["spec"]
+        verify_disk(2, 2)
+        record("public_load_balancer_and_private_service_modes_can_be_changed_in_both_directions")
         if args.browser_output:
             subprocess.run(["node", str(Path(__file__).with_name("flash_updates_browser.mjs")), args.endpoint, str(args.fixture), service["id"], str(args.browser_output)], check=True, timeout=650)
             service = ready(); verify_disk(2, service["spec"]["rootfs_storage_gib"])

@@ -1,5 +1,26 @@
 # VPC live E2E
 
+For configuration updates and disk resizing, use a separate empty fixture:
+
+```sh
+python3 scripts/e2e/flash_updates.py --endpoint "$HETEROCLOUD_ENDPOINT" \
+  --cli heterocloud --fixture "$PRIVATE_DIR/fixture.json" \
+  --updated-image "$VERIFIED_FLASH_IMAGE" --kubectl kubectl --kubeconfig "$KUBECONFIG" \
+  --report "$PRIVATE_DIR/updates-report.json" --browser-output "$PRIVATE_DIR/updates-browser"
+```
+
+Run `vpc_fixture.py create` and `browser-session` first, and `remove` afterward.
+The updated image must be a verified immutable Flash release containing its UDP
+echo helper. This test writes a marker through authenticated WebSocket exec,
+changes image/CPU/memory/rootfs/environment/command/ports through the CLI,
+expands the same persistent PVC and real filesystem without restarting an
+unchanged container, switches public/private exposure, and edits disk settings
+in real desktop/mobile Chromium within the three-second page budget. It also
+moves projects, removes an explicit rootfs split, and checks that unsafe shrink
+and cross-tenant requests preserve the generation/data. It deletes only its
+recorded service/VPC and never changes an existing user's workload. Database
+access remains limited to fixture identity setup/cleanup.
+
 For stop/start and persistent workspace storage, use a separate empty fixture:
 
 ```sh
