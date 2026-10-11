@@ -1,6 +1,6 @@
 {
-  "observed_at": "2026-10-11T15:28:42.243050+00:00",
-  "incident": "Coder upstream connection failures and HyperEVM IDE unavailable",
+  "observed_at": "2026-10-11T17:44:32.974543+00:00",
+  "incident": "Coder, Whisper and HyperEVM availability incident",
   "confirmed_findings": {
     "hyper_workspace_id": "113cd3bd-9242-45d6-9d20-d1e1b7e1723e",
     "hyper_service_id": "01a11ad4-9917-74b3-a34d-192aaf2a4c76",
@@ -23,10 +23,51 @@
       "leader election lost",
       "etcdserver request timed out"
     ],
-    "host_boot_ids_unchanged": true
+    "host_boot_ids_unchanged": true,
+    "heartbeat_cascade": {
+      "lease_update_timeouts": "2026-10-11T16:08:26Z/2026-10-11T16:08:56Z",
+      "node_not_ready_at": "2026-10-11T16:08:47Z",
+      "nodes": [
+        "uc-k8sp1",
+        "uc-k8sp4",
+        "uc-k8sp5"
+      ],
+      "ready_again": "2026-10-11T16:08:55Z/2026-10-11T16:08:57Z",
+      "old_grace_seconds": 20,
+      "coder_pod_deleted_by": "Longhorn KubernetesPodController.handlePodDeletionIfVolumeRequestRemount",
+      "coder_deleted_at": "2026-10-11T16:09:16Z"
+    },
+    "hyper_second_disconnect": {
+      "at": "2026-10-11T16:26:09Z",
+      "limit_bytes": 34359738368,
+      "usage_bytes": 34359726080,
+      "guest_python_rss_kib": 40868724,
+      "oom_kills": 0,
+      "reconnected_at": "2026-10-11T16:32:11Z"
+    },
+    "etcd_policy_drift": {
+      "default_timing_members": [
+        "uc-k8s3p",
+        "uc-k8sp1",
+        "uc-k8sp2",
+        "uc-k8sp4"
+      ],
+      "default_heartbeat_ms": 100,
+      "default_election_timeout_ms": 1000,
+      "already_tuned_members": [
+        "ichikawap1",
+        "uc-k8sp5"
+      ],
+      "tuned_heartbeat_ms": 500,
+      "tuned_election_timeout_ms": 5000,
+      "low_reservation": {
+        "cpu": "100m",
+        "memory": "100Mi"
+      }
+    }
   },
   "corrections": {
-    "hyper_memory_mib": 32768,
+    "hyper_memory_mib": 49152,
     "hyper_recovery_build": 9,
     "hyper_node": "ichikawap1",
     "retained_persistent_home": {
@@ -51,11 +92,40 @@
       "renew_deadline": "30s",
       "retry_period": "2s"
     },
-    "etcd_leadership_transferred_to": "uc-k8sp4",
     "etcd_members_preserved": 6,
     "terraform_apply_exit": 0,
     "argo_sync": "Synced",
-    "argo_health": "Healthy"
+    "argo_health": "Healthy",
+    "node_monitor_grace_seconds": 60,
+    "node_health_verified_nodes": 6,
+    "apiserver_etcd_client_endpoints": [
+      "10.250.0.2",
+      "10.250.0.6",
+      "10.250.0.10"
+    ],
+    "hyper_in_place_resize": {
+      "pod_uid": "5623f4d6-6100-48ba-802b-431975eb71a3",
+      "restart_count": 0,
+      "service_generation": 10,
+      "persisted_in_service_deployment_replicaset_and_coder_template": true,
+      "coder_active_template_version": "2eedd2c2-cb1b-4497-a0b6-791322ef7d3b"
+    },
+    "etcd_policy": {
+      "terraform_resource": "terraform_data.etcd_policy",
+      "apply_exit": 0,
+      "healthy_members": 6,
+      "heartbeat_ms": 500,
+      "election_timeout_ms": 5000,
+      "requests": {
+        "cpu": "500m",
+        "memory": "512Mi"
+      },
+      "cluster_configuration_persisted": true,
+      "serial_all_member_health_checks": true,
+      "leadership_transferred_before_leader_restart": true,
+      "leader_after_rollout": "uc-k8s3p"
+    },
+    "initial_etcd_leadership_transfer_to": "uc-k8sp4"
   },
   "verification": {
     "terraform_template_tests": 8,
@@ -85,12 +155,457 @@
     "reverse_agent": "connected",
     "reverse_ide_health": "healthy",
     "manually_stopped_coconel": "stopped",
-    "protected_exec_only_service_pod_uid_unchanged": "d55175f3-45c8-4081-bbdb-8885917917e2"
+    "browser_after_48_gib": [
+      {
+        "path": "/workspaces",
+        "status": 200,
+        "elapsed_ms": 1974,
+        "error_page": false
+      },
+      {
+        "path": "/@mizuame/HyperEVM.main/apps/code-server/?folder=/root/projects/HyperEVM",
+        "status": 200,
+        "elapsed_ms": 9936,
+        "workbench": true,
+        "error_page": false
+      }
+    ],
+    "public_http_after_node_health": [
+      {
+        "at": "2026-10-11T16:35:06.213788+00:00",
+        "service": "coder",
+        "response": "200 0.158573",
+        "exit": 0
+      },
+      {
+        "at": "2026-10-11T16:35:06.506259+00:00",
+        "service": "whisper",
+        "response": "200 0.277285",
+        "exit": 0
+      },
+      {
+        "at": "2026-10-11T16:35:08.706662+00:00",
+        "service": "coder",
+        "response": "200 0.174884",
+        "exit": 0
+      },
+      {
+        "at": "2026-10-11T16:35:08.882059+00:00",
+        "service": "whisper",
+        "response": "200 0.156629",
+        "exit": 0
+      },
+      {
+        "at": "2026-10-11T16:35:11.087784+00:00",
+        "service": "coder",
+        "response": "200 0.179828",
+        "exit": 0
+      },
+      {
+        "at": "2026-10-11T16:35:11.306320+00:00",
+        "service": "whisper",
+        "response": "200 0.201552",
+        "exit": 0
+      },
+      {
+        "at": "2026-10-11T16:35:13.591603+00:00",
+        "service": "coder",
+        "response": "200 0.269851",
+        "exit": 0
+      },
+      {
+        "at": "2026-10-11T16:35:13.854917+00:00",
+        "service": "whisper",
+        "response": "200 0.249078",
+        "exit": 0
+      },
+      {
+        "at": "2026-10-11T16:35:16.213093+00:00",
+        "service": "coder",
+        "response": "200 0.338182",
+        "exit": 0
+      },
+      {
+        "at": "2026-10-11T16:35:16.385337+00:00",
+        "service": "whisper",
+        "response": "200 0.152644",
+        "exit": 0
+      },
+      {
+        "at": "2026-10-11T16:35:18.562767+00:00",
+        "service": "coder",
+        "response": "200 0.152121",
+        "exit": 0
+      },
+      {
+        "at": "2026-10-11T16:35:18.740509+00:00",
+        "service": "whisper",
+        "response": "200 0.164507",
+        "exit": 0
+      }
+    ],
+    "post_recovery_pods": {
+      "at": "2026-10-11T16:38:53.923241+00:00",
+      "pods": [
+        {
+          "name": "flash-01a089a3-5795-7530-b283-6ef2f84e2e82-676549b95-pxvw9",
+          "uid": "52910661-86d3-4efa-91ff-5fdc278273b2",
+          "node": "ichikawap1",
+          "created": "2026-10-11T14:32:06Z",
+          "restarts": 0,
+          "memory": "128Mi"
+        },
+        {
+          "name": "flash-01a0ff76-0c51-7752-b251-792c215ff47d-775b94fd7-twbsv",
+          "uid": "ba4816f3-1494-4c14-b42f-e484830560d6",
+          "node": "ichikawap1",
+          "created": "2026-10-11T14:18:41Z",
+          "restarts": 0,
+          "memory": "768Mi"
+        },
+        {
+          "name": "flash-01a0ff77-c342-7a80-b596-85bb3c792c89-5dcf44469b-j2vhb",
+          "uid": "d21d8c06-4bea-4e46-baf5-0fe3f9c000b8",
+          "node": "ichikawap1",
+          "created": "2026-10-11T14:32:06Z",
+          "restarts": 0,
+          "memory": "1536Mi"
+        },
+        {
+          "name": "flash-01a1005f-0743-7d32-9e86-271cf23f8da7-659dcbc746-v9q82",
+          "uid": "7c3bada4-66a6-4aa3-aa33-5a987b7eac1d",
+          "node": "uc-k8sp5",
+          "created": "2026-10-11T16:15:35Z",
+          "restarts": 0,
+          "memory": "8Gi"
+        },
+        {
+          "name": "flash-01a101e7-5acd-78a0-b8e9-88950db3ecad-85c7cbbc5-nrp9v",
+          "uid": "a4efa4cb-f5ab-4324-b1d6-8e40a47721eb",
+          "node": "uc-k8sp4",
+          "created": "2026-10-11T16:09:37Z",
+          "restarts": 0,
+          "memory": "8Gi"
+        },
+        {
+          "name": "flash-01a10c39-0bf4-7221-994f-cc1c0cf8ebbf-8448ddf449-lb2zc",
+          "uid": "40fad9fb-457f-4957-82c5-d87a77fcd8f6",
+          "node": "uc-k8sp4",
+          "created": "2026-10-11T15:21:51Z",
+          "restarts": 0,
+          "memory": "512Mi"
+        },
+        {
+          "name": "flash-01a10c3a-2de7-7e13-b433-f99559f44349-84c5976f98-4n7qb",
+          "uid": "98f8d0d2-91ed-4eca-a318-c29149b73065",
+          "node": "uc-k8sp4",
+          "created": "2026-10-11T16:09:16Z",
+          "restarts": 0,
+          "memory": "1Gi"
+        },
+        {
+          "name": "flash-01a11083-9bfc-70d1-a9ba-f3a8e4f4ee31-5bf9cf955f-wrssr",
+          "uid": "40ee56a9-653a-4d65-a818-dc0a40d5f94e",
+          "node": "ichikawap1",
+          "created": "2026-10-11T16:09:37Z",
+          "restarts": 0,
+          "memory": "8Gi"
+        },
+        {
+          "name": "flash-01a11ad4-9917-74b3-a34d-192aaf2a4c76-79dd75f96b-sj2bz",
+          "uid": "5623f4d6-6100-48ba-802b-431975eb71a3",
+          "node": "ichikawap1",
+          "created": "2026-10-11T15:17:51Z",
+          "restarts": 0,
+          "memory": "48Gi"
+        }
+      ]
+    },
+    "protected_exec_only_service": {
+      "operator_stop_delete_resize": false,
+      "automatic_longhorn_recreation_at": "2026-10-11T16:09:37Z",
+      "pod_uid_after_recovery": "a4efa4cb-f5ab-4324-b1d6-8e40a47721eb"
+    },
+    "ci": {
+      "prior_overlay_failure": {
+        "run": 38154055663,
+        "conclusion": "failure",
+        "reason": "timed out"
+      },
+      "overlay_after_fix": {
+        "run": 38157484921,
+        "conclusion": "success"
+      },
+      "storage_heartbeat_e2e": {
+        "run": 38160730945,
+        "conclusion": "in_progress",
+        "phase": "isolated VM and storage setup",
+        "source_commit": "ef5b9751e077e6a2353f986d8983d1a648aca557"
+      },
+      "storage_heartbeat_attempts": [
+        {
+          "run": 38155652041,
+          "conclusion": "cancelled",
+          "reason": "isolated runner missing iscsi lock directory"
+        },
+        {
+          "run": 38156620759,
+          "conclusion": "failure",
+          "reason": "isolated runner could not connect to iscsid; RWX setup timed out"
+        },
+        {
+          "run": 38157484889,
+          "conclusion": "failure",
+          "reason": "iscsid exits on netlink sendmsg inside Docker node; changed workers to isolated KVM VMs"
+        },
+        {
+          "run": 38158551175,
+          "conclusion": "failure",
+          "reason": "native worker cannot resolve kind control-plane hostname; fixed hosts mapping"
+        },
+        {
+          "run": 38158896214,
+          "conclusion": "cancelled",
+          "reason": "superseded by credential masking and diagnostic permissions fixes"
+        },
+        {
+          "run": 38159078325,
+          "conclusion": "failure",
+          "reason": "join reached CRI before socket initialization; added explicit readiness wait"
+        },
+        {
+          "run": 38159380635,
+          "conclusion": "failure",
+          "reason": "kind cgroup root absent on native workers"
+        },
+        {
+          "run": 38159753115,
+          "conclusion": "cancelled",
+          "reason": "superseded by native worker cgroup correction"
+        },
+        {
+          "run": 38159994157,
+          "conclusion": "failure",
+          "reason": "nested kind cgroup lacked hugetlb controller on native worker; use ordinary host cgroup root"
+        }
+      ],
+      "ephemeral_bootstrap_log_cleanup": {
+        "run": 38158551175,
+        "github_run_logs_deleted": true,
+        "production_credentials_involved": false,
+        "timeout_argv_redaction_and_tests_added": true
+      }
+    },
+    "etcd_policy": {
+      "at": "2026-10-11T16:56:20.304688+00:00",
+      "members": [
+        {
+          "name": "etcd-ichikawap1",
+          "flags": [
+            "--heartbeat-interval=500",
+            "--election-timeout=5000"
+          ],
+          "requests": {
+            "cpu": "500m",
+            "memory": "512Mi"
+          }
+        },
+        {
+          "name": "etcd-uc-k8s3p",
+          "flags": [
+            "--heartbeat-interval=500",
+            "--election-timeout=5000"
+          ],
+          "requests": {
+            "cpu": "500m",
+            "memory": "512Mi"
+          }
+        },
+        {
+          "name": "etcd-uc-k8sp1",
+          "flags": [
+            "--heartbeat-interval=500",
+            "--election-timeout=5000"
+          ],
+          "requests": {
+            "cpu": "500m",
+            "memory": "512Mi"
+          }
+        },
+        {
+          "name": "etcd-uc-k8sp2",
+          "flags": [
+            "--heartbeat-interval=500",
+            "--election-timeout=5000"
+          ],
+          "requests": {
+            "cpu": "500m",
+            "memory": "512Mi"
+          }
+        },
+        {
+          "name": "etcd-uc-k8sp4",
+          "flags": [
+            "--heartbeat-interval=500",
+            "--election-timeout=5000"
+          ],
+          "requests": {
+            "cpu": "500m",
+            "memory": "512Mi"
+          }
+        },
+        {
+          "name": "etcd-uc-k8sp5",
+          "flags": [
+            "--heartbeat-interval=500",
+            "--election-timeout=5000"
+          ],
+          "requests": {
+            "cpu": "500m",
+            "memory": "512Mi"
+          }
+        }
+      ]
+    },
+    "post_etcd_rollout_pods": {
+      "at": "2026-10-11T16:56:20.304688+00:00",
+      "pods": [
+        {
+          "name": "flash-01a089a3-5795-7530-b283-6ef2f84e2e82-676549b95-pxvw9",
+          "uid": "52910661-86d3-4efa-91ff-5fdc278273b2",
+          "node": "ichikawap1",
+          "created": "2026-10-11T14:32:06Z",
+          "restarts": 0,
+          "memory": "128Mi"
+        },
+        {
+          "name": "flash-01a0ff76-0c51-7752-b251-792c215ff47d-775b94fd7-twbsv",
+          "uid": "ba4816f3-1494-4c14-b42f-e484830560d6",
+          "node": "ichikawap1",
+          "created": "2026-10-11T14:18:41Z",
+          "restarts": 0,
+          "memory": "768Mi"
+        },
+        {
+          "name": "flash-01a0ff77-c342-7a80-b596-85bb3c792c89-5dcf44469b-j2vhb",
+          "uid": "d21d8c06-4bea-4e46-baf5-0fe3f9c000b8",
+          "node": "ichikawap1",
+          "created": "2026-10-11T14:32:06Z",
+          "restarts": 0,
+          "memory": "1536Mi"
+        },
+        {
+          "name": "flash-01a1005f-0743-7d32-9e86-271cf23f8da7-659dcbc746-v9q82",
+          "uid": "7c3bada4-66a6-4aa3-aa33-5a987b7eac1d",
+          "node": "uc-k8sp5",
+          "created": "2026-10-11T16:15:35Z",
+          "restarts": 0,
+          "memory": "8Gi"
+        },
+        {
+          "name": "flash-01a101e7-5acd-78a0-b8e9-88950db3ecad-85c7cbbc5-nrp9v",
+          "uid": "a4efa4cb-f5ab-4324-b1d6-8e40a47721eb",
+          "node": "uc-k8sp4",
+          "created": "2026-10-11T16:09:37Z",
+          "restarts": 0,
+          "memory": "8Gi"
+        },
+        {
+          "name": "flash-01a10c39-0bf4-7221-994f-cc1c0cf8ebbf-8448ddf449-lb2zc",
+          "uid": "40fad9fb-457f-4957-82c5-d87a77fcd8f6",
+          "node": "uc-k8sp4",
+          "created": "2026-10-11T15:21:51Z",
+          "restarts": 0,
+          "memory": "512Mi"
+        },
+        {
+          "name": "flash-01a10c3a-2de7-7e13-b433-f99559f44349-84c5976f98-4n7qb",
+          "uid": "98f8d0d2-91ed-4eca-a318-c29149b73065",
+          "node": "uc-k8sp4",
+          "created": "2026-10-11T16:09:16Z",
+          "restarts": 0,
+          "memory": "1Gi"
+        },
+        {
+          "name": "flash-01a11083-9bfc-70d1-a9ba-f3a8e4f4ee31-5bf9cf955f-wrssr",
+          "uid": "40ee56a9-653a-4d65-a818-dc0a40d5f94e",
+          "node": "ichikawap1",
+          "created": "2026-10-11T16:09:37Z",
+          "restarts": 0,
+          "memory": "8Gi"
+        },
+        {
+          "name": "flash-01a11ad4-9917-74b3-a34d-192aaf2a4c76-79dd75f96b-sj2bz",
+          "uid": "5623f4d6-6100-48ba-802b-431975eb71a3",
+          "node": "ichikawap1",
+          "created": "2026-10-11T15:17:51Z",
+          "restarts": 0,
+          "memory": "48Gi"
+        }
+      ]
+    },
+    "browser_after_etcd_rollout": [
+      {
+        "path": "/workspaces",
+        "status": 200,
+        "elapsed_ms": 2067,
+        "error_page": false
+      },
+      {
+        "path": "/@mizuame/HyperEVM.main/apps/code-server/?folder=/root/projects/HyperEVM",
+        "status": 200,
+        "elapsed_ms": 4230,
+        "workbench": true,
+        "error_page": false
+      }
+    ],
+    "sustained_public_http": {
+      "from": "2026-10-11T16:38:52.214875+00:00",
+      "until": "2026-10-11T16:43:55.101657+00:00",
+      "samples": 60,
+      "failures": 0,
+      "max_elapsed_ms": 324
+    },
+    "policy_tests": {
+      "node_health": 4,
+      "etcd_rollout_guards": 4,
+      "kubeadm_dev": 15,
+      "vm_credential_redaction": 2
+    },
+    "temporary_access_cleanup": {
+      "owned_incident_key_revoked": true,
+      "local_key_file_removed": true
+    },
+    "public_http_after_etcd_policy": {
+      "from": "2026-10-11T16:58:06.948894+00:00",
+      "until": "2026-10-11T17:02:10.375232+00:00",
+      "samples": 48,
+      "failures": 0,
+      "max_elapsed_ms": 1387
+    },
+    "hyper_agent_late_verification": {
+      "at": "2026-10-11T17:43:03.261879+00:00",
+      "agent": {
+        "last_connected_at": "2026-10-11T17:42:56.926759+00:00",
+        "disconnected_at": "2026-10-11T16:26:09.185014+00:00",
+        "lifecycle_state": "ready"
+      }
+    },
+    "late_workload_continuity": {
+      "at": "2026-10-11T17:42:25.806942+00:00",
+      "verified_original_pods": 9,
+      "original_uids_preserved": true,
+      "all_ready": true,
+      "all_restart_counts_zero": true,
+      "excluded_preincident_terminating_whisper_pod_uid": "56483bab-bbca-4f30-ba83-c926fd640b52"
+    }
   },
   "remaining_uncertainty": [
-    "The actor or trigger that recreated the parent Coder Pod is not established; Kubernetes audit was not configured.",
-    "Delayed gateway endpoint updates during API stalls are a possible contributor to the public 503; no direct stale-endpoint snapshot established every failing request.",
-    "The storage latency underlying etcd/API stalls remains to be investigated; leadership transfer and longer renewal tolerance are mitigations."
+    "Initial API/etcd delay has confirmed request timeouts and slow fdatasync evidence; contribution of physical disk versus network and load is not fully isolated.",
+    "Finite memory limits can still be exhausted by unbounded application allocations.",
+    "Fault injection E2E has been added and started; no pass is claimed until its recorded conclusion."
   ],
-  "secrets": "No credentials or secret values are included in this record."
+  "secrets": "No credentials or secret values are included in this record.",
+  "status": "services_recovered_fault_e2e_running",
+  "report": "https://github.com/IPA-CyberLab/IPA-RS-HeteroNetwork/blob/master/docs/incident-2026-10-11-coder-whisper.md"
 }
