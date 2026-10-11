@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import subprocess
@@ -32,17 +33,35 @@ def main():
     parser.add_argument("--browser-output", type=Path)
     parser.add_argument("--kubectl", default="kubectl")
     parser.add_argument("--kubeconfig", type=Path, required=True)
+    parser.add_argument("--keep-on-failure", action="store_true", help="Retain only recorded fixture resources for storage diagnostics")
+    parser.add_argument("--resume", action="store_true", help="Resume browser/final checks for a retained, recorded fixture")
     args = parser.parse_args()
     fixture = json.loads(args.fixture.read_text())
     tenant = fixture["tenants"][0]
     assert all(t["slug"].startswith("vpc-e2e-") for t in fixture["tenants"])
     api = Api(args.endpoint, tenant)
     other = Api(args.endpoint, fixture["tenants"][1])
-    assert not args.report.exists(), "refusing to overwrite cleanup records"
-    assert not api.call("GET", "flash/services")["items"], "fixture must be empty"
+    if not args.resume:
+        assert not args.report.exists(), "refusing to overwrite cleanup records"
+        assert not api.call("GET", "flash/services")["items"], "fixture must be empty"
     nonce = secrets.token_hex(6)
     report = {"started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "checks": [], "resources": [], "passed": False}
     service = vpc = None
+    if args.resume:
+        report = json.loads(args.report.read_text())
+        assert not report["passed"] and len(report["resources"]) == 2
+        required = {"created_with_explicit_rootfs_and_persistent_sizes", "cli_updates_image_cpu_memory_rootfs_environment_command_args_metadata_and_ports", "persistent_disk_and_filesystem_expanded_in_place_without_container_restart", "public_load_balancer_and_private_service_modes_can_be_changed_in_both_directions"}
+        assert required <= {c["name"] for c in report["checks"] if c.get("passed")}
+        for item in report["resources"]:
+            collection = "flash/services" if item["provider"] == "flash" else "vpc/networks"
+            value = api.call("GET", collection + "/" + item["id"])
+            assert value["organization_id"] == tenant["organization_id"] and value["name"].startswith("flash-updates-")
+            if item["provider"] == "flash": service = value
+            else: vpc = value
+        assert service and vpc and service["spec"]["metadata"]["purpose"] == "flash-updates-e2e"
+        nonce = service["name"].removeprefix("flash-updates-"); assert re.fullmatch("[0-9a-f]{12}", nonce)
+        path = "flash/services/" + service["id"]; claim = "flash-" + service["id"] + "-home"
+        report["resumed_after_error_type"] = report.pop("error_type", None)
     kub = [args.kubectl, "--kubeconfig=" + str(args.kubeconfig), "--request-timeout=15s", "-n", "heterocloud-flash-workloads"]
 
     def save():
@@ -99,46 +118,52 @@ def main():
         asyncio.run(probe("test \"$(cat /root/flash-update-marker)\" = " + nonce))
 
     try:
-        vpc = api.call("POST", "vpc/networks", {"project_id": tenant["project_id"], "name": "flash-updates-vpc-" + nonce, "spec": {"region": "heteronet-global", "nat": {"enabled": False}, "security_groups": ["default"], "rules": []}})
-        report["resources"].append({"provider": "vpc", "id": vpc["id"]}); save(); api.wait("vpc/networks/" + vpc["id"])
-        service = api.call("POST", "flash/services", {"project_id": tenant["project_id"], "name": "flash-updates-" + nonce, "spec": {
-            "region": "heteronet-global", "image": IMAGE, "replicas": 1, "cpu_millis": 100, "memory_mib": 128,
-            "ephemeral_storage_gib": 3, "rootfs_storage_gib": 1, "persistent_storage_gib": 1,
-            "ports": [{"name": "echo", "protocol": "udp", "container_port": 7777}],
-            "exposure": {"type": "internal", "traffic_mode": "forwarded"}, "egress": {"mode": "disabled"},
-            "network": {"vpc_id": vpc["id"], "security_groups": ["default"], "private_name": "updates"},
-            "env": {"HOME": "/root"}, "command": ["/usr/local/bin/flash-udp-echo"], "args": [], "metadata": {"purpose": "flash-updates-e2e"},
-        }})
-        path = "flash/services/" + service["id"]; claim = "flash-" + service["id"] + "-home"
-        report["resources"].append({"provider": "flash", "id": service["id"]}); save(); service = ready()
-        original_pvc = kget("pvc", claim)
-        old_pod = asyncio.run(probe("printf '%s' " + nonce + " > /root/flash-update-marker"))
-        record("created_with_explicit_rootfs_and_persistent_sizes", service_id=service["id"], pvc_uid=original_pvc["metadata"]["uid"])
-        service = update({**service["spec"], "image": args.updated_image, "cpu_millis": 200, "memory_mib": 256,
-            "ephemeral_storage_gib": 4, "rootfs_storage_gib": 2, "env": {"HOME": "/root", "UPDATED": "yes", "FLASH_ECHO_LISTEN": "0.0.0.0:7778"},
-            "ports": [{"name": "echo", "protocol": "udp", "container_port": 7778}],
-            "command": ["/bin/sh"], "args": ["-c", "exec /usr/local/bin/flash-udp-echo"], "metadata": {"purpose": "flash-updates-e2e", "updated": True}}, cli=True)
-        verify_disk(1, 2)
-        pod = asyncio.run(probe("test \"$UPDATED\" = yes")); assert pod != old_pod
-        actual = kget("pod", pod)["spec"]["containers"][0]
-        assert actual["resources"]["limits"]["ephemeral-storage"] == str(2 * GIB)
-        assert actual["resources"]["limits"]["cpu"] == "200m"
-        record("cli_updates_image_cpu_memory_rootfs_environment_command_args_metadata_and_ports")
-        service = update({**service["spec"], "ephemeral_storage_gib": 5, "persistent_storage_gib": 2})
-        verify_disk(2, 2)
-        assert asyncio.run(probe("test -f /root/flash-update-marker")) == pod, "persistent expansion must not replace an unchanged container"
-        asyncio.run(probe("test $(df -B1 --output=size /root | tail -n1) -gt 1600000000"))
-        record("persistent_disk_and_filesystem_expanded_in_place_without_container_restart")
-        service = update({**service["spec"], "exposure": {"type": "public", "traffic_mode": "forwarded"}})
-        actual_service = kget("service", "flash-" + service["id"])
-        assert actual_service["spec"]["type"] == "LoadBalancer"
-        verify_disk(2, 2)
-        service = update({**service["spec"], "exposure": {"type": "internal", "traffic_mode": "forwarded"}})
-        actual_service = kget("service", "flash-" + service["id"])
-        assert actual_service["spec"]["type"] == "ClusterIP"
-        assert "loadBalancerClass" not in actual_service["spec"]
-        verify_disk(2, 2)
-        record("public_load_balancer_and_private_service_modes_can_be_changed_in_both_directions")
+        if args.resume:
+            original_pvc = kget("pvc", claim)
+            original = next(c for c in report["checks"] if c["name"] == "created_with_explicit_rootfs_and_persistent_sizes")
+            assert original_pvc["metadata"]["uid"] == original["pvc_uid"] and original["service_id"] == service["id"]
+            verify_disk(2, service["spec"]["rootfs_storage_gib"])
+        else:
+            vpc = api.call("POST", "vpc/networks", {"project_id": tenant["project_id"], "name": "flash-updates-vpc-" + nonce, "spec": {"region": "heteronet-global", "nat": {"enabled": False}, "security_groups": ["default"], "rules": []}})
+            report["resources"].append({"provider": "vpc", "id": vpc["id"]}); save(); api.wait("vpc/networks/" + vpc["id"])
+            service = api.call("POST", "flash/services", {"project_id": tenant["project_id"], "name": "flash-updates-" + nonce, "spec": {
+                "region": "heteronet-global", "image": IMAGE, "replicas": 1, "cpu_millis": 100, "memory_mib": 128,
+                "ephemeral_storage_gib": 3, "rootfs_storage_gib": 1, "persistent_storage_gib": 1,
+                "ports": [{"name": "echo", "protocol": "udp", "container_port": 7777}],
+                "exposure": {"type": "internal", "traffic_mode": "forwarded"}, "egress": {"mode": "disabled"},
+                "network": {"vpc_id": vpc["id"], "security_groups": ["default"], "private_name": "updates"},
+                "env": {"HOME": "/root"}, "command": ["/usr/local/bin/flash-udp-echo"], "args": [], "metadata": {"purpose": "flash-updates-e2e"},
+            }})
+            path = "flash/services/" + service["id"]; claim = "flash-" + service["id"] + "-home"
+            report["resources"].append({"provider": "flash", "id": service["id"]}); save(); service = ready()
+            original_pvc = kget("pvc", claim)
+            old_pod = asyncio.run(probe("printf '%s' " + nonce + " > /root/flash-update-marker"))
+            record("created_with_explicit_rootfs_and_persistent_sizes", service_id=service["id"], pvc_uid=original_pvc["metadata"]["uid"])
+            service = update({**service["spec"], "image": args.updated_image, "cpu_millis": 200, "memory_mib": 256,
+                "ephemeral_storage_gib": 4, "rootfs_storage_gib": 2, "env": {"HOME": "/root", "UPDATED": "yes", "FLASH_ECHO_LISTEN": "0.0.0.0:7778"},
+                "ports": [{"name": "echo", "protocol": "udp", "container_port": 7778}],
+                "command": ["/bin/sh"], "args": ["-c", "exec /usr/local/bin/flash-udp-echo"], "metadata": {"purpose": "flash-updates-e2e", "updated": True}}, cli=True)
+            verify_disk(1, 2)
+            pod = asyncio.run(probe("test \"$UPDATED\" = yes")); assert pod != old_pod
+            actual = kget("pod", pod)["spec"]["containers"][0]
+            assert actual["resources"]["limits"]["ephemeral-storage"] == str(2 * GIB)
+            assert actual["resources"]["limits"]["cpu"] == "200m"
+            record("cli_updates_image_cpu_memory_rootfs_environment_command_args_metadata_and_ports")
+            service = update({**service["spec"], "ephemeral_storage_gib": 5, "persistent_storage_gib": 2})
+            verify_disk(2, 2)
+            assert asyncio.run(probe("test -f /root/flash-update-marker")) == pod, "persistent expansion must not replace an unchanged container"
+            asyncio.run(probe("test $(df -B1 --output=size /root | tail -n1) -gt 1600000000"))
+            record("persistent_disk_and_filesystem_expanded_in_place_without_container_restart")
+            service = update({**service["spec"], "exposure": {"type": "public", "traffic_mode": "forwarded"}})
+            actual_service = kget("service", "flash-" + service["id"])
+            assert actual_service["spec"]["type"] == "LoadBalancer"
+            verify_disk(2, 2)
+            service = update({**service["spec"], "exposure": {"type": "internal", "traffic_mode": "forwarded"}})
+            actual_service = kget("service", "flash-" + service["id"])
+            assert actual_service["spec"]["type"] == "ClusterIP"
+            assert "loadBalancerClass" not in actual_service["spec"]
+            verify_disk(2, 2)
+            record("public_load_balancer_and_private_service_modes_can_be_changed_in_both_directions")
         if args.browser_output:
             subprocess.run(["node", str(Path(__file__).with_name("flash_updates_browser.mjs")), args.endpoint, str(args.fixture), service["id"], str(args.browser_output)], check=True, timeout=650)
             service = ready(); verify_disk(2, service["spec"]["rootfs_storage_gib"])
@@ -163,14 +188,14 @@ def main():
     except Exception as error:
         report["error_type"] = type(error).__name__; save(); raise
     finally:
-        for provider, item in [("flash", service), ("vpc", vpc)]:
+        for provider, item in ([] if args.keep_on_failure and not report["passed"] else [("flash", service), ("vpc", vpc)]):
             if item:
                 collection = "flash/services" if provider == "flash" else "vpc/networks"
                 current = api.call("GET", collection + "/" + item["id"])
                 assert current["organization_id"] == tenant["organization_id"] and current["name"].startswith("flash-updates-")
                 api.call("DELETE", collection + "/" + item["id"]); api.wait(collection + "/" + item["id"], deleted=True)
         report["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()); save()
-        print("Owned Flash update fixture resources removed", flush=True)
+        print("Owned fixture resources retained for diagnostics" if args.keep_on_failure and not report["passed"] else "Owned Flash update fixture resources removed", flush=True)
 
 
 if __name__ == "__main__": main()

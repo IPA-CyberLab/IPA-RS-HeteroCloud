@@ -1,0 +1,70 @@
+{
+  "started_at": "2026-10-11T06:33:10Z",
+  "checks": [
+    {
+      "name": "created_with_explicit_rootfs_and_persistent_sizes",
+      "passed": true,
+      "service_id": "01a129aa-71bd-70f3-98d3-ba1e41bcf6c6",
+      "pvc_uid": "391455af-eb01-444b-abe2-b255ef399e99"
+    },
+    {
+      "name": "cli_updates_image_cpu_memory_rootfs_environment_command_args_metadata_and_ports",
+      "passed": true
+    },
+    {
+      "name": "persistent_disk_and_filesystem_expanded_in_place_without_container_restart",
+      "passed": true
+    },
+    {
+      "name": "public_load_balancer_and_private_service_modes_can_be_changed_in_both_directions",
+      "passed": true
+    },
+    {
+      "name": "real_desktop_and_mobile_console_edits_preserve_files",
+      "passed": true,
+      "records": [
+        {
+          "browser": "desktop",
+          "ready_ms": 1293,
+          "real_api": true,
+          "rootfs_gib": 3,
+          "persistent_gib": 2,
+          "passed": true
+        },
+        {
+          "browser": "mobile",
+          "ready_ms": 1173,
+          "real_api": true,
+          "rootfs_gib": 2,
+          "persistent_gib": 2,
+          "passed": true
+        }
+      ]
+    },
+    {
+      "name": "shrink_and_cross_tenant_updates_rejected_without_changing_generation_or_data",
+      "passed": true
+    },
+    {
+      "name": "cli_moves_project_and_detaches_vpc_while_retaining_service_and_disk_identity",
+      "passed": true
+    },
+    {
+      "name": "explicit_rootfs_setting_can_be_removed_to_restore_automatic_allocation",
+      "passed": true
+    }
+  ],
+  "resources": [
+    {
+      "provider": "vpc",
+      "id": "01a129aa-54f0-7f01-b1bb-bfddeed66633"
+    },
+    {
+      "provider": "flash",
+      "id": "01a129aa-71bd-70f3-98d3-ba1e41bcf6c6"
+    }
+  ],
+  "passed": true,
+  "finished_at": "2026-10-11T06:45:35Z",
+  "resumed_after_error_type": "CalledProcessError"
+}

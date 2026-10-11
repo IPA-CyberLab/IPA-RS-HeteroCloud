@@ -37,7 +37,7 @@ try {
     const dialog = page.getByRole("dialog", { name: "Flashサービスを編集" });
     await expect(dialog.getByRole("spinbutton", { name: "コンテナの書き込み領域" })).toBeEnabled();
     await expect(dialog.getByRole("spinbutton", { name: "永続ディスク" })).toBeEnabled();
-    await dialog.getByRole("spinbutton", { name: "ディスク上限（イメージ込み）" }).fill(String(total));
+    await dialog.getByRole("spinbutton", { name: "ディスク上限", exact: true }).fill(String(total));
     await dialog.getByRole("spinbutton", { name: "コンテナの書き込み領域" }).fill(String(rootfs));
     await dialog.getByRole("spinbutton", { name: "永続ディスク" }).fill("2");
     await dialog.getByRole("button", { name: "変更を保存", exact: true }).click();
