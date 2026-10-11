@@ -55,6 +55,7 @@ export interface FlashServiceFormValue {
   gpuType: string;
   ephemeralStorageGib: number;
   rootfsStorageGib?: number;
+  persistentStorageGib?: number;
   ports: FlashPortInput[];
   exposureType: FlashExposure["type"];
   trafficMode: FlashExposure["traffic_mode"];
@@ -434,6 +435,12 @@ export function flashFormValidationError(
        value.rootfsStorageGib >= value.ephemeralStorageGib)) {
     return "コンテナの書き込み領域は1 GiB以上、ディスク上限未満にしてください。";
   }
+  if (value.persistentStorageGib !== undefined &&
+      (!Number.isInteger(value.persistentStorageGib) ||
+       value.persistentStorageGib < 1 ||
+       value.persistentStorageGib + (value.rootfsStorageGib ?? 1) >= value.ephemeralStorageGib)) {
+    return "永続ディスクは1 GiB以上にし、ディスク上限内にイメージと書き込み領域が収まるようにしてください。";
+  }
   if (value.exposureType === "internal" && value.trafficMode !== "forwarded") {
     return "内部公開では転送モードを使用してください。";
   }
@@ -492,6 +499,7 @@ export function flashSpecFromForm(
     ...(value.gpuType ? { gpu_type: value.gpuType } : {}),
     ephemeral_storage_gib: value.ephemeralStorageGib,
     ...(value.rootfsStorageGib !== undefined ? { rootfs_storage_gib: value.rootfsStorageGib } : {}),
+    ...(value.persistentStorageGib !== undefined ? { persistent_storage_gib: value.persistentStorageGib } : {}),
     ports: value.ports,
     exposure: {
       type: value.exposureType,
@@ -577,6 +585,7 @@ export function flashFormFromService(
     gpuType: service.spec.gpu_type ?? "",
     ephemeralStorageGib: service.spec.ephemeral_storage_gib,
     rootfsStorageGib: service.spec.rootfs_storage_gib,
+    persistentStorageGib: service.spec.persistent_storage_gib,
     ports: service.spec.ports.map(({ name, protocol, container_port }) => ({
       name,
       protocol,
@@ -607,7 +616,7 @@ export function FlashServiceForm({
   onChange,
   onSubmit,
   disabled,
-  projectLocked,
+  editing,
   oidcCallbackUrl,
   registryImages = [],
   registryImagesStatus = "finished",
@@ -622,7 +631,7 @@ export function FlashServiceForm({
   onChange: (value: FlashServiceFormValue) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   disabled?: boolean;
-  projectLocked?: boolean;
+  editing?: boolean;
   oidcCallbackUrl?: string;
   registryImages?: RegistryImage[];
   registryImagesStatus?: "loading" | "error" | "finished";
@@ -680,7 +689,7 @@ export function FlashServiceForm({
             <ProjectSelector
               value={value.projectId}
               onValueChange={(projectId) => update("projectId", projectId)}
-              disabled={disabled || projectLocked}
+              disabled={disabled}
             />
           </FormField>
           <FormField label="サービス名">
@@ -920,8 +929,8 @@ export function FlashServiceForm({
           </FormField>
           <FormField
             label="コンテナの書き込み領域"
-            description="空欄なら自動配分。残りは /root の永続領域に割り当てます。"
-            constraintText="GiB。作成後は変更できません。"
+            description="空欄なら自動配分。更新時は既存の永続領域も収まるよう、必要に応じてディスク上限を増やしてください。"
+            constraintText="GiB。変更の反映にはコンテナの再作成が必要です。"
           >
             <Input
               type="number"
@@ -929,7 +938,7 @@ export function FlashServiceForm({
               step={1}
               nativeInputAttributes={{ min: 1, max: Math.max(1, value.ephemeralStorageGib - 1) }}
               value={value.rootfsStorageGib === undefined ? "" : String(value.rootfsStorageGib)}
-              disabled={disabled || projectLocked}
+              disabled={disabled}
               onChange={({ detail }) =>
                 update(
                   "rootfsStorageGib",
@@ -943,6 +952,23 @@ export function FlashServiceForm({
                       ),
                 )
               }
+            />
+          </FormField>
+          <FormField
+            label="永続ディスク"
+            description="/root に保存する容量。空欄なら残りを自動配分します。既存データを維持して拡張でき、縮小はできません。"
+            constraintText="GiB。イメージと書き込み領域を含むディスク上限内で指定してください。"
+          >
+            <Input
+              type="number"
+              inputMode="numeric"
+              step={1}
+              nativeInputAttributes={{ min: 1, max: Math.max(1, value.ephemeralStorageGib - 1) }}
+              value={value.persistentStorageGib === undefined ? "" : String(value.persistentStorageGib)}
+              disabled={disabled}
+              onChange={({ detail }) => update("persistentStorageGib", detail.value.trim() === "" ? undefined : boundedInteger(
+                detail.value, 1, Math.max(1, value.ephemeralStorageGib - 1), value.persistentStorageGib ?? 1,
+              ))}
             />
           </FormField>
           <FormField
@@ -1052,7 +1078,7 @@ export function FlashServiceForm({
             <FormField label="Issuer URL"><Input value={value.oidcIssuer} disabled={disabled} onChange={({detail})=>update("oidcIssuer",detail.value)} placeholder="https://id.example.com/realms/my-realm" /></FormField>
             <FormField label="Client ID"><Input value={value.oidcClientId} disabled={disabled} onChange={({detail})=>update("oidcClientId",detail.value)} /></FormField>
             <FormField label="クライアントシークレットの参照名"><Input value={value.oidcSecretRef} disabled={disabled} onChange={({detail})=>update("oidcSecretRef",detail.value)} /></FormField>
-            <FormField label="Client Secret" description={projectLocked ? "空欄なら保存済みの値を維持します。値は表示・サービス設定への保存・環境変数への配置をしません。" : "値は専用のシークレットとして保存します。環境変数には配置しません。"}>
+            <FormField label="Client Secret" description={editing ? "空欄なら保存済みの値を維持します。値は表示・サービス設定への保存・環境変数への配置をしません。" : "値は専用のシークレットとして保存します。環境変数には配置しません。"}>
               <Input type="password" value={value.oidcClientSecret} disabled={disabled} autoComplete="new-password" onChange={({detail})=>update("oidcClientSecret",detail.value)} />
             </FormField>
             <FormField label="Scope"><Input value={value.oidcScopes} disabled={disabled} onChange={({detail})=>update("oidcScopes",detail.value)} /></FormField>

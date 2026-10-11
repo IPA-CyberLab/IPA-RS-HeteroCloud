@@ -606,6 +606,25 @@
             "type": "boolean",
             "default": false,
             "description": "True only after an explicit stop has drained all Pods and released the GPU reservation."
+          },
+          "rootfs_storage_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Storage allocation/capacity in bytes, not measured consumption."
+          },
+          "persistent_storage_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Storage allocation/capacity in bytes, not measured consumption."
+          },
+          "persistent_storage_capacity_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Storage allocation/capacity in bytes, not measured consumption."
+          },
+          "storage_resize_pending": {
+            "type": "boolean",
+            "description": "True until the persistent volume and filesystem report the requested capacity."
           }
         },
         "allOf": [
@@ -745,6 +764,9 @@
               "type": "string"
             },
             "default": []
+          },
+          "authentication": {
+            "$ref": "#/components/schemas/FlashOidcAuthentication"
           }
         },
         "allOf": [
@@ -1018,7 +1040,7 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 1000000,
-            "description": "Optional writable container filesystem size. Must be less than ephemeral_storage_gib; remaining disk budget is available for the persistent home volume. Omit to keep the legacy allocation."
+            "description": "Optional container writable filesystem allocation in GiB. Mutable on update; increase the total budget to preserve the existing persistent disk."
           },
           "ports": {
             "type": "array",
@@ -1058,6 +1080,37 @@
             "type": "boolean",
             "default": false,
             "description": "Explicitly stop execution while retaining the service, secrets and persistent /root volume. replicas and autoscaling remain the resume configuration."
+          },
+          "persistent_storage_gib": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "description": "Optional persistent /root disk size in GiB within ephemeral_storage_gib. Omit for automatic allocation. Updates expand the same disk; shrinking is rejected to preserve data."
+          },
+          "task_role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "IAM service account assumed by the workload; requires permission to pass the role."
+          },
+          "network": {
+            "$ref": "#/components/schemas/FlashVpcAttachment"
+          },
+          "secret_env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Environment variable names mapped to previously registered service secret names."
+          },
+          "secret_files": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Environment variable names mapped to previously registered service secret names."
           }
         }
       },
@@ -1095,6 +1148,11 @@
           },
           "spec": {
             "$ref": "#/components/schemas/FlashSpec"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Optional destination project in the same organization. Omission preserves the current project. The new VPC must belong to this project."
           }
         }
       },
@@ -1593,6 +1651,70 @@
             "items": {
               "$ref": "#/components/schemas/OwnerFlashCostTenant"
             }
+          }
+        }
+      },
+      "FlashVpcAttachment": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "additionalProperties": false,
+        "required": [
+          "vpc_id"
+        ],
+        "properties": {
+          "vpc_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "security_groups": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "default": [
+              "default"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "private_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "FlashOidcAuthentication": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "additionalProperties": false,
+        "required": [
+          "issuer_url",
+          "client_id",
+          "client_secret_ref"
+        ],
+        "properties": {
+          "issuer_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "client_secret_ref": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
           }
         }
       }

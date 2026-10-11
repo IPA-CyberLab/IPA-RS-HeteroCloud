@@ -117,17 +117,28 @@ describe("FlashServiceForm", () => {
       image: "ghcr.io/actions/actions-runner:2.337.0",
       ephemeralStorageGib: 30,
       rootfsStorageGib: 20,
+      persistentStorageGib: 8,
     };
     expect(flashFormValidationError(value, { ...defaultFlashQuotaLimits, max_disk_gib_per_vm: 30 })).toBeNull();
     expect(flashFormValidationError({ ...value, rootfsStorageGib: 30 }, { ...defaultFlashQuotaLimits, max_disk_gib_per_vm: 30 })).not.toBeNull();
     const spec = flashSpecFromForm(value);
     expect(spec.rootfs_storage_gib).toBe(20);
+    expect(spec.persistent_storage_gib).toBe(8);
     const edited = flashFormFromService({
       project_id: value.projectId,
       name: value.name,
       spec: { ...spec, ports: spec.ports.map((port) => ({ ...port, service_port: 30001 })) },
     });
     expect(flashSpecFromForm(edited).rootfs_storage_gib).toBe(20);
+    expect(flashSpecFromForm(edited).persistent_storage_gib).toBe(8);
+    expect(flashFormValidationError({ ...value, persistentStorageGib: 10 }, { ...defaultFlashQuotaLimits, max_disk_gib_per_vm: 30 })).not.toBeNull();
+  });
+
+  it("編集時にも一時領域と永続ディスクを変更できる", () => {
+    render(<FlashServiceForm value={{ ...defaultFlashServiceFormValue, projectId: "project-1", name: "workspace", image: "example/workspace", ephemeralStorageGib: 40, rootfsStorageGib: 3, persistentStorageGib: 26 }} onChange={vi.fn()} onSubmit={vi.fn()} editing>{null}</FlashServiceForm>);
+    expect(screen.getByRole("spinbutton", { name: "コンテナの書き込み領域" })).toBeEnabled();
+    expect(screen.getByRole("spinbutton", { name: "永続ディスク" })).toBeEnabled();
+    expect(screen.queryByText("GiB。作成後は変更できません。")).not.toBeInTheDocument();
   });
 
   it("自動公開ポートとリソース上限を適用する", () => {

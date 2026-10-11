@@ -414,6 +414,8 @@ struct CreateManifest {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct UpdateManifest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    project_id: Option<Uuid>,
     name: String,
     spec: Value,
 }
@@ -779,6 +781,11 @@ impl ApiClient {
         id: Uuid,
         manifest: &UpdateManifest,
     ) -> Result<ManagedService, CliError> {
+        if kind != ServiceKind::Flash && manifest.project_id.is_some() {
+            return Err(CliError::InvalidManifest(
+                "project_id can only be changed for Flash services".into(),
+            ));
+        }
         let method = match kind {
             ServiceKind::Flow => Method::PATCH,
             ServiceKind::Flash | ServiceKind::Syouyu | ServiceKind::Vpc => Method::PUT,
@@ -1199,6 +1206,7 @@ mod tests {
             validate_manifest(&create.name, &create.spec)?;
             assert_eq!(serde_json::to_value(&create)?, original);
             let update = UpdateManifest {
+                project_id: Some(create.project_id),
                 name: create.name,
                 spec: create.spec,
             };

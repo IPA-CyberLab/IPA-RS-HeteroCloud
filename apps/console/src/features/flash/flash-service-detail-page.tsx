@@ -136,6 +136,7 @@ export function FlashServiceDetailPage() {
         await api.flash.services.putLoadBalancerSecret(organizationId,serviceId,value.oidcSecretRef,value.oidcClientSecret);
       }
       return api.flash.services.update(organizationId, serviceId, {
+        project_id: value.projectId,
         name: value.name.trim(),
         spec: {
           ...flashSpecFromForm(value, service.data?.spec.metadata ?? {}),
@@ -427,6 +428,8 @@ export function FlashServiceDetailPage() {
               },
               { label: "ディスク上限（イメージ込み）", value: `${formatNumber(item.spec.ephemeral_storage_gib)} GiB` },
               { label: "コンテナの書き込み領域", value: item.spec.rootfs_storage_gib === undefined ? "自動配分" : `${formatNumber(item.spec.rootfs_storage_gib)} GiB` },
+              { label: "永続ディスク", value: typeof providerStatus.persistent_storage_bytes === "number" ? `${formatNumber(providerStatus.persistent_storage_bytes / 2 ** 30)} GiB` : item.spec.persistent_storage_gib === undefined ? "自動配分" : `${formatNumber(item.spec.persistent_storage_gib)} GiB` },
+              { label: "ディスク拡張", value: providerStatus.storage_resize_pending ? "反映中" : "-" },
               { label: "更新日時", value: formatDateTime(item.updated_at) },
             ]}
           />
@@ -574,7 +577,7 @@ export function FlashServiceDetailPage() {
               onChange={setEditForm}
               onSubmit={submitEdit}
               disabled={updateService.isPending}
-              projectLocked
+              editing
               oidcCallbackUrl={providerStatus.oidc_callback_url}
               registryImages={registryImages.data?.items}
               registryImagesStatus={

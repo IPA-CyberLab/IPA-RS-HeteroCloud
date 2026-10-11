@@ -2661,6 +2661,8 @@ async fn get_flash_service(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UpdateFlashService {
+    #[serde(default)]
+    project_id: Option<Uuid>,
     name: String,
     spec: FlashSpec,
 }
@@ -2710,11 +2712,12 @@ async fn update_flash_service(
     }
     let instance = state
         .store
-        .update_service_instance(
+        .update_service_instance_in_project(
             OrganizationId(organization_id),
             ServiceInstanceId(service_instance_id),
             "flash",
             authorization.principal_id,
+            request.project_id.map(ProjectId),
             &request.name,
             serde_json::to_value(request.spec).map_err(|_| ApiError::Internal)?,
         )
@@ -5970,6 +5973,7 @@ mod tests {
             gpu_type: None,
             ephemeral_storage_gib: 10,
             rootfs_storage_gib: None,
+            persistent_storage_gib: None,
             ports: vec![FlashPort {
                 name: "game-udp".into(),
                 protocol: FlashProtocol::Udp,

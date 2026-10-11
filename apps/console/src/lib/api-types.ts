@@ -476,6 +476,7 @@ export interface FlashServiceSpec {
   gpu_type?: string;
   ephemeral_storage_gib: number;
   rootfs_storage_gib?: number;
+  persistent_storage_gib?: number;
   ports: FlashPort[];
   exposure: FlashExposure;
   egress?: FlashEgress;
@@ -511,6 +512,10 @@ export interface FlashServiceStatus {
   desired_replicas?: number;
   stopped?: boolean;
   oidc_callback_url?: string;
+  rootfs_storage_bytes?: number;
+  persistent_storage_bytes?: number;
+  persistent_storage_capacity_bytes?: number;
+  storage_resize_pending?: boolean;
   available_replicas?: number;
   runtime_class?: string;
   message?: string;
@@ -643,6 +648,7 @@ export interface CreateFlashServiceRequest {
 }
 
 export interface UpdateFlashServiceRequest {
+  project_id?: string;
   name: string;
   spec: FlashServiceSpecInput;
 }

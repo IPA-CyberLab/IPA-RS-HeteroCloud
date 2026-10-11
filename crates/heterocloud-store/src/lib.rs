@@ -2763,6 +2763,36 @@ impl Store {
         name: &str,
         spec: Value,
     ) -> Result<ServiceInstance, StoreError> {
+        self.update_service_instance_in_project(
+            organization_id,
+            id,
+            provider,
+            principal_id,
+            None,
+            name,
+            spec,
+        )
+        .await
+    }
+
+    /// Replacement update, optionally moving a Flash service within its tenant.
+    /// Project, specification, quota reservation and outbox change atomically.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_service_instance_in_project(
+        &self,
+        organization_id: OrganizationId,
+        id: ServiceInstanceId,
+        provider: &str,
+        principal_id: PrincipalId,
+        requested_project: Option<ProjectId>,
+        name: &str,
+        spec: Value,
+    ) -> Result<ServiceInstance, StoreError> {
+        if requested_project.is_some() && provider != "flash" {
+            return Err(StoreError::RequestRejected(
+                "project updates are supported for Flash services only".into(),
+            ));
+        }
         let mut transaction = self.pool.begin().await?;
         if matches!(provider, "flow" | "flash" | "syouyu" | "vpc") {
             lock_tenant_allocations(&mut transaction, organization_id).await?;
@@ -2792,6 +2822,19 @@ impl Store {
         if existing.state == "deleting" {
             transaction.rollback().await?;
             return Err(StoreError::Conflict);
+        }
+        let project_id = requested_project.unwrap_or(ProjectId(existing.project_id));
+        if project_id.0 != existing.project_id {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM projects WHERE id = $1 AND organization_id = $2)",
+            )
+            .bind(project_id.0)
+            .bind(organization_id.0)
+            .fetch_one(&mut *transaction)
+            .await?;
+            if !exists {
+                return Err(StoreError::NotFound);
+            }
         }
         let prepared = match provider {
             "flow" => {
@@ -2839,17 +2882,13 @@ impl Store {
             }
         };
         if provider == "flash" {
-            validate_vpc_attachment(
-                &mut transaction,
-                organization_id,
-                ProjectId(existing.project_id),
-                id,
-                &spec,
-            )
-            .await?;
+            validate_flash_disk_update(&existing.spec, &existing.status, &spec)?;
+            validate_vpc_attachment(&mut transaction, organization_id, project_id, id, &spec)
+                .await?;
         }
         if provider == "flash"
             && (existing.spec.get("task_role") != spec.get("task_role")
+                || project_id.0 != existing.project_id
                 || spec.get("stopped").and_then(Value::as_bool) == Some(true))
         {
             sqlx::query("DELETE FROM workload_access_tokens WHERE service_instance_id=$1")
@@ -2863,7 +2902,7 @@ impl Store {
             .ok_or(StoreError::Invariant("service generation overflow"))?;
         let row = sqlx::query_as::<_, ServiceRow>(
             "UPDATE service_instances
-             SET name = $4, spec = $5, generation = $6, state = 'updating',
+             SET name = $4, spec = $5, generation = $6, project_id = $7, state = 'updating',
                  status = '{}'::jsonb, updated_at = now()
              WHERE id = $1 AND organization_id = $2 AND provider = $3
              RETURNING id, organization_id, project_id, provider, name, generation,
@@ -2875,6 +2914,7 @@ impl Store {
         .bind(name)
         .bind(spec)
         .bind(generation)
+        .bind(project_id.0)
         .fetch_one(&mut *transaction)
         .await?;
         if provider == "flash" {
@@ -2896,7 +2936,7 @@ impl Store {
         .bind(serde_json::json!({
             "service_instance_id": id,
             "organization_id": organization_id,
-            "project_id": ProjectId(existing.project_id),
+            "project_id": project_id,
             "principal_id": principal_id,
             "provider": provider,
             "generation": generation,
@@ -3856,6 +3896,50 @@ async fn prepare_vpc_spec(
         .map_err(|_| StoreError::Invariant("could not serialize VPC specification"))
 }
 
+fn validate_flash_disk_update(
+    existing: &Value,
+    status: &Value,
+    requested: &Value,
+) -> Result<(), StoreError> {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    let reported = status.get("status").unwrap_or(status);
+    let retained = reported
+        .get("persistent_storage_bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .max(
+            existing
+                .get("persistent_storage_gib")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                * GIB,
+        );
+    let persistent = requested
+        .get("persistent_storage_gib")
+        .and_then(Value::as_u64)
+        .map(|gib| gib * GIB);
+    if persistent.is_some_and(|bytes| bytes < retained) {
+        return Err(StoreError::RequestRejected(
+            "persistent disks cannot be shrunk; choose a size at least as large as the existing disk".into(),
+        ));
+    }
+    if existing.get("image") == requested.get("image")
+        && let (Some(image), Some(rootfs), Some(total)) = (
+            reported.get("image_size_bytes").and_then(Value::as_u64),
+            requested.get("rootfs_storage_gib").and_then(Value::as_u64),
+            requested
+                .get("ephemeral_storage_gib")
+                .and_then(Value::as_u64),
+        )
+        && image + rootfs * GIB + persistent.unwrap_or(retained) > total * GIB
+    {
+        return Err(StoreError::RequestRejected(
+            "increase ephemeral_storage_gib to fit the image, requested container filesystem and existing persistent disk".into(),
+        ));
+    }
+    Ok(())
+}
+
 async fn prepare_flash_spec(
     transaction: &mut Transaction<'_, Postgres>,
     organization_id: OrganizationId,
@@ -3869,14 +3953,6 @@ async fn prepare_flash_spec(
     requested
         .validate_request()
         .map_err(|error| StoreError::RequestRejected(error.to_string()))?;
-    if let Some(existing) = existing_spec {
-        let existing: FlashSpec = serde_json::from_value(existing.clone())?;
-        if existing.rootfs_storage_gib != requested.rootfs_storage_gib {
-            return Err(StoreError::RequestRejected(
-                "rootfs_storage_gib cannot be changed after service creation".into(),
-            ));
-        }
-    }
     validate_flash_gpu_access(transaction, organization_id, principal_id, &requested).await?;
     if requested.reserved_replicas() > quota.flash.max_replicas_per_service {
         return Err(StoreError::RequestRejected(format!(

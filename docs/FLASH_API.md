@@ -29,11 +29,51 @@ remain the provider's responsibility.
 When persistent home storage is enabled, Flash normally gives up to 1 GiB of
 the writable budget to the container filesystem and assigns the rest to
 `/root`. Build workloads that write outside `/root` can set
-`spec.rootfs_storage_gib` at creation. This optional integer must be at least
+`spec.rootfs_storage_gib` at creation or on update. This optional integer must be at least
 1 GiB and smaller than `ephemeral_storage_gib`. The image size and at least
 64 MiB of persistent storage must still fit in the total budget. The root
-filesystem allocation cannot be changed after creation because that would
-require shrinking the existing persistent volume.
+filesystem allocation is mutable. To increase it, increase the total budget
+enough to keep the existing persistent volume; the same PVC and its data are
+retained. To set `/root` directly, use optional `spec.persistent_storage_gib`.
+Omission assigns the remaining budget automatically. An explicit persistent
+size can leave some of the total budget unallocated for future filesystem
+changes. Image + container filesystem + persistent request must fit together.
+
+Persistent disks expand in place; shrinking is rejected because it would
+discard existing storage. A resize is complete only when the PVC reports the
+requested capacity. Provider status exposes `rootfs_storage_bytes`,
+`persistent_storage_bytes`, `persistent_storage_capacity_bytes`, and
+`storage_resize_pending`; these are allocation/capacity, not measured usage.
+Invalid updates preserve the running Deployment and the existing PVC. A
+container filesystem, image, CPU/memory, command or environment change can
+recreate the container; `/root` survives, while files outside persistent mounts
+do not. Expanding only an explicitly sized persistent disk does not roll an
+otherwise unchanged container.
+
+## Updating creation parameters
+
+`PUT /api/v1/organizations/{organization_id}/flash/services/{id}` accepts the
+same complete `spec` as creation, including image, region, replicas/autoscaling,
+CPU, memory, GPU type, all disk sizes, ports, exposure/OIDC, egress, VPC
+attachment, task IAM, environment/secrets, command, args and metadata. It also
+accepts `name` and optional `project_id`; omission preserves the current project.
+The target project must be in the same organization and any VPC must belong to
+that project. Existing permissions, quotas and field-combination validation
+still apply. Service ID, creation time and persistent disk identity are kept.
+The update reserves resources and changes the project/spec/generation/outbox in
+one transaction; rejected API requests do not change them.
+
+Use `heterocloud flash update SERVICE_ID --file update.json`. The manifest is
+`{"name":"workspace","project_id":"...","spec":{...}}` with the full spec,
+not a partial patch. For example, an existing 26 GiB persistent allocation can
+be retained while moving the writable filesystem from 3 to 10 GiB by setting
+`ephemeral_storage_gib: 40`, `rootfs_storage_gib: 10`, and
+`persistent_storage_gib: 27` (subject to the image fitting and quota approval).
+The console's edit form exposes the same storage and project settings.
+
+For a workload managed by Coder/Terraform, also change its authoritative
+template/build inputs; otherwise the next Terraform apply can restore the
+template's previous settings.
 
 ## Explicit stop and start
 

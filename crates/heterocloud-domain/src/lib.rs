@@ -837,6 +837,10 @@ pub struct FlashSpec {
     /// disk budget is available for the persistent home volume.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rootfs_storage_gib: Option<u32>,
+    /// Optional persistent /root allocation within the total disk budget.
+    /// Existing volumes are expanded in place and never shrunk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persistent_storage_gib: Option<u32>,
     pub ports: Vec<FlashPort>,
     pub exposure: FlashExposure,
     #[serde(default)]
@@ -992,6 +996,15 @@ impl FlashSpec {
         {
             return Err(invalid_flash_spec(
                 "rootfs_storage_gib must be at least 1 and less than ephemeral_storage_gib",
+            ));
+        }
+        if self.persistent_storage_gib.is_some_and(|persistent| {
+            persistent == 0
+                || u64::from(persistent) + u64::from(self.rootfs_storage_gib.unwrap_or(1))
+                    >= u64::from(self.ephemeral_storage_gib)
+        }) {
+            return Err(invalid_flash_spec(
+                "persistent_storage_gib must be at least 1 and leave room for the image and container filesystem within ephemeral_storage_gib",
             ));
         }
         if self.ports.len() > MAX_FLASH_PORTS {
@@ -1582,6 +1595,7 @@ mod tests {
             gpu_type: None,
             ephemeral_storage_gib: 10,
             rootfs_storage_gib: None,
+            persistent_storage_gib: None,
             ports: vec![FlashPort {
                 name: "game-udp".into(),
                 protocol: FlashProtocol::Udp,
@@ -1847,6 +1861,7 @@ mod tests {
         let defaulted = serde_json::from_value::<FlashSpec>(value)?;
         assert_eq!(defaulted.ephemeral_storage_gib, 10);
         assert_eq!(defaulted.rootfs_storage_gib, None);
+        assert_eq!(defaulted.persistent_storage_gib, None);
         assert!(defaulted.exposure.allowed_source_cidrs.is_empty());
         assert!(defaulted.exposure.denied_source_cidrs.is_empty());
         assert_eq!(defaulted.egress.mode, FlashEgressMode::Internet);
@@ -1895,6 +1910,13 @@ mod tests {
         split.rootfs_storage_gib = Some(20);
         assert!(split.validate().is_ok());
         split.rootfs_storage_gib = Some(30);
+        assert!(split.validate().is_err());
+        split.rootfs_storage_gib = Some(3);
+        split.persistent_storage_gib = Some(26);
+        assert!(split.validate().is_ok());
+        split.persistent_storage_gib = Some(27);
+        assert!(split.validate().is_err());
+        split.persistent_storage_gib = Some(0);
         assert!(split.validate().is_err());
         Ok(())
     }
