@@ -1,0 +1,25 @@
+name: OSS security inventory and patches
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+  push:
+    paths: ['Cargo.lock', 'package-lock.json', 'requirements*.txt', '.github/workflows/oss-security.yml']
+  pull_request:
+    paths: ['Cargo.lock', 'package-lock.json', 'requirements*.txt', '.github/workflows/oss-security.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    uses: IPA-CyberLab/IPA-RS-HeteroNetwork/.github/workflows/oss-security-reusable.yml@5b7410e17a9ca2cdd9d9d69ba2512ad334df01d8
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    with:
+      tooling_ref: 5b7410e17a9ca2cdd9d9d69ba2512ad334df01d8
+      auto_patch: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
