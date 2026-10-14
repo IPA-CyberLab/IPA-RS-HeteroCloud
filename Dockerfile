@@ -20,7 +20,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && cp target/release/heterocloud-worker /tmp/heterocloud-worker
 
 FROM debian:bookworm-slim AS runtime
+COPY --from=backend /src/Cargo.lock /usr/share/heterocloud/Cargo.lock
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin heterocloud

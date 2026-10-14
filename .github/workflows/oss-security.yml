@@ -4,22 +4,28 @@ on:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
+    inputs:
+      build_candidate:
+        description: Build and verify the current security candidate
+        type: boolean
+        default: true
   push:
-    paths: ['Cargo.lock', 'package-lock.json', 'requirements*.txt', '.github/workflows/oss-security.yml']
+    paths: ['Dockerfile', '.dockerignore', 'Cargo.lock', 'package-lock.json', 'requirements*.txt', '.github/workflows/oss-security.yml']
   pull_request:
-    paths: ['Cargo.lock', 'package-lock.json', 'requirements*.txt', '.github/workflows/oss-security.yml']
+    paths: ['Dockerfile', '.dockerignore', 'Cargo.lock', 'package-lock.json', 'requirements*.txt', '.github/workflows/oss-security.yml']
 
 permissions:
   contents: read
 
 jobs:
   security:
-    uses: IPA-CyberLab/IPA-RS-HeteroNetwork/.github/workflows/oss-security-reusable.yml@5b7410e17a9ca2cdd9d9d69ba2512ad334df01d8
+    uses: IPA-CyberLab/IPA-RS-HeteroNetwork/.github/workflows/oss-security-reusable.yml@591ff29e57a7fb7acdcf2a0553ca64fe54e657bf
     permissions:
       contents: write
       packages: write
       id-token: write
       attestations: write
     with:
-      tooling_ref: 5b7410e17a9ca2cdd9d9d69ba2512ad334df01d8
+      tooling_ref: 591ff29e57a7fb7acdcf2a0553ca64fe54e657bf
       auto_patch: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+      build_candidate: ${{ github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.build_candidate) }}

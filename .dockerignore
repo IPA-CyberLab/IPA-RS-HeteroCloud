@@ -5,4 +5,4 @@ apps/console/node_modules
 apps/console/dist
 lean/.lake
 *.log
-
+.security-tooling
