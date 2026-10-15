@@ -19,13 +19,13 @@ permissions:
 
 jobs:
   security:
-    uses: IPA-CyberLab/IPA-RS-HeteroNetwork/.github/workflows/oss-security-reusable.yml@591ff29e57a7fb7acdcf2a0553ca64fe54e657bf
+    uses: IPA-CyberLab/IPA-RS-HeteroNetwork/.github/workflows/oss-security-reusable.yml@55a3636a4bca2e3c0fb9f1281c62436ff722c10c
     permissions:
       contents: write
       packages: write
       id-token: write
       attestations: write
     with:
-      tooling_ref: 591ff29e57a7fb7acdcf2a0553ca64fe54e657bf
+      tooling_ref: 55a3636a4bca2e3c0fb9f1281c62436ff722c10c
       auto_patch: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
       build_candidate: ${{ github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.build_candidate) }}
