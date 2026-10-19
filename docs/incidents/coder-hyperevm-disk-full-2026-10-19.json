@@ -1,0 +1,150 @@
+{
+  "observed_at": "2026-10-19T15:22:51.375769+00:00",
+  "incident": "HyperEVM code-server unavailable with a full persistent home",
+  "workspace_service_id": "01a11ad4-9917-74b3-a34d-192aaf2a4c76",
+  "memory_mib": 8192,
+  "recovery": {
+    "service_id": "01a11ad4-9917-74b3-a34d-192aaf2a4c76",
+    "generation": 18,
+    "total_disk_gib": 45,
+    "rootfs_gib": 10,
+    "memory_mib": 8192,
+    "pod_uid": "7f5733f2-7226-4e99-8bdb-c66ae381cb4a",
+    "pvc_uid": "856a597c-1676-423f-8d16-26752b85bf80",
+    "volume": "pvc-856a597c-1676-423f-8d16-26752b85bf80",
+    "filesystem_size_bytes": 35859202048,
+    "available_bytes": 8705277952,
+    "pod_and_container_preserved": true,
+    "pvc_preserved": true
+  },
+  "supervisor": {
+    "supervisor_sha256": "c8004431f174ec512cdc7542c7e5b29744819e448656351ca74f53c040562073",
+    "supervisor_pid": 51290,
+    "previous_supervisor_pid": 47088,
+    "ide_pids_preserved": [
+      47091
+    ],
+    "codex_pids_preserved": [
+      42036,
+      42137
+    ],
+    "startup_script_record": "7df309b5-7c2e-49ae-b585-6047b2406de4",
+    "startup_script_updated_for_automatic_container_recreation": true,
+    "pod_not_restarted": true,
+    "ide_not_restarted": true
+  },
+  "template": {
+    "version": "2bca8761-7d12-4572-836d-374cf18e72ea",
+    "previous_active_version": "497320c9-59bc-4805-b973-3af1c385cedb",
+    "import": "succeeded",
+    "supervisor_sha256": "c8004431f174ec512cdc7542c7e5b29744819e448656351ca74f53c040562073",
+    "overrides": {
+      "workspace_memory_overrides": {
+        "113cd3bd-9242-45d6-9d20-d1e1b7e1723e": 8192
+      },
+      "workspace_storage_overrides": {
+        "113cd3bd-9242-45d6-9d20-d1e1b7e1723e": {
+          "total_disk_gib": 45,
+          "rootfs_storage_gib": 10
+        }
+      }
+    },
+    "activated": true
+  },
+  "authenticated_chromium": {
+    "observed_at": "2026-10-19T15:17:30.237Z",
+    "status": 200,
+    "elapsed_ms": 7953,
+    "workbench": true,
+    "server_errors": []
+  },
+  "native_enospc_e2e": {
+    "fixture": "coder-disk-e2e-73274449a3",
+    "checks": [
+      {
+        "check": "persistent_home_really_full",
+        "enospc": true,
+        "filesystem_size_bytes": 57671680
+      },
+      {
+        "check": "legacy_supervisor_dies_after_ide_exit_on_full_home"
+      },
+      {
+        "check": "persistent_home_really_full",
+        "enospc": true,
+        "filesystem_size_bytes": 57671680
+      },
+      {
+        "check": "fixed_supervisor_survives_ide_failure_on_full_home"
+      },
+      {
+        "check": "actual_ide_recovers_after_space_is_freed",
+        "http_status": 200,
+        "marker_sha256": "e5cd1a06e784ff705a5325b62dba03d7eea49c86552e5fbd14ce603351f92c8c",
+        "pod_and_container_preserved": true
+      }
+    ],
+    "cleanup": true,
+    "preflight": {
+      "nodefs": {
+        "capacityBytes": 488420507648,
+        "availableBytes": 274900545536
+      },
+      "imagefs": {
+        "capacityBytes": 488420507648,
+        "availableBytes": 274900545536
+      }
+    },
+    "created": {
+      "pvc": "1204c09a-a938-4dc5-8313-0b6c290243af",
+      "pod": "b6dfd400-43b4-4959-a60b-b9b203cddc79"
+    },
+    "pod_uid": "b6dfd400-43b4-4959-a60b-b9b203cddc79",
+    "pvc_uid": "1204c09a-a938-4dc5-8313-0b6c290243af",
+    "image": "registry.heterocloud.mizuame.app/hc-019fbda8eff37610bdd58fe89e746c14/coder-standard-develop@sha256:b9d558d8279f6da6a4deba566c5214a16947daf199a462f26a1b5abf968d27c5",
+    "node": "uc-k8sp4",
+    "runtime": "gvisor",
+    "cleanup_verified": true,
+    "test_script_sha256": "30d0050688ea8241292f51ac24ff25232ab514c4ecd509a5fec13b4f7901f4c0",
+    "image_pull_policy": "Never"
+  },
+  "verification_secondary_impact": {
+    "service": "whisper",
+    "cause": "uncached native fixture image pull induced p5 disk pressure and a user Pod eviction",
+    "original_pod_uid": "bc266255-97ee-4910-995c-5525ab193673",
+    "replacement_pod_uid": "a047bcbb-e13d-4d69-9c77-bead406eed9c",
+    "replacement_ready": true,
+    "public_health": {
+      "device": "cuda:0",
+      "model_loaded": true,
+      "status": "ready"
+    },
+    "root_lv_before_gib": 200,
+    "root_lv_after_gib": 220,
+    "root_expansion_from_existing_vg_free_extents": true,
+    "persistent_disk_identity_retained": true
+  },
+  "new_preflight_guard": {
+    "observed_at": "2026-10-19T15:14:53.183374+00:00",
+    "p5_low_headroom_rejected": true,
+    "resources_created": false,
+    "policy": "cached image only, imagePullPolicy Never, both nodefs and imagefs require 25% and 10 GiB free"
+  },
+  "checks": {
+    "supervisor_and_scheduling": 9,
+    "terraform": 8,
+    "root_storage_safety": 5,
+    "original_pods_preserved": 15,
+    "original_pods_replaced_after_test_induced_eviction": 1,
+    "original_pvcs_preserved": 12,
+    "other_pvc_capacities_unchanged": true,
+    "nodes_ready": 6,
+    "dedicated_control_plane_nodes_without_user_pods": [
+      "uc-k8s3p",
+      "uc-k8sp1",
+      "uc-k8sp2"
+    ],
+    "no_native_fixture_pods_pvcs_or_pvs_remain": true,
+    "temporary_coder_credentials_revoked": true
+  }
+}

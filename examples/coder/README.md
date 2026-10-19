@@ -22,7 +22,44 @@ Kubernetes memory requests and limits use the configured value; an eligible
 node must have sufficient unallocated memory. A memory change recreates the
 container while retaining the same persistent `/root` volume.
 
-The IDE runs under a detached, single-instance supervisor in the persistent home. The supervisor restarts code-server after an unexpected exit. The agent startup shell returning does not terminate the IDE. Installing or starting this supervisor in an existing workspace does not restart its Pod or interactive processes.
+The IDE runs under a detached, single-instance supervisor. Its script, lock and
+diagnostic logs live in `/tmp/coder-code-server-<uid>` on the container filesystem,
+so a full persistent home cannot disable retries. Diagnostic write failures are
+ignored, and logs rotate between launches above 2 MiB. The supervisor restarts
+code-server after an unexpected exit, including after space is freed. User files,
+IDE settings and extensions stay in `/root`. The agent startup shell returning
+does not terminate the IDE. Installing this supervisor in an existing workspace
+does not require a Pod restart; only the IDE process needs to be replaced.
+
+Keep every workspace disk expansion in `workspace_storage_overrides` when
+publishing a new template version. Increasing only the total disk budget, while
+retaining `rootfs_storage_gib`, expands the persistent home without changing the
+container resources. It does not increase the workspace memory limit.
+The deployed HyperEVM allocation is recorded in
+[`deploy/coder/workspace-overrides.json`](../../deploy/coder/workspace-overrides.json).
+Merge those entries into the active template variables when publishing; retain
+entries for other workspaces. This deployment-specific file is not automatically
+applied to unrelated Coder installations.
+
+Run the native full-disk regression test with a Kubernetes administrator context:
+
+```sh
+python3 scripts/e2e/coder_disk_full.py --kubeconfig "$KUBECONFIG" \
+  --reference-pod "$WORKSPACE_POD" --node "$TEST_NODE" --report /tmp/coder-disk-full.json
+```
+
+Choose a workload node with at least 25% and 10 GiB free on both nodefs and
+imagefs, and the reference image already cached. `--preflight-only` verifies
+these requirements without creating resources. The test uses
+`imagePullPolicy: Never`, so it cannot download an uncached image. It creates a
+separate 64 MiB Longhorn home and a gVisor Pod using
+that exact workspace image. It fills only this fixture, terminates only its IDE,
+then verifies automatic recovery and retained files after space is freed.
+The fixture's own share-manager allocates the blocks because gVisor cannot
+preallocate this NFS filesystem. UID and claim-reference guards protect existing
+volumes. Fixture resources are removed on completion; the test never fills or
+signals the reference workspace. Optional `--legacy-supervisor` compares a
+previous supervisor with the fixed implementation.
 
 Scheduling defaults are declared in `scheduling.json`: automatic time-based
 stopping is disabled. Apply them separately from the workspace Terraform:

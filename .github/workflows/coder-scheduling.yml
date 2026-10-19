@@ -4,14 +4,20 @@ on:
   push:
     paths:
       - 'examples/coder/**'
+      - 'deploy/coder/**'
       - 'scripts/reconcile-coder-scheduling.py'
       - 'scripts/tests/test_coder_scheduling.py'
+      - 'scripts/tests/test_coder_supervisor.py'
+      - 'scripts/e2e/coder_disk_full.py'
       - '.github/workflows/coder-scheduling.yml'
   pull_request:
     paths:
       - 'examples/coder/**'
+      - 'deploy/coder/**'
       - 'scripts/reconcile-coder-scheduling.py'
       - 'scripts/tests/test_coder_scheduling.py'
+      - 'scripts/tests/test_coder_supervisor.py'
+      - 'scripts/e2e/coder_disk_full.py'
       - '.github/workflows/coder-scheduling.yml'
 
 permissions:
@@ -41,7 +47,10 @@ jobs:
       - uses: actions/checkout@v7
       - name: Verify scheduling ownership, manual stop preservation and idempotency
         run: python3 -m unittest discover -s scripts/tests -p test_coder_scheduling.py -v
+      - name: Verify IDE retries, full disk diagnostic failures and single instance behavior
+        run: python3 -m unittest discover -s scripts/tests -p test_coder_supervisor.py -v
       - name: Validate reconciler syntax and declarative policy
         run: |
-          python3 -m py_compile scripts/reconcile-coder-scheduling.py
+          python3 -m py_compile scripts/reconcile-coder-scheduling.py scripts/e2e/coder_disk_full.py
+          sh -n examples/coder/code-server-supervisor.sh
           python3 -c 'import json; p=json.load(open("examples/coder/scheduling.json")); assert p == {"default_ttl_ms": 0, "allow_user_autostop": True}'

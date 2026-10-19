@@ -1,0 +1,11 @@
+{
+  "workspace_memory_overrides": {
+    "113cd3bd-9242-45d6-9d20-d1e1b7e1723e": 8192
+  },
+  "workspace_storage_overrides": {
+    "113cd3bd-9242-45d6-9d20-d1e1b7e1723e": {
+      "total_disk_gib": 45,
+      "rootfs_storage_gib": 10
+    }
+  }
+}

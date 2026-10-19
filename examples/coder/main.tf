@@ -79,28 +79,14 @@ resource "coder_agent" "main" {
   startup_script          = <<-EOT
     #!/bin/sh
     set -eu
-    mkdir -p "$HOME/projects"
-    mkdir -p "$HOME/.local/bin"
-    cat > "$HOME/.local/bin/coder-code-server-supervisor" <<'IDE_SUPERVISOR'
-    #!/bin/sh
-    set -eu
     umask 077
-    cache_dir="$HOME/.cache/coder-code-server"
-    mkdir -p "$cache_dir" "$HOME/projects"
-    exec 9>"$cache_dir/supervisor.lock"
-    flock -n 9 || exit 0
-    while :; do
-      /opt/code-server/bin/code-server --auth none --bind-addr 127.0.0.1:13337 --disable-telemetry "$HOME/projects" >>"$cache_dir/code-server.log" 2>&1 &
-      child=$!
-      trap 'kill -TERM "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; exit 0' TERM INT
-      status=0
-      wait "$child" || status=$?
-      printf 'code-server exited (status=%s); restarting\n' "$status" >>"$cache_dir/supervisor.log"
-      sleep 2
-    done
+    runtime_dir="/tmp/coder-code-server-$(id -u)"
+    mkdir -p "$runtime_dir"
+    cat > "$runtime_dir/supervisor.sh" <<'IDE_SUPERVISOR'
+    ${file("${path.module}/code-server-supervisor.sh")}
     IDE_SUPERVISOR
-    chmod 700 "$HOME/.local/bin/coder-code-server-supervisor"
-    nohup "$HOME/.local/bin/coder-code-server-supervisor" >/dev/null 2>&1 </dev/null &
+    chmod 700 "$runtime_dir/supervisor.sh"
+    nohup "$runtime_dir/supervisor.sh" >/dev/null 2>&1 </dev/null &
     echo "Standard Develop ready. Persistent files: /root"
   EOT
   env = {
