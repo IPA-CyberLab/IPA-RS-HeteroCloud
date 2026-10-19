@@ -35,6 +35,7 @@ import {
   registryImagesQueryOptions,
 } from "@/lib/queries";
 import { formatDateTime, formatNumber } from "@/lib/utils";
+import { FlashBackupsPanel } from "./flash-backups-panel";
 import { FlashDomainsPanel } from "./flash-domains-panel";
 import { FlashEndpoints } from "./flash-endpoints";
 import { FlashSecretsPanel } from "./flash-secrets-panel";
@@ -460,6 +461,7 @@ export function FlashServiceDetailPage() {
         />
       </Container>
       <FlashDomainsPanel organizationId={organizationId} serviceId={serviceId} oidc={Boolean(item.spec.exposure.authentication)} />
+      <FlashBackupsPanel key={`${organizationId}/${serviceId}`} organizationId={organizationId} serviceId={serviceId} />
       <Modal
         visible={shellOpen}
         onDismiss={() => {

@@ -43,6 +43,11 @@ pub struct FlashArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum FlashCommand {
+    /// Back up persistent disks and restore into a new stopped private service.
+    Backups {
+        #[command(subcommand)]
+        command: FlashBackupCommand,
+    },
     /// Manage custom hostnames without restarting the container.
     Domains {
         #[command(subcommand)]
@@ -69,6 +74,44 @@ pub enum FlashCommand {
     },
     #[command(flatten)]
     Service(ServiceCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FlashBackupCommand {
+    List {
+        #[arg(long)]
+        service_id: Option<Uuid>,
+    },
+    Get {
+        id: Uuid,
+    },
+    Create {
+        service_id: Uuid,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        request_id: Option<Uuid>,
+        #[arg(long)]
+        no_wait: bool,
+    },
+    Delete {
+        id: Uuid,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        no_wait: bool,
+    },
+    Restore {
+        id: Uuid,
+        #[arg(long)]
+        project_id: Uuid,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        request_id: Option<Uuid>,
+        #[arg(long)]
+        no_wait: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -520,6 +563,7 @@ pub(crate) async fn execute(
 
 pub(crate) async fn execute_flash(args: FlashArgs, settings: ApiSettings) -> Result<(), CliError> {
     let (id, stopped, no_wait) = match args.command {
+        FlashCommand::Backups { command } => return execute_backups(command, settings).await,
         FlashCommand::Domains { command } => {
             let client = ApiClient::new(settings)?;
             let (id, method, suffix, body) = match command {
@@ -610,6 +654,165 @@ pub(crate) async fn execute_flash(args: FlashArgs, settings: ApiSettings) -> Res
         client.wait_ready(ServiceKind::Flash, service.id).await?
     };
     write_service(&service, output)
+}
+
+async fn execute_backups(
+    command: FlashBackupCommand,
+    settings: ApiSettings,
+) -> Result<(), CliError> {
+    let output = settings.output;
+    let client = ApiClient::new(settings)?;
+    let base = format!(
+        "api/v1/organizations/{}/flash/backups",
+        client.organization_id
+    );
+    let make_url = |suffix: &str| {
+        client
+            .endpoint
+            .join(&format!("{base}{suffix}"))
+            .map_err(|e| CliError::InvalidApiEndpoint(e.to_string()))
+    };
+    let result = match command {
+        FlashBackupCommand::List { service_id } => {
+            let mut url = make_url("")?;
+            if let Some(id) = service_id {
+                url.query_pairs_mut()
+                    .append_pair("service_instance_id", &id.to_string());
+            }
+            client.send_json(Method::GET, url, None::<&Value>).await?
+        }
+        FlashBackupCommand::Get { id } => {
+            client
+                .send_json(Method::GET, make_url(&format!("/{id}"))?, None::<&Value>)
+                .await?
+        }
+        FlashBackupCommand::Create {
+            service_id,
+            name,
+            request_id,
+            no_wait,
+        } => {
+            let request_id = request_id.unwrap_or_else(Uuid::now_v7);
+            eprintln!("Backup request ID: {request_id}");
+            let url = client
+                .endpoint
+                .join(&format!(
+                    "{}/{service_id}/backups",
+                    ServiceKind::Flash.collection_path(client.organization_id)
+                ))
+                .map_err(|e| CliError::InvalidApiEndpoint(e.to_string()))?;
+            let value: Value = client
+                .send_json(
+                    Method::POST,
+                    url,
+                    Some(&json!({"name":name,"request_id":request_id})),
+                )
+                .await?;
+            let id = value["id"]
+                .as_str()
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .ok_or_else(|| {
+                    CliError::InvalidManifest("backup response has no identifier".into())
+                })?;
+            if no_wait {
+                value
+            } else {
+                wait_backup(&client, make_url(&format!("/{id}"))?, id, false).await?
+            }
+        }
+        FlashBackupCommand::Delete { id, yes, no_wait } => {
+            if !yes {
+                return Err(CliError::InvalidManifest(
+                    "backup delete requires --yes".into(),
+                ));
+            }
+            let value = client
+                .send_json(Method::DELETE, make_url(&format!("/{id}"))?, None::<&Value>)
+                .await?;
+            if no_wait {
+                value
+            } else {
+                wait_backup(&client, make_url(&format!("/{id}"))?, id, true).await?
+            }
+        }
+        FlashBackupCommand::Restore {
+            id,
+            project_id,
+            name,
+            request_id,
+            no_wait,
+        } => {
+            let request_id = request_id.unwrap_or_else(Uuid::now_v7);
+            eprintln!("Restore request ID: {request_id}");
+            let value: Value = client
+                .send_json(
+                    Method::POST,
+                    make_url(&format!("/{id}/restore"))?,
+                    Some(&json!({"project_id":project_id,"name":name,"request_id":request_id})),
+                )
+                .await?;
+            let service: ManagedService = serde_json::from_value(value)?;
+            let service = if no_wait {
+                service
+            } else {
+                client.wait_ready(ServiceKind::Flash, service.id).await?
+            };
+            return write_service(&service, output);
+        }
+    };
+    if output == ApiOutputFormat::Json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        println!("ID\tNAME\tSTATE\tSOURCE\tVOLUME_BYTES");
+        let rows = result
+            .get("items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_else(|| vec![result]);
+        for row in rows {
+            println!(
+                "{}\t{}\t{}\t{}\t{}",
+                row["id"].as_str().unwrap_or("—"),
+                row["name"].as_str().unwrap_or("—"),
+                row["phase"].as_str().unwrap_or("—"),
+                row["source_name"].as_str().unwrap_or("—"),
+                row["volume_size_bytes"]
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn wait_backup(
+    client: &ApiClient,
+    url: Url,
+    id: Uuid,
+    deleted: bool,
+) -> Result<Value, CliError> {
+    let deadline = Instant::now() + client.wait_timeout;
+    loop {
+        let result = timeout_at(deadline, client.get_json_with_retry(url.clone(), true)).await;
+        match result {
+            Ok(Ok(None)) if deleted => return Ok(json!({"id":id,"deleted":true})),
+            Ok(Ok(None)) => return Err(not_found(id)),
+            Ok(Ok(Some(value))) if !deleted && value["phase"] == "ready" => return Ok(value),
+            Ok(Ok(Some(value))) if !deleted && value["phase"] == "error" => {
+                return Err(CliError::ServiceFailed {
+                    id,
+                    detail: compact_json(&value["status"]),
+                });
+            }
+            Ok(Err(error)) if !is_transient(&error) => return Err(error),
+            _ => {}
+        }
+        if Instant::now() >= deadline {
+            return Err(CliError::ServiceTimeout {
+                id,
+                seconds: client.wait_timeout.as_secs(),
+            });
+        }
+        sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now()))).await;
+    }
 }
 
 fn read_client_secret(path: &str) -> Result<String, CliError> {

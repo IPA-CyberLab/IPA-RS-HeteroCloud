@@ -1,5 +1,7 @@
+mod flash_backups;
 mod flash_domains;
 mod workload_identity;
+pub use flash_backups::FlashBackup;
 pub use flash_domains::FlashDomainBinding;
 pub use workload_identity::WorkloadTokenPrincipal;
 
@@ -2649,8 +2651,50 @@ impl Store {
         name: &str,
         spec: Value,
     ) -> Result<ServiceInstance, StoreError> {
-        let id = ServiceInstanceId::new();
+        self.create_service_instance_with_id(
+            organization_id,
+            project_id,
+            principal_id,
+            provider,
+            name,
+            spec,
+            ServiceInstanceId::new(),
+        )
+        .await
+    }
+
+    /// The backup restore request reserves this ID before retrying creation.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_service_instance_with_id(
+        &self,
+        organization_id: OrganizationId,
+        project_id: ProjectId,
+        principal_id: PrincipalId,
+        provider: &str,
+        name: &str,
+        spec: Value,
+        id: ServiceInstanceId,
+    ) -> Result<ServiceInstance, StoreError> {
         let mut transaction = self.pool.begin().await?;
+        lock_tenant_allocations(&mut transaction, organization_id).await?;
+        if let Some(row) = sqlx::query_as::<_, ServiceRow>(
+            "SELECT id, organization_id, project_id, provider, name, generation, state, spec, status, created_at, updated_at FROM service_instances WHERE id=$1"
+        ).bind(id.0).fetch_optional(&mut *transaction).await? {
+            if row.organization_id != organization_id.0 || row.provider != provider {
+                return Err(StoreError::Conflict);
+            }
+            transaction.commit().await?;
+            return ServiceInstance::try_from(row);
+        }
+        if provider == "flash"
+            && let Some(backup) = spec.get("restore_from_backup_id").and_then(Value::as_str)
+        {
+            let usable: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM flash_backups WHERE id::text=$1 AND organization_id=$2 AND phase='ready' AND NOT delete_requested)")
+                .bind(backup).bind(organization_id.0).fetch_one(&mut *transaction).await?;
+            if !usable {
+                return Err(StoreError::Conflict);
+            }
+        }
         let prepared = match provider {
             "flow" => {
                 lock_tenant_allocations(&mut transaction, organization_id).await?;

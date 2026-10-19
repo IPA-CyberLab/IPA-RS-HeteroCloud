@@ -41,6 +41,42 @@ pub struct FlashProviderProxy {
 }
 
 impl FlashProviderProxy {
+    pub async fn backup_request(
+        &self,
+        context: FlashProviderContext,
+        action: &str,
+        method: reqwest::Method,
+        backup: Option<uuid::Uuid>,
+        body: Option<&Value>,
+    ) -> Result<Value, FlashProviderError> {
+        let suffix = if action == "flash.backups.source" {
+            "backup-source".to_owned()
+        } else {
+            format!(
+                "backups{}",
+                backup.map(|id| format!("/{id}")).unwrap_or_default()
+            )
+        };
+        let url = self.endpoint.join(&format!(
+            "internal/v1/service-instances/{}/{suffix}",
+            context.service_instance_id
+        ))?;
+        let mut request = self
+            .client
+            .request(method, url)
+            .bearer_auth(self.sign(&context, action)?)
+            .timeout(Duration::from_secs(5));
+        if let Some(body) = body {
+            request = request.json(body);
+        }
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            return Err(FlashProviderError::ProviderStatus(
+                response.status().as_u16(),
+            ));
+        }
+        Ok(response.json().await?)
+    }
     pub async fn list_custom_domains(
         &self,
         context: FlashProviderContext,

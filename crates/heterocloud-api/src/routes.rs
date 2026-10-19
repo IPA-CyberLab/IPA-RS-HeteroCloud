@@ -1,3 +1,5 @@
+#[path = "flash_backup_routes.rs"]
+mod backup_routes;
 use std::{
     collections::{BTreeSet, HashMap},
     convert::Infallible,
@@ -200,6 +202,10 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             "/organizations/{organization_id}/flash/services",
             get(list_flash_services).post(create_flash_service),
         )
+        .route("/organizations/{organization_id}/flash/backups",get(backup_routes::list_backups))
+        .route("/organizations/{organization_id}/flash/backups/{backup_id}",get(backup_routes::get_backup).delete(backup_routes::delete_backup))
+        .route("/organizations/{organization_id}/flash/backups/{backup_id}/restore",post(backup_routes::restore_backup))
+        .route("/organizations/{organization_id}/flash/services/{service_instance_id}/backups",post(backup_routes::create_backup))
         .route("/flash/gpu-types", get(list_accessible_gpu_types))
         .route(
             "/organizations/{organization_id}/flash/quota",
@@ -2599,6 +2605,11 @@ async fn create_flash_service(
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     validate_name(&request.name)?;
     validate_flash_spec(&request.spec)?;
+    if request.spec.restore_from_backup_id.is_some() {
+        return Err(ApiError::BadRequest(
+            "Use the backup restore endpoint to create a restored service.".into(),
+        ));
+    }
     authorize_vpc_attachment(&state, &actor, organization_id, &request.spec).await?;
     authorize_task_role(&state, &actor, organization_id, request.spec.task_role).await?;
     if !request.spec.secret_env.is_empty() || !request.spec.secret_files.is_empty() {
@@ -2672,10 +2683,19 @@ async fn update_flash_service(
     Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
     jar: CookieJar,
-    Json(request): Json<UpdateFlashService>,
+    Json(mut request): Json<UpdateFlashService>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
-    flash_service(&state, organization_id, service_instance_id).await?;
+    let existing = flash_service(&state, organization_id, service_instance_id).await?;
+    let prior: FlashSpec = serde_json::from_value(existing.spec).map_err(|_| ApiError::Internal)?;
+    if request.spec.restore_from_backup_id.is_some()
+        && request.spec.restore_from_backup_id != prior.restore_from_backup_id
+    {
+        return Err(ApiError::BadRequest(
+            "The disk restore source is immutable.".into(),
+        ));
+    }
+    request.spec.restore_from_backup_id = prior.restore_from_backup_id;
     validate_name(&request.name)?;
     validate_flash_spec(&request.spec)?;
     authorize_vpc_attachment(&state, &actor, organization_id, &request.spec).await?;
@@ -5974,6 +5994,7 @@ mod tests {
             ephemeral_storage_gib: 10,
             rootfs_storage_gib: None,
             persistent_storage_gib: None,
+            restore_from_backup_id: None,
             ports: vec![FlashPort {
                 name: "game-udp".into(),
                 protocol: FlashProtocol::Udp,

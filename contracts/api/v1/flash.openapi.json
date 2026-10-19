@@ -534,6 +534,267 @@
           }
         ]
       }
+    },
+    "/api/v1/organizations/{organization_id}/flash/services/{service_instance_id}/backups": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "service_instance_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "summary": "Back up a persistent disk without restarting the source",
+        "description": "Requires flash:CreateBackup. Manual, crash-consistent backup of /root. request_id provides idempotency. Does not include environment, secret bindings or additional mounts. Retained after service deletion.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFlashBackup"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Request accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlashBackup"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "IAM denies operation"
+          },
+          "404": {
+            "description": "Not found in organization"
+          },
+          "409": {
+            "description": "Conflicting request, backup state or quota"
+          },
+          "503": {
+            "description": "Storage provider unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/organizations/{organization_id}/flash/backups": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "summary": "List backups including those of deleted services",
+        "description": "Requires flash:ListBackups. Up to 100 backups per organization.",
+        "parameters": [
+          {
+            "name": "service_instance_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Backups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/FlashBackup"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organizations/{organization_id}/flash/backups/{backup_id}": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "backup_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Get a backup",
+        "description": "Requires flash:GetBackup. provider_unavailable denotes a cached observation.",
+        "responses": {
+          "200": {
+            "description": "Backup",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlashBackup"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "IAM denies operation"
+          },
+          "404": {
+            "description": "Not found in organization"
+          },
+          "409": {
+            "description": "Conflicting request, backup state or quota"
+          },
+          "503": {
+            "description": "Storage provider unavailable"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a backup after in-progress restores finish",
+        "description": "Requires flash:DeleteBackup. Does not delete source or restored services/disks. Quota is released only after storage cleanup.",
+        "responses": {
+          "202": {
+            "description": "Request accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlashBackup"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "IAM denies operation"
+          },
+          "404": {
+            "description": "Not found in organization"
+          },
+          "409": {
+            "description": "Conflicting request, backup state or quota"
+          },
+          "503": {
+            "description": "Storage provider unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/organizations/{organization_id}/flash/backups/{backup_id}/restore": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "backup_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "summary": "Restore to a new stopped private Flash service and new disk",
+        "description": "Requires flash:RestoreBackup and flash:CreateInstance. Only a ready backup in this organization may be restored. Source disk is never overwritten. Environment, secret bindings, GPU selection, task role and VPC are reset; egress is disabled. request_id reserves one target identity for retries.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreFlashBackup"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Request accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlashServiceRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "IAM denies operation"
+          },
+          "404": {
+            "description": "Not found in organization"
+          },
+          "409": {
+            "description": "Conflicting request, backup state or quota"
+          },
+          "503": {
+            "description": "Storage provider unavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1111,6 +1372,12 @@
               "type": "string"
             },
             "description": "Environment variable names mapped to previously registered service secret names."
+          },
+          "restore_from_backup_id": {
+            "type": "string",
+            "format": "uuid",
+            "readOnly": true,
+            "description": "Immutable disk origin. Set only by the backup restore endpoint; preserved on later updates."
           }
         }
       },
@@ -1715,6 +1982,140 @@
               "type": "string"
             },
             "default": []
+          }
+        }
+      },
+      "FlashBackup": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "project_id",
+          "service_instance_id",
+          "name",
+          "source_name",
+          "volume_size_bytes",
+          "phase",
+          "status",
+          "delete_requested",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "organization_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "service_instance_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "volume_size_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Logical source disk capacity, not compressed backup bytes."
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "creating",
+              "ready",
+              "error",
+              "deleting"
+            ]
+          },
+          "status": {
+            "type": "object",
+            "properties": {
+              "completed_at": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "last_verified_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "provider_unavailable": {
+                "type": "boolean"
+              }
+            }
+          },
+          "delete_requested": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CreateFlashBackup": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "request_id"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "RestoreFlashBackup": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "project_id",
+          "request_id"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       }

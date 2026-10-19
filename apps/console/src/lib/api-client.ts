@@ -603,6 +603,18 @@ export class HeteroCloudApiClient {
   };
 
   readonly flash = {
+    backups: {
+      list: (organizationId: string, serviceId?: string, signal?: AbortSignal) =>
+        this.request<CollectionResponse<import("./api-types").FlashBackup>>(organizationPath(organizationId, "flash/backups") + (serviceId ? `?service_instance_id=${encodeURIComponent(serviceId)}` : ""), { signal }),
+      create: (organizationId: string, serviceId: string, name: string, requestId: string) =>
+        this.request<import("./api-types").FlashBackup>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/backups`), { method: "POST", body: { name, request_id: requestId } }),
+      get: (organizationId: string, backupId: string, signal?: AbortSignal) =>
+        this.request<import("./api-types").FlashBackup>(organizationPath(organizationId, `flash/backups/${encodeURIComponent(backupId)}`), { signal }),
+      delete: (organizationId: string, backupId: string) =>
+        this.request<import("./api-types").FlashBackup>(organizationPath(organizationId, `flash/backups/${encodeURIComponent(backupId)}`), { method: "DELETE" }),
+      restore: (organizationId: string, backupId: string, input: { project_id: string; name: string; request_id: string }) =>
+        this.request<FlashService>(organizationPath(organizationId, `flash/backups/${encodeURIComponent(backupId)}/restore`), { method: "POST", body: input }),
+    },
     gpuTypes: (signal?: AbortSignal) =>
       this.request<CollectionResponse<FlashGpuType>>("/flash/gpu-types", {
         signal,

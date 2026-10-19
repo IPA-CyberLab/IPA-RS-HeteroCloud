@@ -398,3 +398,5 @@ VPC・Flashのプライベート接続: [設定方法](docs/networking/vpc.md)
 FlashタスクIAM: [ロールの設定と自動認証](docs/iam/workload-identity.md)
 
 ロードバランサー認証: [認証なし／OIDCの設定](docs/networking/load-balancer-oidc.md)
+
+Flash 永続ディスク: [ユーザーによるバックアップと復元](docs/flash-backups.md)

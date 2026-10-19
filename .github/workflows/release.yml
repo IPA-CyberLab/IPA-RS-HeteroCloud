@@ -88,6 +88,10 @@ jobs:
             cargo test --locked -p heterocloud-api --test workload_identity
           HETEROCLOUD_STORE_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
             cargo test --locked -p heterocloud-store --test gpu_access
+          HETEROCLOUD_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+            cargo test --locked -p heterocloud-api --test flash_backups
+          HETEROCLOUD_STORE_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+            cargo test --locked -p heterocloud-store --test flash_backups
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - uses: leanprover/lean-action@v1

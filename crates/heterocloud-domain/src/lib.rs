@@ -841,6 +841,9 @@ pub struct FlashSpec {
     /// Existing volumes are expanded in place and never shrunk.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persistent_storage_gib: Option<u32>,
+    /// Immutable source of a new persistent disk; never overwrites an existing disk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_from_backup_id: Option<Uuid>,
     pub ports: Vec<FlashPort>,
     pub exposure: FlashExposure,
     #[serde(default)]
@@ -1596,6 +1599,7 @@ mod tests {
             ephemeral_storage_gib: 10,
             rootfs_storage_gib: None,
             persistent_storage_gib: None,
+            restore_from_backup_id: None,
             ports: vec![FlashPort {
                 name: "game-udp".into(),
                 protocol: FlashProtocol::Udp,

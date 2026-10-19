@@ -234,6 +234,14 @@ def run_suite(a):
     a.run("flash-domains-add", ["flash", "domains", "add", ID, "--hostname", "APP.example.org."], api=True, responses=[reply({"id":domain_id},202)], check=domain_check("POST",domain_path,{"hostname":"app.example.org"}))
     a.run("flash-domains-delete", ["flash", "domains", "delete", ID, domain_id, "--yes"], api=True, responses=[reply({"phase":"deleting"},202)], check=domain_check("DELETE",domain_path+"/"+domain_id))
 
+    backup_path = f"/api/v1/organizations/{ORG}/flash/backups"
+    backup = {"id":domain_id,"name":"checkpoint","source_name":"audit","phase":"ready","volume_size_bytes":1073741824}
+    a.run("flash-backups-list", ["flash","backups","list"], api=True, responses=[reply({"items":[backup]})], check=domain_check("GET",backup_path))
+    a.run("flash-backups-get", ["flash","backups","get",domain_id], api=True, responses=[reply(backup)], check=domain_check("GET",backup_path+"/"+domain_id))
+    a.run("flash-backups-create", ["flash","backups","create",ID,"--name","checkpoint","--request-id",domain_id,"--no-wait"], api=True, responses=[reply(backup,202)], check=domain_check("POST",f"/api/v1/organizations/{ORG}/flash/services/{ID}/backups",{"name":"checkpoint","request_id":domain_id}))
+    a.run("flash-backups-restore", ["flash","backups","restore",domain_id,"--project-id",PROJECT,"--name","restored","--request-id",domain_id,"--no-wait"], api=True, responses=[reply(service("flash"),202)], check=domain_check("POST",backup_path+"/"+domain_id+"/restore",{"name":"restored","project_id":PROJECT,"request_id":domain_id}))
+    a.run("flash-backups-delete", ["flash","backups","delete",domain_id,"--yes","--no-wait"], api=True, responses=[reply({**backup,"phase":"deleting"},202)], check=domain_check("DELETE",backup_path+"/"+domain_id))
+
     cli_token = "hcu_0123456789abcdef_" + "x" * 43
     identity = {
         "user": {"email": "audit@example.test", "display_name": "CLI Audit"},

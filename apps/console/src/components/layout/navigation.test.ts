@@ -22,6 +22,7 @@ describe("navigationItems", () => {
       items: [
         { type: "link", text: "サービス", href: "/flash/services" },
         { type: "link", text: "イメージ", href: "/registry" },
+        { type: "link", text: "バックアップ", href: "/flash/backups" },
         { type: "link", text: "コスト管理", href: "/cost-management" },
       ],
     });

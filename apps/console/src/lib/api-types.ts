@@ -477,6 +477,7 @@ export interface FlashServiceSpec {
   ephemeral_storage_gib: number;
   rootfs_storage_gib?: number;
   persistent_storage_gib?: number;
+  readonly restore_from_backup_id?: string;
   ports: FlashPort[];
   exposure: FlashExposure;
   egress?: FlashEgress;
@@ -776,4 +777,18 @@ export interface FlashDomain {
   oidc_callback_url: string;
   certificate_expires_at?: string | null;
   message?: string | null;
+}
+export interface FlashBackup {
+  id: string;
+  organization_id: string;
+  project_id: string;
+  service_instance_id: string;
+  name: string;
+  source_name: string;
+  volume_size_bytes: number;
+  phase: "pending" | "creating" | "ready" | "error" | "deleting";
+  status: { message?: string | null; completed_at?: number | null; provider_unavailable?: boolean; last_verified_at?: string };
+  delete_requested: boolean;
+  created_at: string;
+  updated_at: string;
 }

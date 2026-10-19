@@ -232,3 +232,7 @@ Set the project ID and image for your environment before submitting. The separat
 [fixed example](../examples/cli/flash.json) remains unchanged. For `flash update`,
 use a manifest with `name` and `spec` only (no `project_id`). The autoscaling example
 reserves four replicas, 4000 millicores, 8192 MiB memory and 40 GiB disk.
+
+## Persistent disk backups
+
+See [self-service backups and restore](flash-backups.md) for console, CLI, API, IAM and retention semantics. Backups outlive their source services; restores create a new stopped private service and never overwrite the original disk.
