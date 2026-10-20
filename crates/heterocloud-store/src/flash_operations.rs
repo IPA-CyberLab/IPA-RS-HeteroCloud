@@ -19,6 +19,8 @@ pub struct FlashRevision {
     pub phase: String,
     pub created_at: DateTime<Utc>,
     pub ready_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing)]
+    pub activation_started_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
@@ -199,6 +201,12 @@ impl Store {
         if result.rows_affected() == 0 {
             tx.rollback().await?;
             return Ok(());
+        }
+        if status["desired_replicas"].as_u64().is_some_and(|n| n > 0)
+            && instance.spec["stopped"] != true
+        {
+            sqlx::query("UPDATE flash_service_revisions SET activation_started_at=coalesce(activation_started_at,now()) WHERE service_instance_id=$1 AND generation=$2")
+                .bind(instance.id.0).bind(instance.generation).execute(&mut *tx).await?;
         }
         let mut codes = Vec::new();
         for diagnostic in status["diagnostics"]

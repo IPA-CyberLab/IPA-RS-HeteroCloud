@@ -41,6 +41,10 @@ stop state and persistent data remain current. Disks never shrink. The service
 must have a previous healthy revision; an initial failed deployment cannot be
 automatically rolled back. A revision that became healthy and subsequently fails
 is recovered by the runtime, rather than rolling back an unrelated older update.
+Zero ready replicas do not qualify a revision as healthy. For scale-to-zero
+services the deadline starts on first activation, so time spent idle does not
+consume the cold-start health-check budget. Exhausted quotas do not trigger a
+runtime rollback.
 
 ```sh
 heterocloud flash revisions SERVICE_ID

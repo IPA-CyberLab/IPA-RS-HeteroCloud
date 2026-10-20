@@ -47,9 +47,52 @@ async fn revisions_observations_leases_and_retention_are_durable_and_generation_
             "flash",
             1,
             Uuid::now_v7(),
-            json!({"phase":"ready","observed_generation":1}),
+            json!({"phase":"ready","observed_generation":1,"ready_replicas":0,"desired_replicas":0}),
         )
         .await?;
+    assert!(
+        store
+            .flash_revision(org, original.id, 1)
+            .await?
+            .ready_at
+            .is_none(),
+        "zero replicas is not proof of application health"
+    );
+    store.record_flash_observation(&original,&json!({"phase":"provisioning","observed_generation":1,"ready_replicas":0,"desired_replicas":1})).await?;
+    let activated = store.flash_revision(org, original.id, 1).await?;
+    assert!(activated.activation_started_at.is_some());
+    assert!(activated.ready_at.is_none());
+    store.record_flash_observation(&original,&json!({"phase":"ready","observed_generation":1,"ready_replicas":1,"desired_replicas":1})).await?;
+    let healthy = store.flash_revision(org, original.id, 1).await?;
+    assert!(healthy.ready_at.is_some());
+    store.record_flash_observation(&original,&json!({"phase":"ready","observed_generation":1,"ready_replicas":0,"desired_replicas":0})).await?;
+    assert_eq!(
+        store.flash_revision(org, original.id, 1).await?.ready_at,
+        healthy.ready_at,
+        "an already verified revision remains healthy after scaling to zero"
+    );
+    let mut cold_spec = original.spec.clone();
+    cold_spec["autoscaling"] = json!({"min_replicas":0,"max_replicas":1,"target_cpu_utilization_percent":80,"idle_timeout_seconds":300});
+    cold_spec["ports"] = json!([{"name":"http","protocol":"tcp","container_port":8080}]);
+    cold_spec["exposure"] =
+        json!({"type":"public","traffic_mode":"forwarded","endpoint_mode":"web"});
+    let cold = store
+        .create_service_instance(
+            org,
+            project.id,
+            member.principal_id,
+            "flash",
+            "idle-cold",
+            cold_spec,
+        )
+        .await?;
+    store.record_flash_observation(&cold,&json!({"phase":"ready","observed_generation":1,"ready_replicas":0,"desired_replicas":0})).await?;
+    let idle = store.flash_revision(org, cold.id, 1).await?;
+    assert!(idle.ready_at.is_none());
+    assert!(
+        idle.activation_started_at.is_none(),
+        "cold-start deadline must not run while idle"
+    );
     let mut changed = original.spec.clone();
     changed["image"] = json!("example/app:bad");
     changed["env"] = json!({"VALUE":"current"});

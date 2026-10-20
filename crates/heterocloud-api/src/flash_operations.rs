@@ -189,6 +189,16 @@ async fn observe(state: &AppState, instance: ServiceInstance) {
     if instance.spec["stopped"] == true || instance.state == ServiceState::Deleting {
         return;
     }
+    if [
+        "cpu_quota_exhausted",
+        "memory_quota_exhausted",
+        "gpu_quota_exhausted",
+    ]
+    .iter()
+    .any(|key| status[*key] == true)
+    {
+        return; // Runtime rollback cannot repair an intentionally exhausted quota.
+    }
     let Ok(current) = state
         .store
         .flash_revision(instance.organization_id, instance.id, instance.generation)
@@ -202,11 +212,14 @@ async fn observe(state: &AppState, instance: ServiceInstance) {
         .filter(|v| !v.is_null())
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
+    let Some(activation) = current.activation_started_at.or_else(|| {
+        (instance.spec["autoscaling"]["min_replicas"] != 0).then_some(current.created_at)
+    }) else {
+        return;
+    };
     if !policy.auto_rollback
         || current.ready_at.is_some()
-        || Utc::now()
-            .signed_duration_since(current.created_at)
-            .num_seconds()
+        || Utc::now().signed_duration_since(activation).num_seconds()
             < i64::from(policy.deadline_seconds)
     {
         return;
