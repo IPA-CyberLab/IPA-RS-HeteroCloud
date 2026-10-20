@@ -13,6 +13,7 @@ pub struct FlashBackup {
     pub organization_id: Uuid,
     pub project_id: Uuid,
     pub service_instance_id: Uuid,
+    pub schedule_service_id: Option<Uuid>,
     #[serde(skip_serializing)]
     pub principal_id: Uuid,
     #[serde(skip_serializing)]

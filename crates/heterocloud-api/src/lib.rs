@@ -2,6 +2,7 @@ pub mod config;
 pub mod error;
 pub mod flash_backups;
 pub mod flash_domains;
+pub mod flash_operations;
 pub mod flash_provider;
 pub mod flow_access;
 pub mod metrics;

@@ -55,6 +55,7 @@ const RealtimeServiceDetailPage = lazy(() =>
   })),
 );
 const VpcPage = lazy(() => import("@/features/vpc/vpc-page").then(module => ({default:module.VpcPage})));
+const FlashAlertsPage = lazy(() => import("@/features/flash/flash-alerts-page").then(module => ({default:module.FlashAlertsPage})));
 const FlashBackupsPage = lazy(() => import("@/features/flash/flash-backups-page").then(module => ({default:module.FlashBackupsPage})));
 const FlashServicesPage = lazy(() =>
   import("@/features/flash/flash-services-page").then((module) => ({
@@ -232,6 +233,8 @@ export function App() {
                 }
               />
               <Route path="/flash/backups" element={<LazyPage><FlashBackupsPage /></LazyPage>} />
+              <Route path="/flash/alerts" element={<LazyPage><FlashAlertsPage /></LazyPage>} />
+              <Route path="/owner/flash/alerts" element={<OwnerRoute><LazyPage><FlashAlertsPage owner /></LazyPage></OwnerRoute>} />
               <Route path="/vpc/networks" element={<LazyPage><VpcPage /></LazyPage>} />
               <Route
                 path="/flash/services"

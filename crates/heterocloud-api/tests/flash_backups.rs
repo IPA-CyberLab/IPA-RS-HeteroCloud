@@ -345,6 +345,84 @@ async fn backups_enforce_tenant_iam_csrf_and_restore_only_into_a_new_stopped_ser
             .status(),
         StatusCode::ACCEPTED
     );
+    // New operational endpoints use the same tenant, IAM and CSRF boundary.
+    let service_base = format!("/api/v1/organizations/{org}/flash/services/{}", instance.id);
+    for suffix in ["revisions", "events", "backup-policy"] {
+        assert_eq!(
+            app(state.clone(), None)
+                .oneshot(send(
+                    "GET",
+                    format!("{service_base}/{suffix}"),
+                    Some(owner_key),
+                    json!({})
+                )?)
+                .await?
+                .status(),
+            StatusCode::OK
+        );
+    }
+    let policy =
+        json!({"enabled":true,"interval_seconds":3600,"retention_count":2,"verify_restore":true});
+    for operation in ["backup-policy", "rollback"] {
+        let body = if operation == "rollback" {
+            json!({"generation":1,"expected_generation":1})
+        } else {
+            policy.clone()
+        };
+        let method = if operation == "rollback" {
+            "POST"
+        } else {
+            "PUT"
+        };
+        assert_eq!(
+            app(state.clone(), None)
+                .oneshot(send(
+                    method,
+                    format!("{service_base}/{operation}"),
+                    Some(read_key),
+                    body.clone()
+                )?)
+                .await?
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        let csrf = Request::builder()
+            .method(method)
+            .uri(format!("{service_base}/{operation}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::ORIGIN, "http://cloud.example.test")
+            .header(header::COOKIE, "hc_session=lifecycle-session")
+            .body(Body::from(body.to_string()))?;
+        assert_eq!(
+            app(state.clone(), None).oneshot(csrf).await?.status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+    assert_eq!(
+        app(state.clone(), None)
+            .oneshot(send(
+                "PUT",
+                format!("{service_base}/backup-policy"),
+                Some(owner_key),
+                policy
+            )?)
+            .await?
+            .status(),
+        StatusCode::OK
+    );
+    let request = json!({"generation":1,"expected_generation":0});
+    assert_eq!(
+        app(state.clone(), None)
+            .oneshot(send(
+                "POST",
+                format!("{service_base}/rollback"),
+                Some(owner_key),
+                request
+            )?)
+            .await?
+            .status(),
+        StatusCode::CONFLICT
+    );
     server.abort();
     Ok(())
 }

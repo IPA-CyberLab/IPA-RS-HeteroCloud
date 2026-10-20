@@ -43,6 +43,7 @@ export function FlashBackupsPanel({ organizationId, serviceId }: { organizationI
   });
   const remove = useMutation({ mutationFn: (id: string) => api.flash.backups.delete(organizationId, id),
     onSuccess: () => { setSelected(null); void invalidate(); } });
+  const verify = useMutation({mutationFn:(id:string)=>api.flash.backups.verify(organizationId,id),onSuccess:()=>void invalidate()});
   const restore = useMutation({
     mutationFn: () => api.flash.backups.restore(organizationId, selected!.id, { name: restoreName.trim(), project_id: projectId, request_id: restoreRequestId }),
     onSuccess: (service) => { setSelected(null); navigate(`/flash/services/${service.id}`); },
@@ -59,12 +60,17 @@ export function FlashBackupsPanel({ organizationId, serviceId }: { organizationI
     { accessorKey: "phase", header: "状態", cell: ({ row }) => <StatusIndicator type={row.original.phase === "ready" ? "success" : row.original.phase === "error" ? "error" : "loading"}>{phases[row.original.phase]}</StatusIndicator> },
     { accessorKey: "volume_size_bytes", header: "対象ディスク容量", cell: ({ row }) => `${(row.original.volume_size_bytes / 1024 ** 3).toLocaleString("ja-JP", { maximumFractionDigits: 2 })} GiB` },
     { accessorKey: "created_at", header: "受付日時", cell: ({ row }) => formatDateTime(row.original.created_at) },
+    {id:"verification",header:"復元検証",cell:({row})=>{
+      const state=row.original.status.restore_verification?.phase;
+      return state==="passed"?"検証済み":state==="failed"?"検証失敗":state?"検証中":"未検証";
+    }},
     { id: "actions", header: "操作", cell: ({ row }) => <SpaceBetween direction="horizontal" size="s">
       <Button disabled={row.original.phase !== "ready" || row.original.delete_requested} onClick={() => choose(row.original, "restore")}>復元</Button>
+      <Button disabled={row.original.phase!=="ready"||row.original.delete_requested||verify.isPending||["queued","restoring","cleaning"].includes(row.original.status.restore_verification?.phase??"")} onClick={()=>verify.mutate(row.original.id)}>復元を検証</Button>
       <Button disabled={row.original.delete_requested} onClick={() => choose(row.original, "delete")}>削除</Button>
     </SpaceBetween> },
   ];
-  const error = create.error || query.error;
+  const error = create.error || query.error || verify.error;
   const modalError = restore.error || remove.error;
   const busy = restore.isPending || remove.isPending;
   const projectOptions = projects.data?.items.map(p => ({ label: p.name, value: p.id })) ?? [];
@@ -82,6 +88,7 @@ export function FlashBackupsPanel({ organizationId, serviceId }: { organizationI
       </>}
       {error && <Alert type="error">{getApiErrorMessage(error)}</Alert>}
       {create.isSuccess && <Alert type="success">バックアップを受け付けました。「復元可能」になるまでお待ちください。</Alert>}
+      {verify.isSuccess&&<Alert type="success">別ディスクへ復元して読み取りを検証します。保存元のコンテナはそのまま稼働します。</Alert>}
       {query.isPending && <StatusIndicator type="loading">バックアップを読み込み中</StatusIndicator>}
       {query.data && <DataTable columns={columns} data={query.data.items} getRowId={row => row.id} emptyTitle="バックアップはありません" emptyDescription="サービス詳細からバックアップを作成できます。" />}
       {query.data?.items.some(b => b.status.provider_unavailable) && <Alert type="warning">バックアップ保存先の状態を確認できません。表示は最後に取得した状態です。復元時には保存先への接続を再確認します。</Alert>}

@@ -32,8 +32,23 @@ pub fn validated_status(id: uuid::Uuid, value: Value) -> Result<Value, FlashProv
     // Never persist unbounded or arbitrary backend error bodies/URLs.
     Ok(
         json!({"id":id,"phase":value["phase"],"completed_at":value["completed_at"],
-        "message":match value["message"].as_str() {Some("backup_storage_error"|"backup_storage_missing"|"backup_source_unavailable")=>value["message"].clone(),_=>Value::Null}}),
+        "message":match value["message"].as_str() {Some("backup_storage_error"|"backup_storage_missing"|"backup_source_unavailable")=>value["message"].clone(),_=>Value::Null},
+        "restore_verification":validated_verification(&value["restore_verification"])}),
     )
+}
+
+fn validated_verification(value: &Value) -> Value {
+    if !matches!(
+        value["phase"].as_str(),
+        Some("queued" | "restoring" | "cleaning" | "passed" | "failed")
+    ) {
+        return Value::Null;
+    }
+    let hash = value["sha256"]
+        .as_str()
+        .filter(|s| s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit()));
+    json!({"phase":value["phase"],"started_at":value["started_at"].as_str().filter(|s|s.len()<=40),"completed_at":value["completed_at"].as_str().filter(|s|s.len()<=40),
+        "sampled_files":value["sampled_files"].as_u64(),"sampled_bytes":value["sampled_bytes"].as_u64(),"sha256":hash,"cleanup_verified":value["cleanup_verified"]==true})
 }
 
 pub fn spawn_reconciler(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {

@@ -15,6 +15,7 @@ const baseNavigationItems: SideNavigationProps.Item[] = [
       { type: "link", text: "サービス", href: "/flash/services" },
       { type: "link", text: "イメージ", href: "/registry" },
       { type: "link", text: "バックアップ", href: "/flash/backups" },
+      { type: "link", text: "通知", href: "/flash/alerts" },
       { type: "link", text: "コスト管理", href: "/cost-management" },
     ],
   },
@@ -48,6 +49,7 @@ export function navigationItems(ownerConsole: boolean): SideNavigationProps.Item
     { type: "link", text: "全アカウント管理", href: "/overview" },
     { type: "link", text: "コスト管理", href: "/owner/cost-management" },
     { type: "link", text: "GPU管理", href: "/owner/gpus" },
+    { type: "link", text: "サービスの通知", href: "/owner/flash/alerts" },
   ];
 }
 
@@ -61,6 +63,8 @@ export const routeTitles: Record<string, string> = {
   "/flow/services": "Flow",
   "/flash/services": "Flash",
   "/flash/backups": "Flashバックアップ",
+  "/flash/alerts": "Flashの通知",
+  "/owner/flash/alerts": "全サービスの通知",
   "/vpc/networks": "VPC",
   "/registry": "イメージ",
   "/cost-management": "コスト管理",

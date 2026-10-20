@@ -795,6 +795,377 @@
           }
         }
       }
+    },
+    "/api/v1/organizations/{organization_id}/flash/services/{service_instance_id}/revisions": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "service_instance_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "summary": "List immutable revision summaries without environment values",
+        "description": "Requires flash:GetInstance.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient current permissions"
+          },
+          "404": {
+            "description": "Not found in organization"
+          },
+          "409": {
+            "description": "Generation, readiness or policy lease conflict"
+          }
+        }
+      }
+    },
+    "/api/v1/organizations/{organization_id}/flash/services/{service_instance_id}/events": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "service_instance_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "summary": "List bounded service diagnostics and recovery events",
+        "description": "Requires flash:GetInstance.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient current permissions"
+          },
+          "404": {
+            "description": "Not found in organization"
+          },
+          "409": {
+            "description": "Generation, readiness or policy lease conflict"
+          }
+        }
+      }
+    },
+    "/api/v1/organizations/{organization_id}/flash/services/{service_instance_id}/rollback": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "service_instance_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "summary": "Rollback execution settings to an earlier healthy revision",
+        "description": "Requires flash:UpdateInstance; current quotas, IAM, secrets, network controls and persistent data retained.",
+        "responses": {
+          "202": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient current permissions"
+          },
+          "404": {
+            "description": "Not found in organization"
+          },
+          "409": {
+            "description": "Generation, readiness or policy lease conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "generation",
+                  "expected_generation"
+                ],
+                "properties": {
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "expected_generation": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organizations/{organization_id}/flash/services/{service_instance_id}/backup-policy": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "service_instance_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Get scheduled backup policy; null when unset",
+        "description": "Requires flash:GetInstance.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient current permissions"
+          },
+          "404": {
+            "description": "Not found in organization"
+          },
+          "409": {
+            "description": "Generation, readiness or policy lease conflict"
+          }
+        }
+      },
+      "put": {
+        "summary": "Set scheduled backup interval, retention and restore verification",
+        "description": "Requires flash:CreateBackup and flash:DeleteBackup; flash:RestoreBackup when verification enabled.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient current permissions"
+          },
+          "404": {
+            "description": "Not found in organization"
+          },
+          "409": {
+            "description": "Generation, readiness or policy lease conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlashBackupPolicyInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organizations/{organization_id}/flash/services/{service_instance_id}/backup-policy/run": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "service_instance_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "summary": "Make an enabled policy due now",
+        "description": "Requires flash:CreateBackup; execution rechecks create/delete/optional restore permissions.",
+        "responses": {
+          "202": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient current permissions"
+          },
+          "404": {
+            "description": "Not found in organization"
+          },
+          "409": {
+            "description": "Generation, readiness or policy lease conflict"
+          }
+        }
+      }
+    },
+    "/api/v1/organizations/{organization_id}/flash/backups/{backup_id}/verify": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "backup_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "summary": "Restore an isolated read-only clone and verify cleanup",
+        "description": "Requires flash:RestoreBackup. Backup must be ready. Result is in status.restore_verification.",
+        "responses": {
+          "202": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient current permissions"
+          },
+          "404": {
+            "description": "Not found in organization"
+          },
+          "409": {
+            "description": "Generation, readiness or policy lease conflict"
+          }
+        }
+      }
+    },
+    "/api/v1/organizations/{organization_id}/flash/events": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "summary": "List organization Flash notifications",
+        "description": "Requires flash:ListEvents.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient current permissions"
+          },
+          "404": {
+            "description": "Not found in organization"
+          },
+          "409": {
+            "description": "Generation, readiness or policy lease conflict"
+          }
+        }
+      }
+    },
+    "/api/v1/owner/flash/events": {
+      "get": {
+        "summary": "List system-wide Flash notifications",
+        "description": "Requires owner authorization through the VPN-protected owner console.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient current permissions"
+          },
+          "404": {
+            "description": "Not found in organization"
+          },
+          "409": {
+            "description": "Generation, readiness or policy lease conflict"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1378,6 +1749,16 @@
             "format": "uuid",
             "readOnly": true,
             "description": "Immutable disk origin. Set only by the backup restore endpoint; preserved on later updates."
+          },
+          "deployment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeploymentPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -2116,6 +2497,86 @@
           "request_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "DeploymentPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "strategy": {
+            "enum": [
+              "auto",
+              "rolling",
+              "recreate"
+            ],
+            "default": "auto"
+          },
+          "stateless": {
+            "type": "boolean",
+            "default": false
+          },
+          "deadline_seconds": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 3600,
+            "default": 600
+          },
+          "auto_rollback": {
+            "type": "boolean",
+            "default": true
+          },
+          "health_check": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "path": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^/",
+                "maxLength": 1024
+              }
+            },
+            "required": [
+              "port"
+            ]
+          }
+        }
+      },
+      "FlashBackupPolicyInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "enabled",
+          "interval_seconds",
+          "retention_count"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "interval_seconds": {
+            "type": "integer",
+            "minimum": 3600,
+            "maximum": 604800
+          },
+          "retention_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8
+          },
+          "verify_restore": {
+            "type": "boolean",
+            "default": true
           }
         }
       }

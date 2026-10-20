@@ -465,6 +465,7 @@ export interface FlashAutoscaling {
 }
 
 export interface FlashServiceSpec {
+  deployment?: FlashDeploymentPolicy;
   task_role?: string | null;
   region: string;
   image: string;
@@ -505,6 +506,8 @@ export interface FlashServiceEndpoint {
 }
 
 export interface FlashServiceStatus {
+  diagnostics?: FlashDiagnostic[];
+  disk_usage?: { capacity_bytes: number; used_bytes: number; available_bytes: number; measured_at: string };
   [key: string]: unknown;
   operation_id?: string;
   status?: FlashServiceStatus;
@@ -787,8 +790,22 @@ export interface FlashBackup {
   source_name: string;
   volume_size_bytes: number;
   phase: "pending" | "creating" | "ready" | "error" | "deleting";
-  status: { message?: string | null; completed_at?: number | null; provider_unavailable?: boolean; last_verified_at?: string };
+  status: { message?: string | null; completed_at?: number | null; provider_unavailable?: boolean; last_verified_at?: string; restore_verification?: FlashRestoreVerification | null };
   delete_requested: boolean;
   created_at: string;
   updated_at: string;
 }
+
+export interface FlashDeploymentPolicy {
+  strategy: "auto" | "rolling" | "recreate";
+  stateless: boolean;
+  deadline_seconds: number;
+  auto_rollback: boolean;
+  health_check?: { port: number; path?: string };
+}
+export interface FlashDiagnostic { code: string; severity: "info" | "warning" | "error"; message: string; resource?: string }
+export interface FlashRevision { service_instance_id: string; generation: number; name: string; phase: "pending" | "ready" | "failed" | "rolled_back"; created_at: string; ready_at: string | null }
+export interface FlashEvent extends FlashDiagnostic { id: string; service_instance_id: string; generation: number; created_at: string; last_observed_at: string; resolved_at: string | null; acknowledged_at: string | null }
+export interface FlashBackupPolicyInput { enabled: boolean; interval_seconds: number; retention_count: number; verify_restore: boolean }
+export interface FlashBackupPolicy extends FlashBackupPolicyInput { service_instance_id: string; next_run_at: string; last_run_at: string | null; last_error: string | null; last_backup_id: string | null }
+export interface FlashRestoreVerification { phase: "queued" | "restoring" | "cleaning" | "passed" | "failed"; completed_at?: string | null; cleanup_verified?: boolean; sampled_files?: number; sampled_bytes?: number; sha256?: string }

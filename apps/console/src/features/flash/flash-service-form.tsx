@@ -13,6 +13,7 @@ import type { FormEvent, ReactNode } from "react";
 import "./flash-service-form.css";
 import { ProjectSelector } from "@/components/shared/resource-selectors";
 import type {
+  FlashDeploymentPolicy,
   FlashExposure, VpcNetwork, Principal,
   FlashEgressMode,
   FlashGpuType,
@@ -28,6 +29,7 @@ export type FlashImageSource = "registry" | "manual";
 export type FlashProcessMode = "image" | "workspace" | "custom";
 
 export interface FlashServiceFormValue {
+  deployment?: FlashDeploymentPolicy;
   projectId: string;
   name: string;
   region: string;
@@ -417,6 +419,12 @@ export function flashFormValidationError(
       return "コンテナポートは1〜65535で入力してください。";
     }
   }
+  if (value.deployment) {
+    const policy=value.deployment;
+    if (!Number.isInteger(policy.deadline_seconds)||policy.deadline_seconds<60||policy.deadline_seconds>3600) return "更新の制限時間は60〜3600秒で入力してください。";
+    const check=policy.health_check;
+    if (check&&(!Number.isInteger(check.port)||check.port<1||check.port>65535||(check.path&&(!check.path.startsWith("/")||check.path.length>1024||/[\x00-\x1f\x7f]/.test(check.path))))) return "正常性確認には有効なポートと / で始まるHTTPパスを指定してください。";
+  }
   if (value.cpuMillis < 10 || value.cpuMillis > quota.max_cpu_millis_per_vm) {
     return `CPUは10〜${quota.max_cpu_millis_per_vm.toLocaleString("ja-JP")} millicoresで入力してください。`;
   }
@@ -484,6 +492,7 @@ export function flashSpecFromForm(
         : [[], []];
   return {
     region: value.region,
+    ...(value.deployment ? {deployment:value.deployment} : {}),
     ...(value.taskRoleId ? {task_role:value.taskRoleId} : {}),
     image: value.image.trim(),
     replicas: value.replicas,
@@ -555,6 +564,7 @@ export function flashFormFromService(
         : "custom";
   return {
     projectId: service.project_id,
+    deployment: service.spec.deployment,
     name: service.name,
     region: service.spec.region,
     taskRoleId:service.spec.task_role ?? "",
@@ -995,6 +1005,21 @@ export function FlashServiceForm({
               }}
             />
           </FormField>
+        </ColumnLayout>
+        <Header variant="h3">更新と正常性の確認</Header>
+        <Toggle checked={value.deployment?.stateless??false} disabled={disabled} onChange={({detail})=>onChange({...value,persistentStorageGib:detail.checked?undefined:value.persistentStorageGib,deployment:{strategy:detail.checked?"rolling":"auto",deadline_seconds:600,auto_rollback:true,...value.deployment,stateless:detail.checked,...(!detail.checked?{strategy:"auto" as const}:{})}})}>
+          永続ホームをマウントしない（段階的更新を利用）
+        </Toggle>
+        <FormField description="永続ホームを使うサービスは旧版を停止してから新版を起動します。既存の永続ディスクは保持します。">
+          <Select ariaLabel="更新方式" disabled={disabled} selectedOption={{value:value.deployment?.strategy??"auto",label:({auto:"ホーム設定に従う",rolling:"段階的更新",recreate:"停止して更新"})[value.deployment?.strategy??"auto"]}}
+            options={[{value:"auto",label:"ホーム設定に従う"},{value:"recreate",label:"停止して更新"},...(value.deployment?.stateless?[{value:"rolling",label:"段階的更新"}]:[])]}
+            onChange={({detail})=>onChange({...value,deployment:{stateless:false,deadline_seconds:600,auto_rollback:true,...value.deployment,strategy:detail.selectedOption.value as FlashDeploymentPolicy["strategy"]}})}/>
+        </FormField>
+        <Toggle checked={value.deployment?.auto_rollback??true} disabled={disabled} onChange={({detail})=>onChange({...value,deployment:{strategy:"auto",stateless:false,deadline_seconds:600,...value.deployment,auto_rollback:detail.checked}})}>更新が正常にならない場合に直前の正常な実行設定へ戻す</Toggle>
+        <ColumnLayout columns={3}>
+          <FormField label="更新の制限時間（秒）" description="60〜3600秒"><Input ariaLabel="更新の制限時間" type="number" disabled={disabled} value={String(value.deployment?.deadline_seconds??600)} onChange={({detail})=>onChange({...value,deployment:{strategy:"auto",stateless:false,auto_rollback:true,...value.deployment,deadline_seconds:Number(detail.value)}})}/></FormField>
+          <FormField label="正常性確認ポート" description="空欄の場合は最初のTCPポート"><Input ariaLabel="正常性確認ポート" type="number" disabled={disabled} value={value.deployment?.health_check?String(value.deployment.health_check.port):""} onChange={({detail})=>onChange({...value,deployment:{strategy:"auto",stateless:false,auto_rollback:true,deadline_seconds:600,...value.deployment,health_check:detail.value?{port:Number(detail.value),...(value.deployment?.health_check?.path?{path:value.deployment.health_check.path}:{})}:undefined}})}/></FormField>
+          <FormField label="HTTP確認パス" description="空欄の場合はTCP接続で確認"><Input ariaLabel="HTTP確認パス" disabled={disabled||!value.deployment?.health_check} value={value.deployment?.health_check?.path??""} onChange={({detail})=>onChange({...value,deployment:{strategy:"auto",stateless:false,auto_rollback:true,deadline_seconds:600,...value.deployment,health_check:{port:value.deployment?.health_check?.port??0,...(detail.value?{path:detail.value}:{})}}})}/></FormField>
         </ColumnLayout>
         <ColumnLayout columns={2}>
           <FormField label="公開範囲">

@@ -1,4 +1,8 @@
 mod flash_backups;
+mod flash_operations;
+pub use flash_operations::{
+    BackupPolicyInput, FlashBackupPolicy, FlashEvent, FlashRevision, rollback_spec,
+};
 mod flash_domains;
 mod workload_identity;
 pub use flash_backups::FlashBackup;
@@ -1797,8 +1801,9 @@ impl Store {
     ) -> Result<Option<AuthorizationContext>, StoreError> {
         let exists = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(
-                SELECT 1 FROM principals
-                WHERE id = $1 AND organization_id = $2 AND enabled = true
+                SELECT 1 FROM principals p LEFT JOIN users u ON u.id=p.user_id
+                WHERE p.id = $1 AND p.organization_id = $2 AND p.enabled = true
+                  AND (p.user_id IS NULL OR u.status='active')
              )",
         )
         .bind(principal_id.0)
@@ -2832,6 +2837,31 @@ impl Store {
         name: &str,
         spec: Value,
     ) -> Result<ServiceInstance, StoreError> {
+        self.update_service_instance_checked(
+            organization_id,
+            id,
+            provider,
+            principal_id,
+            requested_project,
+            name,
+            spec,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_service_instance_checked(
+        &self,
+        organization_id: OrganizationId,
+        id: ServiceInstanceId,
+        provider: &str,
+        principal_id: PrincipalId,
+        requested_project: Option<ProjectId>,
+        name: &str,
+        spec: Value,
+        expected_generation: Option<i64>,
+    ) -> Result<ServiceInstance, StoreError> {
         if requested_project.is_some() && provider != "flash" {
             return Err(StoreError::RequestRejected(
                 "project updates are supported for Flash services only".into(),
@@ -2863,6 +2893,9 @@ impl Store {
             transaction.rollback().await?;
             return Err(StoreError::NotFound);
         };
+        if expected_generation.is_some_and(|g| g != existing.generation) {
+            return Err(StoreError::Conflict);
+        }
         if existing.state == "deleting" {
             transaction.rollback().await?;
             return Err(StoreError::Conflict);

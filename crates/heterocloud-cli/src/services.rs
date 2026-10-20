@@ -43,6 +43,25 @@ pub struct FlashArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum FlashCommand {
+    /// List immutable deployment history (without historical environment values).
+    Revisions { id: Uuid },
+    /// Show resource, startup, capacity and recovery notifications.
+    Events { id: Uuid },
+    /// Restore execution settings from a healthy revision; retain current access controls and data.
+    Rollback {
+        id: Uuid,
+        #[arg(long)]
+        generation: i64,
+        #[arg(long)]
+        expected_generation: Option<i64>,
+        #[arg(long)]
+        no_wait: bool,
+    },
+    /// Configure scheduled disk backups, retention and restore verification.
+    BackupPolicy {
+        #[command(subcommand)]
+        command: FlashBackupPolicyCommand,
+    },
     /// Back up persistent disks and restore into a new stopped private service.
     Backups {
         #[command(subcommand)]
@@ -78,6 +97,12 @@ pub enum FlashCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum FlashBackupCommand {
+    /// Restore a disposable isolated disk, verify reads, and clean it up.
+    Verify {
+        id: Uuid,
+        #[arg(long)]
+        no_wait: bool,
+    },
     List {
         #[arg(long)]
         service_id: Option<Uuid>,
@@ -111,6 +136,23 @@ pub enum FlashBackupCommand {
         request_id: Option<Uuid>,
         #[arg(long)]
         no_wait: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FlashBackupPolicyCommand {
+    /// Enqueue an immediate policy run without changing its normal interval.
+    Run {
+        id: Uuid,
+    },
+    Get {
+        id: Uuid,
+    },
+    /// JSON: enabled, interval_seconds (3600..604800), retention_count (1..8), verify_restore.
+    Set {
+        id: Uuid,
+        #[arg(short, long, default_value = "-")]
+        file: String,
     },
 }
 
@@ -563,6 +605,84 @@ pub(crate) async fn execute(
 
 pub(crate) async fn execute_flash(args: FlashArgs, settings: ApiSettings) -> Result<(), CliError> {
     let (id, stopped, no_wait) = match args.command {
+        FlashCommand::Revisions { id } | FlashCommand::Events { id } => {
+            let suffix = if matches!(args.command, FlashCommand::Revisions { .. }) {
+                "revisions"
+            } else {
+                "events"
+            };
+            let client = ApiClient::new(settings)?;
+            let url = client
+                .endpoint
+                .join(&format!(
+                    "{}/{id}/{suffix}",
+                    ServiceKind::Flash.collection_path(client.organization_id)
+                ))
+                .map_err(|e| CliError::InvalidApiEndpoint(e.to_string()))?;
+            let value: Value = client.send_json(Method::GET, url, None::<&Value>).await?;
+            println!("{}", serde_json::to_string_pretty(&value)?);
+            return Ok(());
+        }
+        FlashCommand::BackupPolicy { command } => {
+            let (id, method, body, suffix) = match command {
+                FlashBackupPolicyCommand::Run { id } => (id, Method::POST, None, "/run"),
+                FlashBackupPolicyCommand::Get { id } => (id, Method::GET, None, ""),
+                FlashBackupPolicyCommand::Set { id, file } => {
+                    (id, Method::PUT, Some(read_manifest::<Value>(&file)?), "")
+                }
+            };
+            let client = ApiClient::new(settings)?;
+            let url = client
+                .endpoint
+                .join(&format!(
+                    "{}/{id}/backup-policy{suffix}",
+                    ServiceKind::Flash.collection_path(client.organization_id)
+                ))
+                .map_err(|e| CliError::InvalidApiEndpoint(e.to_string()))?;
+            let value: Value = client.send_json(method, url, body.as_ref()).await?;
+            println!("{}", serde_json::to_string_pretty(&value)?);
+            return Ok(());
+        }
+        FlashCommand::Rollback {
+            id,
+            generation,
+            expected_generation,
+            no_wait,
+        } => {
+            let output = settings.output;
+            let client = ApiClient::new(settings)?;
+            let expected = match expected_generation {
+                Some(n) => n,
+                None => {
+                    client
+                        .get(ServiceKind::Flash, id)
+                        .await?
+                        .ok_or_else(|| not_found(id))?
+                        .generation
+                }
+            };
+            let url = client
+                .endpoint
+                .join(&format!(
+                    "{}/{id}/rollback",
+                    ServiceKind::Flash.collection_path(client.organization_id)
+                ))
+                .map_err(|e| CliError::InvalidApiEndpoint(e.to_string()))?;
+            let value = client
+                .send_json(
+                    Method::POST,
+                    url,
+                    Some(&json!({"generation":generation,"expected_generation":expected})),
+                )
+                .await?;
+            let service: ManagedService = serde_json::from_value(value)?;
+            let service = if no_wait {
+                service
+            } else {
+                client.wait_ready(ServiceKind::Flash, id).await?
+            };
+            return write_service(&service, output);
+        }
         FlashCommand::Backups { command } => return execute_backups(command, settings).await,
         FlashCommand::Domains { command } => {
             let client = ApiClient::new(settings)?;
@@ -673,6 +793,43 @@ async fn execute_backups(
             .map_err(|e| CliError::InvalidApiEndpoint(e.to_string()))
     };
     let result = match command {
+        FlashBackupCommand::Verify { id, no_wait } => {
+            let value: Value = client
+                .send_json(
+                    Method::POST,
+                    make_url(&format!("/{id}/verify"))?,
+                    None::<&Value>,
+                )
+                .await?;
+            if no_wait {
+                value
+            } else {
+                let deadline = Instant::now() + client.wait_timeout;
+                loop {
+                    if Instant::now() >= deadline {
+                        return Err(CliError::InvalidManifest("Restore verification is still running; inspect flash backups get or increase --wait-timeout-seconds.".into()));
+                    }
+                    let current: Value = client
+                        .send_json(Method::GET, make_url(&format!("/{id}"))?, None::<&Value>)
+                        .await?;
+                    match current["status"]["restore_verification"]["phase"].as_str() {
+                        Some("passed")
+                            if current["status"]["restore_verification"]["cleanup_verified"]
+                                == true =>
+                        {
+                            break current;
+                        }
+                        Some("failed") => {
+                            return Err(CliError::InvalidManifest(
+                                "Backup restore verification failed; inspect flash backups get."
+                                    .into(),
+                            ));
+                        }
+                        _ => sleep(POLL_INTERVAL).await,
+                    }
+                }
+            }
+        }
         FlashBackupCommand::List { service_id } => {
             let mut url = make_url("")?;
             if let Some(id) = service_id {

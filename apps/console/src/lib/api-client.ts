@@ -603,7 +603,17 @@ export class HeteroCloudApiClient {
   };
 
   readonly flash = {
+    operations: {
+      alerts: (org:string, signal?:AbortSignal) => this.request<CollectionResponse<import("./api-types").FlashEvent>>(organizationPath(org,"flash/events"),{signal}),
+      ownerAlerts: (signal?:AbortSignal) => this.request<CollectionResponse<import("./api-types").FlashEvent>>("/owner/flash/events",{signal}),
+      revisions: (org: string, id: string, signal?: AbortSignal) => this.request<CollectionResponse<import("./api-types").FlashRevision>>(organizationPath(org, "flash/services/"+encodeURIComponent(id)+"/revisions"), { signal }),
+      events: (org: string, id: string, signal?: AbortSignal) => this.request<CollectionResponse<import("./api-types").FlashEvent>>(organizationPath(org, "flash/services/"+encodeURIComponent(id)+"/events"), { signal }),
+      rollback: (org: string, id: string, generation: number, expectedGeneration: number) => this.request<FlashService>(organizationPath(org, "flash/services/"+encodeURIComponent(id)+"/rollback"), { method: "POST", body: { generation, expected_generation: expectedGeneration } }),
+      backupPolicy: (org: string, id: string, signal?: AbortSignal) => this.request<import("./api-types").FlashBackupPolicy | null>(organizationPath(org, "flash/services/"+encodeURIComponent(id)+"/backup-policy"), { signal }),
+      putBackupPolicy: (org: string, id: string, input: import("./api-types").FlashBackupPolicyInput) => this.request<import("./api-types").FlashBackupPolicy>(organizationPath(org, "flash/services/"+encodeURIComponent(id)+"/backup-policy"), { method: "PUT", body: input }),
+    },
     backups: {
+      verify: (organizationId: string, backupId: string) => this.request<{verification_requested: boolean}>(organizationPath(organizationId, "flash/backups/"+encodeURIComponent(backupId)+"/verify"), { method: "POST" }),
       list: (organizationId: string, serviceId?: string, signal?: AbortSignal) =>
         this.request<CollectionResponse<import("./api-types").FlashBackup>>(organizationPath(organizationId, "flash/backups") + (serviceId ? `?service_instance_id=${encodeURIComponent(serviceId)}` : ""), { signal }),
       create: (organizationId: string, serviceId: string, name: string, requestId: string) =>

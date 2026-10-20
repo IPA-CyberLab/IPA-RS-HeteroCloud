@@ -1,3 +1,5 @@
+mod deployment;
+pub use deployment::{DeploymentPolicy, HealthCheck};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
@@ -818,6 +820,8 @@ impl Default for FlashEgress {
 pub struct FlashSpec {
     pub region: String,
     pub image: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deployment: Option<DeploymentPolicy>,
     /// IAM service account assumed only by this workload; no fixed API key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_role: Option<uuid::Uuid>,
@@ -894,6 +898,9 @@ impl FlashSpec {
     }
 
     fn validate_inner(&self, require_assigned_service_ports: bool) -> Result<(), DomainError> {
+        if let Some(policy) = &self.deployment {
+            policy.validate().map_err(invalid_flash_spec)?;
+        }
         if self.region.is_empty()
             || self.region.len() > MAX_FLASH_REGION_LENGTH
             || self
@@ -1599,6 +1606,7 @@ mod tests {
             ephemeral_storage_gib: 10,
             rootfs_storage_gib: None,
             persistent_storage_gib: None,
+            deployment: None,
             restore_from_backup_id: None,
             ports: vec![FlashPort {
                 name: "game-udp".into(),

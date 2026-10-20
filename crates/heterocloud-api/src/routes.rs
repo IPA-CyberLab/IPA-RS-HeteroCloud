@@ -1,5 +1,7 @@
 #[path = "flash_backup_routes.rs"]
 mod backup_routes;
+#[path = "flash_operation_routes.rs"]
+mod operation_routes;
 use std::{
     collections::{BTreeSet, HashMap},
     convert::Infallible,
@@ -133,6 +135,7 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route("/auth/cli/logout", post(cli_logout))
         .route("/owner/quotas", get(owner_quota_overview))
         .route("/owner/cost-management", get(owner_cost_management))
+        .route("/owner/flash/events",get(operation_routes::owner_events))
         .route("/owner/accounts", get(list_owner_accounts))
         .route("/owner/gpus", get(list_owner_gpus))
         .route(
@@ -206,6 +209,13 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route("/organizations/{organization_id}/flash/backups/{backup_id}",get(backup_routes::get_backup).delete(backup_routes::delete_backup))
         .route("/organizations/{organization_id}/flash/backups/{backup_id}/restore",post(backup_routes::restore_backup))
         .route("/organizations/{organization_id}/flash/services/{service_instance_id}/backups",post(backup_routes::create_backup))
+        .route("/organizations/{organization_id}/flash/services/{service_instance_id}/revisions",get(operation_routes::revisions))
+        .route("/organizations/{organization_id}/flash/services/{service_instance_id}/rollback",post(operation_routes::rollback))
+        .route("/organizations/{organization_id}/flash/services/{service_instance_id}/events",get(operation_routes::events))
+        .route("/organizations/{organization_id}/flash/events",get(operation_routes::list_events))
+        .route("/organizations/{organization_id}/flash/services/{service_instance_id}/backup-policy",get(operation_routes::get_policy).put(operation_routes::put_policy))
+        .route("/organizations/{organization_id}/flash/services/{service_instance_id}/backup-policy/run",post(operation_routes::run_policy))
+        .route("/organizations/{organization_id}/flash/backups/{backup_id}/verify",post(operation_routes::verify_backup))
         .route("/flash/gpu-types", get(list_accessible_gpu_types))
         .route(
             "/organizations/{organization_id}/flash/quota",
@@ -5994,6 +6004,7 @@ mod tests {
             ephemeral_storage_gib: 10,
             rootfs_storage_gib: None,
             persistent_storage_gib: None,
+            deployment: None,
             restore_from_backup_id: None,
             ports: vec![FlashPort {
                 name: "game-udp".into(),

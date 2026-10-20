@@ -54,7 +54,16 @@ impl FlashProviderProxy {
         } else {
             format!(
                 "backups{}",
-                backup.map(|id| format!("/{id}")).unwrap_or_default()
+                backup
+                    .map(|id| format!(
+                        "/{id}{}",
+                        if action == "flash.backups.verify" {
+                            "/verify"
+                        } else {
+                            ""
+                        }
+                    ))
+                    .unwrap_or_default()
             )
         };
         let url = self.endpoint.join(&format!(
