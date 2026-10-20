@@ -189,6 +189,12 @@ impl Store {
         instance: &ServiceInstance,
         status: &Value,
     ) -> Result<(), StoreError> {
+        // A provider can still report the preceding runtime generation while an
+        // update is reconciling. It cannot start this revision's activation timer,
+        // change its state or resolve its notifications.
+        if status["observed_generation"].as_i64() != Some(instance.generation) {
+            return Ok(());
+        }
         let mut tx = self.pool.begin().await?;
         let phase = status["phase"].as_str().unwrap_or("provisioning");
         let state = match phase {

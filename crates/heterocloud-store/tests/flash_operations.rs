@@ -93,6 +93,28 @@ async fn revisions_observations_leases_and_retention_are_durable_and_generation_
         idle.activation_started_at.is_none(),
         "cold-start deadline must not run while idle"
     );
+    let cold_update = store
+        .update_service_instance_checked(
+            org,
+            cold.id,
+            "flash",
+            member.principal_id,
+            None,
+            "idle-cold",
+            cold.spec.clone(),
+            Some(cold.generation),
+        )
+        .await?;
+    store.record_flash_observation(&cold_update,&json!({"phase":"ready","observed_generation":cold.generation,"desired_replicas":1,"ready_replicas":1,"diagnostics":[{"code":"disk_full","severity":"error","message":"obsolete"}]})).await?;
+    let waiting = store
+        .flash_revision(org, cold.id, cold_update.generation)
+        .await?;
+    assert!(
+        waiting.activation_started_at.is_none(),
+        "an old provider observation cannot activate the new revision"
+    );
+    assert!(waiting.ready_at.is_none());
+    assert!(store.flash_events(org, Some(cold.id)).await?.is_empty());
     let mut changed = original.spec.clone();
     changed["image"] = json!("example/app:bad");
     changed["env"] = json!({"VALUE":"current"});

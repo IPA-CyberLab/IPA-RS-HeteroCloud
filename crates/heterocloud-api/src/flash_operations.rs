@@ -178,6 +178,9 @@ async fn observe(state: &AppState, instance: ServiceInstance) {
         let _=state.store.record_flash_event(&instance,"provider_unavailable","warning","The current service status could not be retrieved. The last observed state is retained.").await;
         return;
     };
+    if status["observed_generation"].as_i64() != Some(instance.generation) {
+        return;
+    }
     if state
         .store
         .record_flash_observation(&instance, &status)
