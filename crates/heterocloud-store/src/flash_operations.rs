@@ -64,6 +64,8 @@ pub struct FlashBackupPolicy {
     pub last_backup_id: Option<Uuid>,
     pub last_error: Option<String>,
     pub updated_at: DateTime<Utc>,
+    #[serde(skip_serializing)]
+    pub lease_until: Option<DateTime<Utc>>,
 }
 
 /// Revert execution settings only. Current IAM, secrets, exposure and network
@@ -275,8 +277,8 @@ impl Store {
         backup: Option<Uuid>,
         error: Option<&str>,
     ) -> Result<(), StoreError> {
-        sqlx::query("UPDATE flash_backup_policies SET lease_until=NULL,last_run_at=now(),last_backup_id=coalesce($2,last_backup_id),last_error=$3,next_run_at=now()+make_interval(secs=>CASE WHEN $3::text IS NULL THEN interval_seconds ELSE least(interval_seconds,900) END),updated_at=now() WHERE service_instance_id=$1")
-            .bind(policy.service_instance_id).bind(backup).bind(error).execute(&self.pool).await?;
+        sqlx::query("UPDATE flash_backup_policies SET lease_until=NULL,last_run_at=now(),last_backup_id=coalesce($2,last_backup_id),last_error=$3,next_run_at=now()+make_interval(secs=>CASE WHEN $3::text IS NULL THEN interval_seconds ELSE least(interval_seconds,900) END),updated_at=now() WHERE service_instance_id=$1 AND lease_until=$4 AND principal_id=$5 AND updated_at=$6")
+            .bind(policy.service_instance_id).bind(backup).bind(error).bind(policy.lease_until).bind(policy.principal_id).bind(policy.updated_at).execute(&self.pool).await?;
         Ok(())
     }
 

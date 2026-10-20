@@ -163,7 +163,7 @@ export function readyReplicas(service: Pick<FlashService, "status">): number | n
   const status = flashProviderStatus(service.status);
   if (status.live_status_unavailable === true) return null;
   const value =
-    status.ready_replicas ?? status.available_replicas ?? 0;
+    status.serving_replicas ?? status.ready_replicas ?? status.available_replicas ?? 0;
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 

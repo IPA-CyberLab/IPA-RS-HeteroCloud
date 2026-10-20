@@ -159,13 +159,14 @@ async fn revisions_observations_leases_and_retention_are_durable_and_generation_
         .put_flash_backup_policy(org, original.id, member.principal_id, &input)
         .await?;
     let (a, b) = tokio::join!(store.claim_backup_policies(), store.claim_backup_policies());
+    let claimed = a?.into_iter().chain(b?).collect::<Vec<_>>();
     assert_eq!(
-        a?.len() + b?.len(),
+        claimed.len(),
         1,
         "two API replicas must not claim the same schedule"
     );
     store
-        .finish_backup_policy(&policy, None, Some("backup_source_unavailable"))
+        .finish_backup_policy(&claimed[0], None, Some("backup_source_unavailable"))
         .await?;
     assert_eq!(
         store
@@ -241,6 +242,29 @@ async fn revisions_observations_leases_and_retention_are_durable_and_generation_
             .await
             .is_err(),
         "cannot interrupt an active scheduling lease"
+    );
+    let changed = store
+        .put_flash_backup_policy(
+            org,
+            original.id,
+            member.principal_id,
+            &BackupPolicyInput {
+                enabled: false,
+                ..input.clone()
+            },
+        )
+        .await?;
+    store
+        .finish_backup_policy(&claim[0], None, Some("stale_worker_error"))
+        .await?;
+    let after = store
+        .flash_backup_policy(org, original.id)
+        .await?
+        .ok_or("policy")?;
+    assert!(!after.enabled);
+    assert_eq!(
+        after.last_error, changed.last_error,
+        "a stale worker cannot overwrite edited policy results"
     );
     let other = store
         .flash_events(

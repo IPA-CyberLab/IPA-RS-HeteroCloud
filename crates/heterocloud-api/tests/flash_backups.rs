@@ -423,6 +423,50 @@ async fn backups_enforce_tenant_iam_csrf_and_restore_only_into_a_new_stopped_ser
             .status(),
         StatusCode::CONFLICT
     );
+    assert!(
+        heterocloud_api::flash_operations::allowed(
+            &state,
+            membership.principal_id,
+            org,
+            "flash:CreateBackup",
+            &resource
+        )
+        .await
+    );
+    sqlx::query("UPDATE principals SET enabled=false WHERE id=$1")
+        .bind(membership.principal_id.0)
+        .execute(store.pool())
+        .await?;
+    assert!(
+        !heterocloud_api::flash_operations::allowed(
+            &state,
+            membership.principal_id,
+            org,
+            "flash:CreateBackup",
+            &resource
+        )
+        .await,
+        "disabled owners cannot authorize background backup/rollback actions"
+    );
+    sqlx::query("UPDATE principals SET enabled=true WHERE id=$1")
+        .bind(membership.principal_id.0)
+        .execute(store.pool())
+        .await?;
+    sqlx::query("UPDATE users SET status='suspended' WHERE id=$1")
+        .bind(owner.user.id.0)
+        .execute(store.pool())
+        .await?;
+    assert!(
+        !heterocloud_api::flash_operations::allowed(
+            &state,
+            membership.principal_id,
+            org,
+            "flash:CreateBackup",
+            &resource
+        )
+        .await,
+        "inactive users cannot authorize background backup/rollback actions"
+    );
     server.abort();
     Ok(())
 }

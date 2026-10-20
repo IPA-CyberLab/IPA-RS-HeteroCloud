@@ -31,6 +31,18 @@ pub async fn allowed(
     action: &str,
     resource: &str,
 ) -> bool {
+    // Browser authentication normally checks these flags. Background actions
+    // have no browser token, so validate the principal/user before resolving
+    // the owner's membership-based permissions as well.
+    if !matches!(
+        state
+            .store
+            .authorization_context_for_principal(principal, org)
+            .await,
+        Ok(Some(_))
+    ) {
+        return false;
+    }
     let context = match state.store.principal_user_id(principal).await {
         Ok(Some(user)) => state.store.authorization_context(user, org).await,
         Ok(None) => {

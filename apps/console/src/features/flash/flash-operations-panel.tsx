@@ -58,6 +58,7 @@ export function FlashOperationsPanel({organizationId,service}:{organizationId:st
       {id:"health",label:"状態と使用量",content:<SpaceBetween size="m">
         {diagnostics.map((d,index)=><Alert key={d.code+"/"+index} type={d.severity}>{diagnosticText(d.code,d.message)}</Alert>)}
         {!diagnostics.length&&<Box>現在報告されているリソース・起動の警告はありません。</Box>}
+        {status.allocated_memory_mib!==undefined&&<Box>稼働中の全世代の割り当て: CPU {((status.allocated_cpu_millis??0)/1000).toFixed(2)} コア / メモリ {(status.allocated_memory_mib/1024).toFixed(2)} GiB / GPU {status.allocated_gpu_count??0} 個</Box>}
         {disk?<Box>永続ディスク実使用量: {(disk.used_bytes/2**30).toFixed(2)} / {(disk.capacity_bytes/2**30).toFixed(2)} GiB（{(disk.used_bytes/disk.capacity_bytes*100).toFixed(1)}%）<br/>空き: {(disk.available_bytes/2**30).toFixed(2)} GiB・取得日時: {formatDateTime(disk.measured_at)}</Box>:<Box>永続ディスク実使用量: 取得できません。停止中または測定情報がない場合は表示されません。</Box>}
         <Box>更新方式: {service.spec.deployment?.stateless?"永続ホームなし・段階的更新":"永続ホームを保持・停止して更新"} / 自動切り戻し: {service.spec.deployment?.auto_rollback===false?"無効":"有効"}</Box>
       </SpaceBetween>},

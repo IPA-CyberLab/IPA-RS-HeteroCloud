@@ -506,6 +506,10 @@ export interface FlashServiceEndpoint {
 }
 
 export interface FlashServiceStatus {
+  serving_replicas?: number;
+  allocated_cpu_millis?: number;
+  allocated_memory_mib?: number;
+  allocated_gpu_count?: number;
   diagnostics?: FlashDiagnostic[];
   disk_usage?: { capacity_bytes: number; used_bytes: number; available_bytes: number; measured_at: string };
   [key: string]: unknown;
