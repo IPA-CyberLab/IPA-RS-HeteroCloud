@@ -44,6 +44,9 @@ class Client:
         if path.endswith("/ttl"):
             workspace["ttl_ms"] = body["ttl_ms"]
             return None
+        if path.endswith("/autoupdates"):
+            workspace["automatic_updates"] = body["automatic_updates"]
+            return None
         if path.endswith("/builds"):
             workspace["latest_build"] = {"status": "starting", "reason": "dashboard"}
             return {"id": "started"}
@@ -79,6 +82,49 @@ class SchedulingTests(unittest.TestCase):
         client = Client()
         module.reconcile(client, "template", POLICY, apply=True, resume=False)
         self.assertFalse(any(p.endswith("/builds") for m, p, b in client.mutations))
+
+    def test_opted_in_workspace_updates_on_next_start_without_rebuild(self):
+        client = Client()
+        identifier = "113cd3bd-9242-45d6-9d20-d1e1b7e1723e"
+        client.workspaces[2]["id"] = identifier
+        before = copy.deepcopy(client.workspaces[2]["latest_build"])
+        policy = dict(POLICY, workspace_automatic_updates={identifier: "always"})
+        module.reconcile(client, "template", policy, apply=True)
+        self.assertEqual(client.workspaces[2]["automatic_updates"], "always")
+        self.assertEqual(client.workspaces[2]["latest_build"], before)
+        self.assertTrue(all("automatic_updates" not in w for w in client.workspaces[:2]))
+        patch = next(body for method, path, body in client.mutations if method == "PATCH")
+        self.assertEqual(patch, POLICY)
+        client.mutations.clear()
+        module.reconcile(client, "template", policy, apply=True)
+        self.assertFalse(any(path.endswith(("/autoupdates", "/builds"))
+                             for method, path, body in client.mutations))
+
+    def test_foreign_update_policy_rejected_before_any_write(self):
+        client = Client()
+        identifier = "113cd3bd-9242-45d6-9d20-d1e1b7e1723e"
+        client.workspaces[3]["id"] = identifier
+        policy = dict(POLICY, workspace_automatic_updates={identifier: "always"})
+        with self.assertRaises(ValueError):
+            module.reconcile(client, "template", policy, apply=True)
+        self.assertEqual(client.mutations, [])
+
+    def test_update_policy_dry_run_does_not_change_running_workspace(self):
+        client = Client()
+        identifier = "113cd3bd-9242-45d6-9d20-d1e1b7e1723e"
+        client.workspaces[2]["id"] = identifier
+        module.reconcile(client, "template", dict(
+            POLICY, workspace_automatic_updates={identifier: "always"}), apply=False)
+        self.assertEqual(client.mutations, [])
+
+    def test_deployment_update_policy_has_only_explicit_workspace_ids(self):
+        import json
+        policy = json.loads((Path(__file__).resolve().parents[2]
+                             / "deploy/coder/scheduling.json").read_text())
+        client = Client()
+        client.workspaces[2]["id"] = "113cd3bd-9242-45d6-9d20-d1e1b7e1723e"
+        module.reconcile(client, "template", policy, apply=False)
+        self.assertEqual(client.mutations, [])
 
 
 if __name__ == "__main__":

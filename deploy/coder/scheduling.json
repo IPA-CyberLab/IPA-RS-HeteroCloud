@@ -1,0 +1,7 @@
+{
+  "default_ttl_ms": 0,
+  "allow_user_autostop": true,
+  "workspace_automatic_updates": {
+    "113cd3bd-9242-45d6-9d20-d1e1b7e1723e": "always"
+  }
+}

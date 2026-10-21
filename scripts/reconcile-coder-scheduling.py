@@ -45,8 +45,16 @@ class Client:
 
 
 def reconcile(client, template_id, policy, apply=False, resume=False):
-    if policy != {"default_ttl_ms": 0, "allow_user_autostop": True}:
+    scheduling = {key: policy.get(key) for key in ("default_ttl_ms", "allow_user_autostop")}
+    if (set(policy) - {"default_ttl_ms", "allow_user_autostop", "workspace_automatic_updates"}
+            or scheduling != {"default_ttl_ms": 0, "allow_user_autostop": True}):
         raise ValueError("This reconciler requires disabled default autostop with user opt-in allowed")
+    updates = policy.get("workspace_automatic_updates", {})
+    if not isinstance(updates, dict):
+        raise ValueError("Workspace automatic updates must be a mapping")
+    for identifier, setting in updates.items():
+        if str(uuid.UUID(identifier)) != identifier or setting not in ("always", "never"):
+            raise ValueError("Workspace update policies require canonical UUIDs and always or never")
     user = client.call("/api/v2/users/me")
     template_path = "/api/v2/templates/" + template_id
     template = client.call(template_path)
@@ -54,8 +62,10 @@ def reconcile(client, template_id, policy, apply=False, resume=False):
     workspaces = client.call("/api/v2/workspaces?" + query)["workspaces"]
     workspaces = [w for w in workspaces
                   if w["owner_id"] == user["id"] and w["template_id"] == template_id]
+    if set(updates) - {workspace["id"] for workspace in workspaces}:
+        raise ValueError("Configured workspace update policy is outside the authenticated owner/template")
     if apply:
-        client.call(template_path, "PATCH", policy)
+        client.call(template_path, "PATCH", scheduling)
         template = client.call(template_path)
         if template["default_ttl_ms"] != 0:
             raise RuntimeError("The template's default autostop was not disabled")
@@ -67,6 +77,14 @@ def reconcile(client, template_id, policy, apply=False, resume=False):
             raise RuntimeError("Workspace ownership or template changed during reconciliation")
         row = {"workspace": current["name"], "id": current["id"],
                "previous_ttl_ms": current.get("ttl_ms"), "autostop_disabled": apply}
+        if current["id"] in updates:
+            desired = updates[current["id"]]
+            row["automatic_updates"] = desired
+            if apply and current.get("automatic_updates") != desired:
+                client.call(path + "/autoupdates", "PUT", {"automatic_updates": desired})
+                current = client.call(path)
+                if current.get("automatic_updates") != desired:
+                    raise RuntimeError("The workspace's update policy was not applied")
         if apply and current.get("ttl_ms") not in (None, 0):
             client.call(path + "/ttl", "PUT", {"ttl_ms": 0})
             current = client.call(path)

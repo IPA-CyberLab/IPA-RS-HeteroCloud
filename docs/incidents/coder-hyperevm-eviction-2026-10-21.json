@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "incident": "coder-hyperevm-ephemeral-eviction-and-blocked-replacement",
+  "recorded_at": "2026-10-21T06:25:41.025069+00:00",
+  "affected_url": "https://coder.mizuame.app/@mizuame/HyperEVM.main/apps/code-server/",
+  "eviction": {
+    "at": "2026-10-21T03:09:32Z",
+    "reason": "Evicted",
+    "message": "Pod ephemeral local storage usage exceeds the total limit of containers 10737418240.",
+    "temporary_storage_limit_gib": 10,
+    "memory_oom_established": false
+  },
+  "causes": [
+    "ephemeral-storage limit exceeded",
+    "capacity admission lacked a safe fallback for legacy immutable images after error status lost verified inspection metadata",
+    "CSI MiB rounding could exceed automatic combined disk allocation"
+  ],
+  "first_authenticated_recovery_at": "2026-10-21T05:43:42Z",
+  "allocation": {
+    "service_id": "01a11ad4-9917-74b3-a34d-192aaf2a4c76",
+    "generation": 21,
+    "total_disk_gib": 69,
+    "rootfs_storage_gib": 20,
+    "persistent_storage_gib": 48,
+    "memory_mib": 8192,
+    "running_pod_uid": "8c93a734-7cbd-4858-9719-8ef5834cc077"
+  },
+  "persistent_volume": {
+    "pvc_uid": "856a597c-1676-423f-8d16-26752b85bf80",
+    "pv": "pvc-856a597c-1676-423f-8d16-26752b85bf80",
+    "data_check": {
+      "hyper_project_present": true,
+      "codex_state_present": true,
+      "home_capacity_bytes": 50542411776,
+      "home_used_bytes": 35266756608,
+      "home_available_bytes": 15258877952,
+      "observed_at": "2026-10-21T06:00:59.113592+00:00"
+    }
+  },
+  "next_start_policy": {
+    "at": "2026-10-21T06:12:35.797523+00:00",
+    "workspace_id": "113cd3bd-9242-45d6-9d20-d1e1b7e1723e",
+    "automatic_updates": "always",
+    "latest_build_unchanged": true,
+    "active_template_version_id": "6bb601fd-d18d-4bec-a1de-2b7e887a1f7f"
+  },
+  "final_authenticated_browser": {
+    "observed_at": "2026-10-21T06:23:10.600Z",
+    "status": 200,
+    "elapsed_ms": 8248,
+    "workbench": true,
+    "server_errors": []
+  },
+  "production_preservation": {
+    "observed_at": "2026-10-21T06:24:26.412660+00:00",
+    "other_running_workload_pods_preserved": 7,
+    "original_pvc_identities_preserved": 10,
+    "recovered_pod_and_container_retained": true,
+    "workspace_restarts": 0,
+    "flash_phase": "ready",
+    "generation": 21,
+    "home_request": "51539607552",
+    "home_capacity": "48Gi",
+    "user_pods_on_three_control_only_nodes": 0,
+    "remaining_e2e_services": 0,
+    "applications": {
+      "heterocloud": {
+        "sync": "Synced",
+        "health": "Healthy",
+        "source_revision": "4e4d2a67e995de70aa9898ae195cde8d3174cb0e"
+      },
+      "heterocloud-flash": {
+        "sync": "Synced",
+        "health": "Healthy",
+        "source_revision": "01b5e87ab4f6976d5e088bba81ba76e797e9b8fa"
+      }
+    }
+  },
+  "native_regression": {
+    "baseline": {
+      "schema_version": 1,
+      "run_id": "b4ba98ea53e34e329464be4165701fd7",
+      "service_id": "9e10858f-9e08-4da3-84e3-20e88798f2e8",
+      "result": "failed",
+      "checks": {},
+      "cleanup": {
+        "all_new_resources_removed": true
+      },
+      "failure_stage": "automatic_home_ready",
+      "failure_code": "fixture_assertion_or_operation_failed"
+    },
+    "final": {
+      "schema_version": 1,
+      "run_id": "6837590ae92f4f8095d4795edbf56a28",
+      "service_id": "0ca14b6d-aea5-4b29-95e7-5fddb3d95d79",
+      "result": "passed",
+      "checks": {
+        "automatic_csi_allocation_stays_ready_and_inside_budget": true,
+        "invalid_storage_retains_verified_image_budget": true,
+        "legacy_replacement_uses_cache_only_and_retains_data": true,
+        "uncached_unknown_image_denied_without_pull": true
+      },
+      "cleanup": {
+        "all_new_resources_removed": true
+      }
+    },
+    "implementation": "https://github.com/IPA-CyberLab/IPA-RS-HeteroNetwork/blob/203df9d88558bff78a517787c091a9cdcbe3c7b4/scripts/flash_legacy_recovery_e2e.py",
+    "user_workspace_fault_injection": false
+  },
+  "checks": {
+    "flash_rust_library_tests": 94,
+    "flash_operations_python_tests": 27,
+    "coder_terraform_tests": 10,
+    "coder_scheduling_tests": 8,
+    "coder_supervisor_tests": 5,
+    "temporary_coder_credentials_remaining": 0
+  },
+  "release": {
+    "schema_version": 1,
+    "component": "flash",
+    "version": "0.1.55",
+    "commit": "01b5e87ab4f6976d5e088bba81ba76e797e9b8fa",
+    "image": "ghcr.io/ipa-cyberlab/ipa-rs-heterocloud-flash@sha256:713c6ec2807f241bb06be7dfc93f0542f50f1b485238e2082e0ecaec496d2671"
+  },
+  "gitops_infrastructure_master": "203df9d88558bff78a517787c091a9cdcbe3c7b4",
+  "github_actions": [
+    {
+      "url": "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud-Flash/actions/runs/39552373081",
+      "conclusion": "success",
+      "scope": "release verification and multiarch images"
+    },
+    {
+      "url": "https://github.com/IPA-CyberLab/IPA-RS-HeteroNetwork/actions/runs/39554967805",
+      "conclusion": "success",
+      "scope": "admission failure paths and actual VPN/Chromium acceptance"
+    }
+  ],
+  "limitations": [
+    "An explicitly selected older immutable Coder template retains its older configuration.",
+    "Storage writes remain limited by the configured filesystem capacity."
+  ]
+}

@@ -14,6 +14,10 @@ The default allocation is 4 vCPU, 8 GiB RAM, 37 GiB total disk and 10 GiB for
 the container filesystem. Increasing the container filesystem from 3 to 10 GiB
 also increased the total disk budget by 7 GiB to preserve the existing home.
 `workspace_storage_overrides` retains larger disk budgets by workspace ID.
+An optional `persistent_storage_gib` pins the home size independently of the
+container filesystem. The combined budget must also cover the image; keep the
+configured home at least as large as the existing PVC. Automatic homes use the
+remaining space and are allocated at CSI's MiB granularity.
 `workspace_memory_overrides` sets memory in MiB by workspace ID, for example
 `{"workspace-uuid":32768}` for 32 GiB. Store these values as template variables
 and rebuild the affected workspace. A subsequent stop/start preserves the
@@ -74,3 +78,11 @@ existing user's workspace TTLs without rebuilding running workspaces. Add
 `--resume-autostopped` to resume workspaces whose latest stop reason is
 `autostop`; manually stopped workspaces remain stopped. New workspaces inherit
 the disabled default, and users can still opt into a stop timer explicitly.
+
+Production policies live in `deploy/coder/scheduling.json`; pass that file with
+`--policy deploy/coder/scheduling.json`. Its optional `workspace_automatic_updates`
+map selects `always` or `never` for individual workspace UUIDs. `always` uses the
+active template on the next start; applying this setting does not rebuild a
+running workspace. Unlisted workspaces keep their update preference, and the
+reconciler rejects entries outside the authenticated owner and template before
+writing anything. HyperEVM follows the corrected disk template on its next start.

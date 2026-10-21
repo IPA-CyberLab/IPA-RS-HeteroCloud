@@ -50,8 +50,9 @@ variable "workspace_memory_overrides" {
 variable "workspace_storage_overrides" {
   description = "Keep retained persistent homes and larger allocations when increasing temporary storage."
   type = map(object({
-    total_disk_gib     = number
-    rootfs_storage_gib = number
+    total_disk_gib         = number
+    rootfs_storage_gib     = number
+    persistent_storage_gib = optional(number)
   }))
   default = {}
 }
@@ -148,20 +149,22 @@ module "filebrowser" {
 locals {
   service_name = "coder-ws-${data.coder_workspace.me.id}"
   workspace_storage = lookup(var.workspace_storage_overrides, data.coder_workspace.me.id, {
-    total_disk_gib     = 37
-    rootfs_storage_gib = 10
+    total_disk_gib         = 37
+    rootfs_storage_gib     = 10
+    persistent_storage_gib = null
   })
   workspace_memory_mib = lookup(var.workspace_memory_overrides, data.coder_workspace.me.id, 8192)
   service_spec = {
-    region                = "heteronet-global"
-    image                 = var.workspace_image
-    replicas              = 1
-    stopped               = data.coder_workspace.me.start_count == 0
-    cpu_millis            = 4000
-    memory_mib            = local.workspace_memory_mib
-    ephemeral_storage_gib = local.workspace_storage.total_disk_gib
-    rootfs_storage_gib    = local.workspace_storage.rootfs_storage_gib
-    ports                 = []
+    region                 = "heteronet-global"
+    image                  = var.workspace_image
+    replicas               = 1
+    stopped                = data.coder_workspace.me.start_count == 0
+    cpu_millis             = 4000
+    memory_mib             = local.workspace_memory_mib
+    ephemeral_storage_gib  = local.workspace_storage.total_disk_gib
+    rootfs_storage_gib     = local.workspace_storage.rootfs_storage_gib
+    persistent_storage_gib = try(local.workspace_storage.persistent_storage_gib, null)
+    ports                  = []
     exposure = {
       type         = "internal"
       traffic_mode = "forwarded"

@@ -81,6 +81,49 @@ run "new_workspace_keeps_default_memory" {
   }
 }
 
+run "explicit_persistent_home_survives_workspace_updates" {
+  command = apply
+
+  variables {
+    workspace_storage_overrides = {
+      new-workspace = {
+        total_disk_gib         = 57
+        rootfs_storage_gib     = 20
+        persistent_storage_gib = 36
+      }
+    }
+  }
+
+  assert {
+    condition = (
+      jsondecode(restapi_object.workspace.update_data).spec.persistent_storage_gib == 36 &&
+      jsondecode(restapi_object.workspace.update_data).spec.rootfs_storage_gib == 20 &&
+      jsondecode(restapi_object.workspace.update_data).spec.ephemeral_storage_gib == 57 &&
+      jsondecode(restapi_object.workspace.update_data).spec.memory_mib == 8192
+    )
+    error_message = "Explicit persistent storage and the 8 GiB memory allocation must survive a workspace update."
+  }
+}
+
+run "persistent_home_override_does_not_change_other_workspaces" {
+  command = apply
+
+  variables {
+    workspace_storage_overrides = {
+      another-workspace = {
+        total_disk_gib         = 57
+        rootfs_storage_gib     = 20
+        persistent_storage_gib = 36
+      }
+    }
+  }
+
+  assert {
+    condition     = jsondecode(restapi_object.workspace.update_data).spec.persistent_storage_gib == null
+    error_message = "Persistent home allocations must only affect the matching workspace ID."
+  }
+}
+
 run "configured_workspace_keeps_memory_when_running" {
   command = apply
 
