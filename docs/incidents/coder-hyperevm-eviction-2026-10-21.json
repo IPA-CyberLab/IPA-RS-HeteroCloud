@@ -138,5 +138,63 @@
   "limitations": [
     "An explicitly selected older immutable Coder template retains its older configuration.",
     "Storage writes remain limited by the configured filesystem capacity."
-  ]
+  ],
+  "loading_follow_up": {
+    "observed_at": "2026-10-21T06:51:28.014431+00:00",
+    "url": "https://coder.mizuame.app/@mizuame/HyperEVM.main/apps/code-server/?folder=/root/projects/HyperEVM",
+    "reported_symptom": "indefinite loading",
+    "reproduced_in_fresh_verification_session": false,
+    "cause_of_reported_browser_hang": "unconfirmed",
+    "actual_browser_checks": {
+      "schema_version": 1,
+      "observed_at": "2026-10-21T06:44:55.704Z",
+      "passed": true,
+      "checks": [
+        {
+          "name": "folder_and_file",
+          "passed": true,
+          "status": 200,
+          "folder_loaded": true,
+          "file_opened": true,
+          "editor_rendered": true,
+          "websocket_bidirectional": true,
+          "stable_connection_ms": 5000,
+          "elapsed_ms": 13097
+        },
+        {
+          "name": "reload_existing_folder",
+          "passed": true,
+          "status": 200,
+          "folder_loaded": true,
+          "file_opened": true,
+          "editor_rendered": true,
+          "websocket_bidirectional": true,
+          "stable_connection_ms": 5000,
+          "elapsed_ms": 10445
+        }
+      ],
+      "server_errors": []
+    },
+    "missing_file_negative_control": {
+      "expected_failure": true,
+      "actual_passed": false,
+      "failure_stage": "folder_and_file",
+      "workbench_alone_cannot_pass": true
+    },
+    "unchanged_running_pod_uid": "8c93a734-7cbd-4858-9719-8ef5834cc077",
+    "container_restarts": 0,
+    "temporary_coder_credentials_remaining": 0,
+    "token_input_redaction_check": "passed",
+    "runtime_changes": [],
+    "other_observations": {
+      "coder_public_self_healthz_from_server": "timed out after 6 seconds",
+      "coder_loopback_healthz": "HTTP 200 in 0.002 seconds",
+      "relationship_to_browser_symptom": "not established"
+    },
+    "verification_limitations": [
+      "Fresh Chromium sessions and reloads were tested; the original browser state was unavailable.",
+      "HTTP 200 and a visible workbench alone were insufficient checks in the earlier verification.",
+      "No browser cache reset, workspace trust change, file edit, IDE restart or VM restart was performed."
+    ]
+  }
 }

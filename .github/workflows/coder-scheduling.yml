@@ -9,6 +9,7 @@ on:
       - 'scripts/tests/test_coder_scheduling.py'
       - 'scripts/tests/test_coder_supervisor.py'
       - 'scripts/e2e/coder_disk_full.py'
+      - 'scripts/e2e/coder_ide_browser.mjs'
       - '.github/workflows/coder-scheduling.yml'
   pull_request:
     paths:
@@ -18,6 +19,7 @@ on:
       - 'scripts/tests/test_coder_scheduling.py'
       - 'scripts/tests/test_coder_supervisor.py'
       - 'scripts/e2e/coder_disk_full.py'
+      - 'scripts/e2e/coder_ide_browser.mjs'
       - '.github/workflows/coder-scheduling.yml'
 
 permissions:
@@ -53,4 +55,5 @@ jobs:
         run: |
           python3 -m py_compile scripts/reconcile-coder-scheduling.py scripts/e2e/coder_disk_full.py
           sh -n examples/coder/code-server-supervisor.sh
+          node --check scripts/e2e/coder_ide_browser.mjs
           python3 -c 'import json; p=json.load(open("examples/coder/scheduling.json")); assert p == {"default_ttl_ms": 0, "allow_user_autostop": True}'

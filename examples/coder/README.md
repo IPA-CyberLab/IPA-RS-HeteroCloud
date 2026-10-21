@@ -86,3 +86,15 @@ active template on the next start; applying this setting does not rebuild a
 running workspace. Unlisted workspaces keep their update preference, and the
 reconciler rejects entries outside the authenticated owner and template before
 writing anything. HyperEVM follows the corrected disk template on its next start.
+
+For live IDE acceptance, `scripts/e2e/coder_ide_browser.mjs` requires the console's
+Playwright dependencies and Chromium. Pipe one JSON object through stdin with
+`url` (the full Coder code-server URL including `?folder=/absolute/project`),
+`session_token`, `file` (an existing file directly in that folder) and
+`report_path`. An optional `timeout_ms` bounds each readiness wait to at most
+60 seconds. Keep the short-lived Coder token in memory or a protected pipe;
+do not put it in arguments or logs, and revoke it afterward.
+The check opens the specified file and verifies rendered editor lines and
+bidirectional WebSocket traffic, then repeats after reloading the same session.
+An HTTP 200 or visible workbench shell alone cannot pass. It does not edit files,
+restart the IDE or change workspace trust. Reports omit tokens and file contents.

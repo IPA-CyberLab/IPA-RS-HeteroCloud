@@ -99,3 +99,32 @@ master also passed Actions with an actual VPN connection and Chromium session.
 
 Final production and regression results are recorded in the accompanying
 [sanitized verification](coder-hyperevm-eviction-2026-10-21.json).
+
+## Follow-up: loading with an explicit project folder
+
+The user subsequently reported indefinite loading at the same app with
+`?folder=/root/projects/HyperEVM`. The earlier check waited only for the
+workbench shell; it did not establish that the project and editor were usable.
+That was a verification gap.
+
+Fresh authenticated Chromium sessions rendered the HyperEVM file list and opened
+its `README.md`; reloading that same browser session opened it again. The final
+check additionally observed five seconds of stable bidirectional WebSocket
+traffic after each render. Both cases passed. A negative control selecting an
+absent file failed, despite the IDE shell being available. The stronger check is
+maintained as `scripts/e2e/coder_ide_browser.mjs` and accepts an explicit hosting
+URL and a temporary token over stdin. It records neither tokens nor file
+contents. Its live execution was performed from the operator environment;
+Actions checks its syntax alongside the existing Coder configuration tests.
+
+The reported original browser state was not available and its loading hang was
+not reproduced in those verification sessions. Its cause therefore remains
+unconfirmed. The VM, IDE processes, workspace trust, files and browser storage
+were not reset. The recovered Pod retained its UID and zero container restarts.
+
+Separately, a request from the Coder server to its public `/healthz` timed out,
+while its loopback health check returned HTTP 200 immediately. Its VPC excludes
+the physical nodes' public subnet from Internet egress; the public Coder name
+resolves into that subnet. The management health check also timed out. This
+observation alone does not establish the user's IDE loading cause. No egress
+exception or relay configuration change was applied on that assumption.
