@@ -196,8 +196,9 @@ code {
     linear-gradient(125deg, #102b27, #154b3d);
 }
 .site-home article > header h1 {
-  max-width: 17ch;
+  max-width: 52rem;
   line-height: 1.35;
+  word-break: auto-phrase;
 }
 .site-home article > header .lead {
   max-width: 52rem;
@@ -236,6 +237,7 @@ code {
   background: #fff;
   box-shadow: 0 3px 10px #1c49310a;
 }
+.site-home article > section[aria-labelledby="cloud"],
 .site-home article > section[aria-labelledby="services"] {
   grid-column: 1/-1;
 }
@@ -263,6 +265,7 @@ code {
   }
   .site-home article > header,
   .site-home .contents,
+  .site-home article > section[aria-labelledby="cloud"],
   .site-home article > section[aria-labelledby="services"] {
     grid-column: 1;
   }
