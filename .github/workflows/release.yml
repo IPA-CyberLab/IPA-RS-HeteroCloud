@@ -20,6 +20,8 @@ env:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    outputs:
+      ui_only: ${{ steps.identity.outputs.ui_only }}
     services:
       postgres:
         image: postgres:17.6
@@ -41,9 +43,10 @@ jobs:
           fetch-depth: 0
 
       - name: Validate release identity and artifact contract
+        id: identity
         run: |
           python3 -m unittest discover -s scripts/tests -p test_release_artifact.py -v
-          python3 scripts/release_artifact.py validate
+          python3 scripts/release_artifact.py validate >> "$GITHUB_OUTPUT"
       - name: Refuse an already published channel artifact
         env:
           GH_TOKEN: ${{ github.token }}
@@ -172,6 +175,9 @@ jobs:
 
   cli:
     needs: validate
+    # UI-only prereleases publish the tested image without advertising binaries
+    # whose Cargo version belongs to the existing stable CLI release.
+    if: needs.validate.outputs.ui_only != 'true'
     permissions:
       contents: write
     strategy:
