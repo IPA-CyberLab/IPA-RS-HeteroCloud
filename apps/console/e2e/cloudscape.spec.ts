@@ -184,23 +184,44 @@ async function expectNoPageOverflow(page: Page) {
     .toBe(true);
 }
 
-async function expectMonochromeTheme(page: Page) {
-  const colors = await page.evaluate(() => {
+async function expectRestrainedTheme(page: Page) {
+  const palette = await page.evaluate(() => {
     const probe = document.createElement("span");
     document.body.append(probe);
-    const values = ["primary", "primary-content", "secondary", "accent", "neutral", "info", "success", "warning", "error", "base-100", "base-200", "base-content"].map((name) => {
+    const names = ["primary", "primary-content", "success", "warning", "error", "base-100", "base-200", "base-content"];
+    const values = Object.fromEntries(names.map((name) => {
       probe.style.color = `var(--color-${name})`;
-      return getComputedStyle(probe).color;
-    });
+      return [name, getComputedStyle(probe).color];
+    }));
     probe.remove();
     return values;
   });
-  for (const color of colors) {
-    const match = /^rgb\((\d+), (\d+), (\d+)\)$/.exec(color);
-    expect(match, `Expected a grayscale theme color, got ${color}`).not.toBeNull();
-    expect(match![1]).toBe(match![2]);
-    expect(match![2]).toBe(match![3]);
+  const rgb = (name: string) => {
+    const match = /^rgb\((\d+), (\d+), (\d+)\)$/.exec(palette[name]);
+    expect(match, `Expected an RGB theme color for ${name}: ${palette[name]}`).not.toBeNull();
+    return match!.slice(1).map(Number);
+  };
+  const contrast = (a: number[], b: number[]) => {
+    const luminance = (color: number[]) => color.map((v) => {
+      const c = v / 255;
+      return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    }).reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
+    const [lower, upper] = [luminance(a), luminance(b)].sort((x, y) => x - y);
+    return (upper + 0.05) / (lower + 0.05);
+  };
+  for (const name of ["base-100", "base-200", "base-content"]) {
+    const [r, g, b] = rgb(name);
+    expect(r).toBe(g);
+    expect(g).toBe(b);
   }
+  const [r, g, b] = rgb("primary");
+  expect(b).toBeGreaterThan(r);
+  expect(b).toBeGreaterThan(g);
+  expect(contrast(rgb("primary"), rgb("primary-content"))).toBeGreaterThanOrEqual(4.5);
+  for (const name of ["success", "warning", "error"]) {
+    expect(contrast(rgb(name), rgb("base-100"))).toBeGreaterThanOrEqual(4.5);
+  }
+  expect(new Set([palette.success, palette.warning, palette.error]).size).toBe(3);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -263,6 +284,9 @@ test("モバイルでもナビゲーションと Flow 一覧を操作できる",
   if (await navigationToggle.isVisible()) {
     await navigationToggle.click();
     await expect(page.getByRole("link", { name: "プロジェクト" })).toBeVisible();
+    for (const name of ["VPC", "Flow", "Syouyu"]) {
+      await expect(page.locator(".ui-layout__sidebar").getByRole("link", { name, exact: true })).toBeVisible();
+    }
     await page.screenshot({
       path: testInfo.outputPath("navigation-mobile.png"),
       fullPage: true,
@@ -293,18 +317,25 @@ test("モバイルのコンソールホームでもサービスを探せる", as
   expect(browserErrors).toEqual([]);
 });
 
-test("白黒のカラーモードを切り替え、リロード後も保持する", async ({ page }, testInfo) => {
+test("控えめなアクセント色とカラーモードをリロード後も保持する", async ({ page, isMobile }, testInfo) => {
   await page.addInitScript(() => { if (!localStorage.getItem("heterocloud_theme")) localStorage.setItem("heterocloud_theme", "light"); });
   await page.goto("/overview");
   await expect(page.getByRole("heading", { name: "何を構築しますか？" })).toBeVisible();
-  await expectMonochromeTheme(page);
+  const sidebar = page.locator(".ui-layout__sidebar");
+  if (!isMobile) {
+    for (const name of ["VPC", "Flow", "Syouyu"]) {
+      await expect(sidebar.getByRole("link", { name, exact: true })).toBeVisible();
+    }
+  }
+  await expect(sidebar.getByText("その他のサービス")).toHaveCount(0);
+  await expectRestrainedTheme(page);
   await expect(page.locator(".ui-layout__sidebar")).toHaveCSS("background-color", "rgb(255, 255, 255)");
-  await page.screenshot({ path: testInfo.outputPath("monochrome-light.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("accent-light.png"), fullPage: true });
   await page.getByRole("button", { name: "ダークモードに切り替え" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expectMonochromeTheme(page);
+  await expectRestrainedTheme(page);
   await expect(page.locator(".ui-layout__sidebar")).toHaveCSS("background-color", "rgb(23, 23, 23)");
-  await page.screenshot({ path: testInfo.outputPath("monochrome-dark.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("accent-dark.png"), fullPage: true });
   await expect(page.getByRole("heading", { name: "何を構築しますか？" })).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem("heterocloud_theme"))).toBe("dark");
   await page.reload();

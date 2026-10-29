@@ -19,15 +19,9 @@ const baseNavigationItems: SideNavigationProps.Item[] = [
       { type: "link", text: "コスト管理", href: "/cost-management" },
     ],
   },
-  {
-    type: "section",
-    text: "その他のサービス",
-    items: [
-      { type: "link", text: "VPC", href: "/vpc/networks" },
-      { type: "link", text: "Flow", href: "/flow/services" },
-      { type: "link", text: "Syouyu", href: "/syouyu/buckets" },
-    ],
-  },
+  { type: "link", text: "VPC", href: "/vpc/networks" },
+  { type: "link", text: "Flow", href: "/flow/services" },
+  { type: "link", text: "Syouyu", href: "/syouyu/buckets" },
   {
     type: "section",
     text: "管理",

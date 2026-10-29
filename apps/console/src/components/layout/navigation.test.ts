@@ -31,9 +31,12 @@ describe("navigationItems", () => {
     expect(items).not.toContainEqual(
       expect.objectContaining({ type: "section", text: "Flash Registry" }),
     );
-    expect(JSON.stringify(items)).toContain("Flow");
-    expect(JSON.stringify(items)).toContain("Syouyu");
-    expect(JSON.stringify(items)).toContain("/syouyu/buckets");
+    expect(items).toEqual(expect.arrayContaining([
+      { type: "link", text: "VPC", href: "/vpc/networks" },
+      { type: "link", text: "Flow", href: "/flow/services" },
+      { type: "link", text: "Syouyu", href: "/syouyu/buckets" },
+    ]));
+    expect(JSON.stringify(items)).not.toContain("その他のサービス");
     expect(JSON.stringify(items)).toContain("/cli");
     expect(JSON.stringify(items)).toContain("CLIセットアップ");
     expect(JSON.stringify(items)).not.toContain("全アカウント管理");

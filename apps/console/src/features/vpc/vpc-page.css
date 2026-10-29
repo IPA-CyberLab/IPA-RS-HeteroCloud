@@ -68,7 +68,7 @@
   margin-right: 7px;
 }
 .vpc-state-dot.is-ready {
-  background: var(--color-base-content);
+  background: var(--color-success);
   border: none;
 }
 .vpc-facts {

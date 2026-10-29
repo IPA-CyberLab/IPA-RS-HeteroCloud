@@ -191,12 +191,12 @@ summary {
   color: var(--color-base-content);
 }
 .ui-menu li > a.is-active {
-  background: var(--color-base-300);
-  color: var(--color-base-content);
+  background: color-mix(in oklab, var(--color-primary) 12%, var(--color-base-100));
+  color: var(--color-primary);
   font-weight: 700;
 }
 .ui-menu li > a.is-active svg {
-  color: var(--color-base-content);
+  color: var(--color-primary);
 }
 .ui-nav-section summary {
   display: flex;
@@ -406,14 +406,14 @@ pre.ui-box {
   background: color-mix(in oklab, var(--color-base-content) 45%, transparent);
 }
 .ui-status--success .ui-status__dot {
-  background: var(--color-base-content);
+  background: var(--color-success);
 }
 .ui-status--warning .ui-status__dot {
   background: transparent;
-  border: 2px solid var(--color-base-content);
+  border: 2px solid var(--color-warning);
 }
 .ui-status--error .ui-status__dot {
-  background: var(--color-base-content);
+  background: var(--color-error);
   border-radius: 1px;
   transform: rotate(45deg);
 }
