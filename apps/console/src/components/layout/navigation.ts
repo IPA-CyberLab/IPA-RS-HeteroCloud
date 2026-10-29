@@ -1,4 +1,4 @@
-import type { SideNavigationProps } from "@cloudscape-design/components/side-navigation";
+import type { SideNavigationProps } from "@/components/ui";
 
 const baseNavigationItems: SideNavigationProps.Item[] = [
   { type: "link", text: "コンソールホーム", href: "/overview" },

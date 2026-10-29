@@ -1,8 +1,8 @@
-import ColumnLayout from "@cloudscape-design/components/column-layout";
-import FormField from "@cloudscape-design/components/form-field";
-import Input from "@cloudscape-design/components/input";
-import Select from "@cloudscape-design/components/select";
-import SpaceBetween from "@cloudscape-design/components/space-between";
+import { ColumnLayout } from "@/components/ui";
+import { FormField } from "@/components/ui";
+import { Input } from "@/components/ui";
+import { Select } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
 import type { FormEvent, ReactNode } from "react";
 import { ProjectSelector } from "@/components/shared/resource-selectors";
 

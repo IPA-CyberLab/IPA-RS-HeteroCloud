@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { FlashGpuType, FlashQuotaLimits, RegistryImage } from "@/lib/api-types";
+import type { FlashGpuType, FlashQuotaLimits, RegistryImage, VpcNetwork } from "@/lib/api-types";
 import {
   defaultFlashQuotaLimits,
   defaultFlashServiceFormValue,
@@ -26,10 +26,12 @@ function FormHarness({
   quota,
   initial = {},
   gpuTypes = [],
+  vpcs = [],
 }: {
   quota?: FlashQuotaLimits;
   initial?: Partial<FlashServiceFormValue>;
   gpuTypes?: FlashGpuType[];
+  vpcs?: VpcNetwork[];
 }) {
   const [value, setValue] = useState<FlashServiceFormValue>({
     ...defaultFlashServiceFormValue,
@@ -46,10 +48,12 @@ function FormHarness({
         onSubmit={(event) => event.preventDefault()}
         quota={quota}
         gpuTypes={gpuTypes}
+        vpcs={vpcs}
       >
         <button type="submit">保存</button>
       </FlashServiceForm>
       <output data-testid="gpu-type">{value.gpuType}</output>
+      <output data-testid="security-groups">{value.securityGroups}</output>
     </>
   );
 }
@@ -150,9 +154,9 @@ describe("FlashServiceForm", () => {
     expect(screen.getByRole("spinbutton", { name: "CPU" })).toHaveValue(500);
     expect(screen.getByRole("spinbutton", { name: "メモリ" })).toHaveValue(512);
     expect(
-      screen.getByRole("button", { name: /GPU種類.*GPUなし/ }),
-    ).toHaveTextContent("GPUなし");
-    expect(screen.getByRole("button", { name: /udpのプロトコル/ })).toHaveTextContent("UDP");
+      screen.getByRole("combobox", { name: "GPU種類" }),
+    ).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "udpのプロトコル" })).toHaveValue("udp");
     expect(screen.queryByRole("spinbutton", { name: "サービスポート" })).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "CPU" })).toHaveAttribute("max", "4000");
     expect(screen.getByRole("spinbutton", { name: "メモリ" })).toHaveAttribute("max", "8128");
@@ -211,10 +215,8 @@ describe("FlashServiceForm", () => {
       />,
     );
     expect(
-      screen.getByRole("button", {
-        name: /GPU種類.*NVIDIA GeForce GTX 1080 Ti/,
-      }),
-    ).toHaveTextContent("NVIDIA GeForce GTX 1080 Ti");
+      screen.getByRole("combobox", { name: "GPU種類" }),
+    ).toHaveValue("nvidia-geforce-gtx-1080-ti");
     expect(screen.getByTestId("gpu-type")).toHaveTextContent(
       "nvidia-geforce-gtx-1080-ti",
     );
@@ -291,7 +293,7 @@ describe("FlashServiceForm", () => {
       label: "game/server:v2",
     });
     expect(
-      screen.getByRole("button", { name: /Flash Registryイメージ/ }),
+      screen.getByRole("combobox", { name: "Flash Registryイメージ" }),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("直接入力"));
@@ -588,13 +590,13 @@ describe("Flash web publishing", () => {
     expect(screen.getByRole("button", { name: "転送" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "ダイレクト" })).toBeDisabled();
     expect(screen.getByRole("spinbutton", { name: "コンテナポート" })).toHaveValue(8080);
-    expect(screen.getByRole("textbox", { name: "受信許可元IP / CIDR" })).toHaveValue("203.0.113.0/24");
+    expect(screen.getByRole("button", { name: "203.0.113.0/24 を削除" })).toBeInTheDocument();
     expect(screen.getByText(/設定を削除するか/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "エンドポイントを追加" })).toBeDisabled();
     expect(screen.queryByRole("spinbutton", { name: "サービスポート" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "httpを削除" }));
     fireEvent.click(screen.getByRole("button", { name: "エンドポイントを追加" }));
-    expect(screen.getByRole("button", { name: /port-1のプロトコル/ })).toHaveTextContent("TCP");
+    expect(screen.getByRole("combobox", { name: "port-1のプロトコル" })).toHaveValue("tcp");
   });
 });
 
@@ -610,6 +612,16 @@ it("VPC attachment preserves private naming and disables legacy organization-wid
   expect(spec.exposure.endpoint_mode).toBe("ip");
 });
 
+
+it("VPC groups are selectable without losing existing unknown memberships", () => {
+  const vpc: VpcNetwork = {id:"vpc-1",organization_id:"org-1",project_id:"project-1",provider:"vpc",name:"coder",generation:1,state:"ready",spec:{region:"heteronet-global",description:"",nat:{enabled:true},security_groups:["coder","workspaces"],rules:[]},status:{},created_at:"2026-01-01T00:00:00Z",updated_at:"2026-01-01T00:00:00Z"};
+  render(<FormHarness vpcs={[vpc]} initial={{vpcId:"vpc-1",securityGroups:"coder\nlegacy"}} />);
+  fireEvent.click(screen.getByRole("button", {name:"セキュリティグループ"}));
+  fireEvent.click(screen.getByRole("option", {name:"workspaces"}));
+  expect(screen.getByTestId("security-groups")).toHaveTextContent(/coder\s+legacy\s+workspaces/);
+  fireEvent.click(screen.getByRole("button", {name:"legacy を削除"}));
+  expect(screen.getByTestId("security-groups")).toHaveTextContent(/coder\s+workspaces/);
+});
 
 describe("load balancer authentication and task IAM", () => {
   const form = {

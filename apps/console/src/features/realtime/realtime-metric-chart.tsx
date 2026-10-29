@@ -1,7 +1,7 @@
-import Box from "@cloudscape-design/components/box";
-import Container from "@cloudscape-design/components/container";
-import Header from "@cloudscape-design/components/header";
-import LineChart from "@cloudscape-design/components/line-chart";
+import { Box } from "@/components/ui";
+import { Container } from "@/components/ui";
+import { Header } from "@/components/ui";
+import { LineChart } from "@/components/ui";
 import type { RealtimeServiceMetricSample } from "@/lib/api-types";
 
 export function RealtimeMetricChart({
@@ -58,7 +58,7 @@ export function RealtimeMetricChart({
           filterSelectedAriaLabel: "選択済み",
           legendAriaLabel: "凡例",
           chartAriaRoleDescription: "時系列グラフ",
-          xTickFormatter: (date) =>
+          xTickFormatter: (date: Date) =>
             new Intl.DateTimeFormat("ja-JP", {
               month: "numeric",
               day: "numeric",

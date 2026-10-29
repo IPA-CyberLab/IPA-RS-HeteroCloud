@@ -1,6 +1,6 @@
-import Badge from "@cloudscape-design/components/badge";
-import Box from "@cloudscape-design/components/box";
-import SpaceBetween from "@cloudscape-design/components/space-between";
+import { Badge } from "@/components/ui";
+import { Box } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";

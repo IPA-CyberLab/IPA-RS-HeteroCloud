@@ -1,9 +1,9 @@
-import Box from "@cloudscape-design/components/box";
-import Button from "@cloudscape-design/components/button";
-import FormField from "@cloudscape-design/components/form-field";
-import Input from "@cloudscape-design/components/input";
-import Modal from "@cloudscape-design/components/modal";
-import SpaceBetween from "@cloudscape-design/components/space-between";
+import { Box } from "@/components/ui";
+import { Button } from "@/components/ui";
+import { FormField } from "@/components/ui";
+import { Input } from "@/components/ui";
+import { Modal } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo, useState } from "react";

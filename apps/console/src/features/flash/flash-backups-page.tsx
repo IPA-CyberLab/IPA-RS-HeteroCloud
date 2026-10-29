@@ -1,6 +1,6 @@
 import { PageHeader } from "@/components/shared/page-header";
 import { useActiveOrganization } from "@/features/organizations/organization-context";
-import SpaceBetween from "@cloudscape-design/components/space-between";
+import { SpaceBetween } from "@/components/ui";
 import { FlashBackupsPanel } from "./flash-backups-panel";
 
 export function FlashBackupsPage() {

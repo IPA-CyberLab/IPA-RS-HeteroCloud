@@ -1,9 +1,9 @@
-import Pagination from "@cloudscape-design/components/pagination";
-import Box from "@cloudscape-design/components/box";
-import Link from "@cloudscape-design/components/link";
-import SpaceBetween from "@cloudscape-design/components/space-between";
-import Table, { type TableProps } from "@cloudscape-design/components/table";
-import TextFilter from "@cloudscape-design/components/text-filter";
+import { Pagination } from "@/components/ui";
+import { Box } from "@/components/ui";
+import { Link } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
+import { Table, type TableProps } from "@/components/ui";
+import { TextFilter } from "@/components/ui";
 import {
   type ColumnDef,
   type SortingState,

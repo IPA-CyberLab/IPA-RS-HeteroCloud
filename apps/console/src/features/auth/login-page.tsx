@@ -1,9 +1,9 @@
-import Alert from "@cloudscape-design/components/alert";
-import Button from "@cloudscape-design/components/button";
-import Container from "@cloudscape-design/components/container";
-import Header from "@cloudscape-design/components/header";
-import SpaceBetween from "@cloudscape-design/components/space-between";
-import TopNavigation from "@cloudscape-design/components/top-navigation";
+import { Alert } from "@/components/ui";
+import { Button } from "@/components/ui";
+import { Container } from "@/components/ui";
+import { Header } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
+import { TopNavigation } from "@/components/ui";
 import { Navigate } from "react-router-dom";
 import { readAuthReturnPath } from "@/features/auth/auth-return";
 import { useSession } from "@/features/auth/session";

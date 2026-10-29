@@ -1,7 +1,7 @@
-import Box from "@cloudscape-design/components/box";
-import CopyToClipboard from "@cloudscape-design/components/copy-to-clipboard";
-import Link from "@cloudscape-design/components/link";
-import SpaceBetween from "@cloudscape-design/components/space-between";
+import { Box } from "@/components/ui";
+import { CopyToClipboard } from "@/components/ui";
+import { Link } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/shared/data-table";
 import type { DisplayFlashEndpoint } from "./flash-service-utils";

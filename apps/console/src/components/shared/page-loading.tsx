@@ -1,6 +1,6 @@
-import Box from "@cloudscape-design/components/box";
-import SpaceBetween from "@cloudscape-design/components/space-between";
-import Spinner from "@cloudscape-design/components/spinner";
+import { Box } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
+import { Spinner } from "@/components/ui";
 
 interface PageLoadingProps {
   label?: string;

@@ -56,28 +56,28 @@ test(`Flash autoscaling and ${endpointMode} edit on desktop and mobile`, async (
   await page.getByRole("button", { name: "編集", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Flashサービスを編集" });
   await expect(dialog.getByRole("spinbutton", { name: "最小レプリカ" })).toHaveValue("2");
-  if (isMobile) {
-    await dialog.getByRole("button", { name: /通信モード.*転送/ }).click();
-    await expect(page.getByRole("option", { name: "ダイレクト" })).toHaveAttribute("aria-disabled", "true");
-    await page.keyboard.press("Escape");
-  } else {
-    await expect(dialog.getByRole("button", { name: "ダイレクト" })).toBeDisabled();
-  }
+  await expect(dialog.getByRole("button", { name: "ダイレクト" })).toBeDisabled();
   if (web) {
-    await expect(dialog.getByRole("button", { name: /gameのプロトコル/ })).toHaveText("TCP");
+    await expect(dialog.getByRole("combobox", { name: "gameのプロトコル" })).toHaveValue("tcp");
     await expect(dialog.getByRole("button", { name: "エンドポイントを追加" })).toBeDisabled();
     await expect(dialog.getByRole("spinbutton", { name: "サービスポート" })).toHaveCount(0);
     await dialog.getByRole("spinbutton", { name: "コンテナポート" }).fill("8081");
     for (const label of ["受信許可元IP / CIDR", "受信拒否元IP / CIDR"]) {
       const cidrs = dialog.getByRole("textbox", { name: label, exact: true });
       await cidrs.fill("203.0.113.0/24");
-      await expect(cidrs).toHaveValue("203.0.113.0/24");
+      await cidrs.press("Enter");
+      await expect(dialog.getByRole("button", { name: "203.0.113.0/24 を削除" })).toBeVisible();
       await expect(dialog.getByRole("button", { name: "変更を保存" })).toBeDisabled();
       await expect(dialog.getByText(/設定を削除するか/).first()).toBeVisible();
-      await cidrs.fill("");
+      await dialog.getByRole("button", { name: "203.0.113.0/24 を削除" }).click();
     }
     await expect(dialog.getByRole("button", { name: "変更を保存" })).toBeEnabled();
   }
+  await expect(dialog.getByRole("textbox", { name: "環境変数名 1" })).toHaveValue("MODE");
+  await dialog.getByRole("textbox", { name: "環境変数値 1" }).fill("staging=blue");
+  await dialog.getByRole("button", { name: "環境変数を追加" }).click();
+  await dialog.getByRole("textbox", { name: "環境変数名 2" }).fill("LOG_LEVEL");
+  await dialog.getByRole("textbox", { name: "環境変数値 2" }).fill("debug");
   await dialog.getByRole("spinbutton", { name: "最大レプリカ" }).fill("9");
   await dialog.getByRole("checkbox", { name: "メモリ目標使用率 (%)" }).check();
   await dialog.getByRole("spinbutton", { name: "メモリ目標使用率 (%)" }).fill("65");
@@ -93,12 +93,12 @@ test(`Flash autoscaling and ${endpointMode} edit on desktop and mobile`, async (
   if (!isMobile) expect(positions[0].y).toBeCloseTo(positions[2].y, 0);
   await page.screenshot({ path: testInfo.outputPath("flash-autoscale.png"), fullPage: true });
   await dialog.locator(".flash-scale-controls").screenshot({ path: testInfo.outputPath("flash-scale-controls.png") });
-  await dialog.getByRole("button", { name: isMobile ? /公開アドレス.*ドメイン/ : web ? "HTTP/HTTPS ドメイン" : "ドメイン (LB)" })
+  await dialog.getByRole("button", { name: web ? "HTTP/HTTPS ドメイン" : "ドメイン (LB)" })
     .evaluate((element) => element.scrollIntoView({ block: "center" }));
   await page.screenshot({ path: testInfo.outputPath(web ? "flash-web-edit.png" : "flash-publishing.png") });
   await dialog.getByRole("button", { name: "変更を保存" }).click();
   await expect(dialog).not.toBeVisible();
-  expect(saved?.spec).toMatchObject({ ...spec, ports: [{ name: "game", protocol: web ? "tcp" : "udp", container_port: web ? 8081 : 7777 }],
+  expect(saved?.spec).toMatchObject({ ...spec, env: {MODE:"staging=blue",LOG_LEVEL:"debug"}, ports: [{ name: "game", protocol: web ? "tcp" : "udp", container_port: web ? 8081 : 7777 }],
     autoscaling: { ...spec.autoscaling, max_replicas: 9, target_memory_utilization_percent: 65 } });
   if (web) await expect(page.getByRole("link", { name: /https:\/\/lb.example.test/ })).toHaveAttribute("href", "https://lb.example.test");
   expect(errors).toEqual([]);
@@ -131,14 +131,15 @@ test("Flash作成ではGPU種類だけを選び、レプリカを1に固定す�
   await page.goto("/flash/services");
   await page.getByRole("button", { name: "サービスを作成" }).click();
   const dialog = page.getByRole("dialog", { name: "Flashサービスを作成" });
-  await dialog.getByRole("button", { name: /GPU種類.*GPUなし/ }).click();
+  const gpuSelect = dialog.getByRole("combobox", { name: "GPU種類" });
+  await expect(gpuSelect).toHaveValue("");
   const queuedGpu = page.getByRole("option", {
     name: /NVIDIA A100.*Private.*空き 0 \/ 1.*開始まで待機/,
   });
-  await expect(queuedGpu).not.toHaveAttribute("aria-disabled", "true");
-  await queuedGpu.click();
+  await expect(queuedGpu).toBeEnabled();
+  await gpuSelect.selectOption("nvidia-a100");
 
-  await expect(dialog.getByRole("button", { name: /GPU種類.*NVIDIA A100/ })).toBeVisible();
+  await expect(gpuSelect).toHaveValue("nvidia-a100");
   await expect(
     dialog.getByText("現在空きはありません。リクエストは受け付けられ、GPUが空き次第自動で開始します。"),
   ).toBeVisible();

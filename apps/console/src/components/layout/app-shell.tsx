@@ -1,10 +1,8 @@
-import AppLayout from "@cloudscape-design/components/app-layout";
-import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
-import Flashbar, { type FlashbarProps } from "@cloudscape-design/components/flashbar";
-import SideNavigation from "@cloudscape-design/components/side-navigation";
-import TopNavigation, {
-  type TopNavigationProps,
-} from "@cloudscape-design/components/top-navigation";
+import { AppLayout } from "@/components/ui";
+import { BreadcrumbGroup } from "@/components/ui";
+import { Flashbar, type FlashbarProps } from "@/components/ui";
+import { SideNavigation } from "@/components/ui";
+import { TopNavigation, type TopNavigationProps } from "@/components/ui";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -66,7 +64,7 @@ function breadcrumbs(pathname: string, ownerConsole: boolean) {
 }
 
 export function AppShell() {
-  const [navigationOpen, setNavigationOpen] = useState(true);
+  const [navigationOpen, setNavigationOpen] = useState(() => typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 1024px)").matches);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const location = useLocation();
   const navigate = useNavigate();

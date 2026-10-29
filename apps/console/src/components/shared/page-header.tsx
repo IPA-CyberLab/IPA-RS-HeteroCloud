@@ -1,4 +1,4 @@
-import Header from "@cloudscape-design/components/header";
+import { Header } from "@/components/ui";
 import type { ReactNode } from "react";
 
 interface PageHeaderProps {

@@ -210,8 +210,8 @@ test("概要から Flow 詳細まで操作でき、グラフと接続先を表�
   await serviceRow.getByRole("link", { name: "flow-productionの詳細を開く" }).click();
   await expect(page).toHaveURL(new RegExp(`/flow/services/${serviceId}$`));
   await expect(page.getByRole("heading", { name: "flow-production" })).toBeVisible();
-  await expect(page.getByRole("application", { name: "アクティブルームの推移" })).toBeVisible();
-  await expect(page.getByRole("application", { name: "転送量 / 時間の推移" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "アクティブルームの推移" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "転送量 / 時間の推移" })).toBeVisible();
   await expect(page.getByText("stun:flow.heterocloud.mizuame.app:3478")).toBeVisible();
   await expect(page.getByText("turn:flow.heterocloud.mizuame.app:3478?transport=udp")).toBeVisible();
   await expectNoPageOverflow(page);
@@ -269,5 +269,28 @@ test("モバイルのコンソールホームでもサービスを探せる", as
     path: testInfo.outputPath("console-home-mobile.png"),
     fullPage: true,
   });
+  await page.getByRole("option", { name: /Flash Registry/ }).click();
+  await expect(page).toHaveURL(/\/registry$/);
   expect(browserErrors).toEqual([]);
+});
+
+test("カラーモードを切り替え、リロード後も保持する", async ({ page }) => {
+  await page.addInitScript(() => { if (!localStorage.getItem("heterocloud_theme")) localStorage.setItem("heterocloud_theme", "light"); });
+  await page.goto("/overview");
+  await page.getByRole("button", { name: "ダークモードに切り替え" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.getByRole("heading", { name: "何を構築しますか？" })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem("heterocloud_theme"))).toBe("dark");
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+});
+
+
+test("サービス検索をキーボードで操作できる", async ({ page }) => {
+  await page.goto("/overview");
+  const search = page.getByRole("combobox", { name: "コンソールホームからサービスを検索" });
+  await search.fill("Registry");
+  await search.press("ArrowDown");
+  await search.press("Enter");
+  await expect(page).toHaveURL(/\/registry$/);
 });

@@ -1,10 +1,10 @@
 import { vpcsQueryOptions } from "@/lib/queries";
-import Box from "@cloudscape-design/components/box";
-import Button from "@cloudscape-design/components/button";
-import ColumnLayout from "@cloudscape-design/components/column-layout";
-import Container from "@cloudscape-design/components/container";
-import Modal from "@cloudscape-design/components/modal";
-import SpaceBetween from "@cloudscape-design/components/space-between";
+import { Box } from "@/components/ui";
+import { Button } from "@/components/ui";
+import { ColumnLayout } from "@/components/ui";
+import { Container } from "@/components/ui";
+import { Modal } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { type FormEvent, useMemo, useState } from "react";

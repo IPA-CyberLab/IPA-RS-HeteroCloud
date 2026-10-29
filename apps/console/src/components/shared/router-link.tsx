@@ -1,4 +1,4 @@
-import Link, { type LinkProps } from "@cloudscape-design/components/link";
+import { Link, type LinkProps } from "@/components/ui";
 import { useNavigate } from "react-router-dom";
 
 type RouterLinkProps = Omit<LinkProps, "href" | "onFollow"> & {

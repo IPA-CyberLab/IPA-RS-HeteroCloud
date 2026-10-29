@@ -1,4 +1,4 @@
-import Autosuggest from "@cloudscape-design/components/autosuggest";
+import { Autosuggest } from "@/components/ui";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { consoleServices } from "./service-catalog";

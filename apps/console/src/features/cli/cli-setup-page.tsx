@@ -1,10 +1,10 @@
-import Alert from "@cloudscape-design/components/alert";
-import Box from "@cloudscape-design/components/box";
-import Button from "@cloudscape-design/components/button";
-import Container from "@cloudscape-design/components/container";
-import Header from "@cloudscape-design/components/header";
-import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
-import SpaceBetween from "@cloudscape-design/components/space-between";
+import { Alert } from "@/components/ui";
+import { Box } from "@/components/ui";
+import { Button } from "@/components/ui";
+import { Container } from "@/components/ui";
+import { Header } from "@/components/ui";
+import { KeyValuePairs } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
 import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import { useActiveOrganization } from "@/features/organizations/organization-context";

@@ -1,17 +1,15 @@
 import { vpcsQueryOptions } from "@/lib/queries";
-import Alert from "@cloudscape-design/components/alert";
-import Box from "@cloudscape-design/components/box";
-import Button from "@cloudscape-design/components/button";
-import ColumnLayout from "@cloudscape-design/components/column-layout";
-import Container from "@cloudscape-design/components/container";
-import Header from "@cloudscape-design/components/header";
-import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
-import Modal from "@cloudscape-design/components/modal";
-import Select from "@cloudscape-design/components/select";
-import SpaceBetween from "@cloudscape-design/components/space-between";
-import StatusIndicator, {
-  type StatusIndicatorProps,
-} from "@cloudscape-design/components/status-indicator";
+import { Alert } from "@/components/ui";
+import { Box } from "@/components/ui";
+import { Button } from "@/components/ui";
+import { ColumnLayout } from "@/components/ui";
+import { Container } from "@/components/ui";
+import { Header } from "@/components/ui";
+import { KeyValuePairs } from "@/components/ui";
+import { Modal } from "@/components/ui";
+import { Select } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
+import { StatusIndicator, type StatusIndicatorProps } from "@/components/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { type FormEvent, useState } from "react";

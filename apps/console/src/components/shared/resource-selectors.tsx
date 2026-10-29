@@ -1,4 +1,4 @@
-import Select from "@cloudscape-design/components/select";
+import { Select } from "@/components/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveOrganization } from "@/features/organizations/organization-context";
 import { projectsQueryOptions } from "@/lib/queries";

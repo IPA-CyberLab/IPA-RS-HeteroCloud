@@ -1,8 +1,8 @@
-import Alert from "@cloudscape-design/components/alert";
-import Box from "@cloudscape-design/components/box";
-import Button from "@cloudscape-design/components/button";
-import SpaceBetween from "@cloudscape-design/components/space-between";
-import Toggle from "@cloudscape-design/components/toggle";
+import { Alert } from "@/components/ui";
+import { Box } from "@/components/ui";
+import { Button } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
+import { Toggle } from "@/components/ui";
 import {useQuery} from "@tanstack/react-query";
 import {useState} from "react";
 import {PageHeader} from "@/components/shared/page-header";

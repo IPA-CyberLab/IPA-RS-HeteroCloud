@@ -12,9 +12,6 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@cloudscape-design/collection-hooks": "^1.0.105",
-    "@cloudscape-design/components": "^3.0.1340",
-    "@cloudscape-design/global-styles": "^1.0.65",
     "@fontsource-variable/noto-sans": "5.3.0",
     "@fontsource-variable/noto-sans-jp": "5.3.0",
     "@tanstack/react-query": "^5.101.4",
@@ -23,12 +20,14 @@
     "@xterm/addon-unicode11": "^0.9.0",
     "@xterm/xterm": "^6.0.0",
     "ipaddr.js": "2.2.0",
+    "lucide-react": "1.63.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "7.18.2"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
+    "@tailwindcss/vite": "4.3.3",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -36,7 +35,9 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",
+    "daisyui": "5.7.50",
     "jsdom": "^30.0.1",
+    "tailwindcss": "4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.2.0",
     "vitest": "^4.1.10"

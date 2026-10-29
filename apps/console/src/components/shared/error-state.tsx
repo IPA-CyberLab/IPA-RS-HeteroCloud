@@ -1,5 +1,5 @@
-import Alert from "@cloudscape-design/components/alert";
-import Button from "@cloudscape-design/components/button";
+import { Alert } from "@/components/ui";
+import { Button } from "@/components/ui";
 
 interface ErrorStateProps {
   title?: string;

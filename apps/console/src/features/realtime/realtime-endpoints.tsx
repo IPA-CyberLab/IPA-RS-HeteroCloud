@@ -1,6 +1,6 @@
-import Box from "@cloudscape-design/components/box";
-import Button from "@cloudscape-design/components/button";
-import Table from "@cloudscape-design/components/table";
+import { Box } from "@/components/ui";
+import { Button } from "@/components/ui";
+import { Table } from "@/components/ui";
 import { useState } from "react";
 import type { RealtimeServiceEndpoints } from "@/lib/api-types";
 import { endpointCount, endpointGroups } from "./realtime-service-utils";

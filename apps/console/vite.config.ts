@@ -1,10 +1,11 @@
 import path from "node:path";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vitest/config";
 import { publicSite } from "./site/vite-plugin.ts";
 
 export default defineConfig({
-  plugins: [publicSite(), react()],
+  plugins: [publicSite(), tailwindcss(), react()],
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),

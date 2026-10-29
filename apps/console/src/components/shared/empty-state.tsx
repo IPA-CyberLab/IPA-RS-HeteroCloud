@@ -1,5 +1,5 @@
-import Box from "@cloudscape-design/components/box";
-import SpaceBetween from "@cloudscape-design/components/space-between";
+import { Box } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
 import type { ReactNode } from "react";
 
 interface EmptyStateProps {

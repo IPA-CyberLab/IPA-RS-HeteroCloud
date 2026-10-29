@@ -1,6 +1,6 @@
-import Box from "@cloudscape-design/components/box";
-import Pagination from "@cloudscape-design/components/pagination";
-import SpaceBetween from "@cloudscape-design/components/space-between";
+import { Box } from "@/components/ui";
+import { Pagination } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
 import { formatNumber } from "@/lib/utils";
 
 interface TablePaginationProps {
@@ -25,9 +25,6 @@ export function TablePagination({
     <SpaceBetween direction="horizontal" size="m" alignItems="center">
       <Box color="text-body-secondary">
         {formatNumber(firstItem)}–{formatNumber(lastItem)} / {formatNumber(totalItems)}
-      </Box>
-      <Box color="text-body-secondary">
-        {pageIndex + 1} / {Math.max(1, pageCount)}
       </Box>
       <Pagination
         currentPageIndex={pageIndex + 1}

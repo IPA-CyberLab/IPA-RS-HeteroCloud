@@ -1,6 +1,4 @@
-import StatusIndicator, {
-  type StatusIndicatorProps,
-} from "@cloudscape-design/components/status-indicator";
+import { StatusIndicator, type StatusIndicatorProps } from "@/components/ui";
 
 const labels: Record<string, string> = {
   active: "有効",

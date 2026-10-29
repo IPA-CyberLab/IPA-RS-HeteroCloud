@@ -141,17 +141,17 @@ describe("RealtimeServiceDetailPage", () => {
     expect(screen.getByText("500")).toBeInTheDocument();
     expect(screen.getByText("20 RPS / burst 40")).toBeInTheDocument();
     expect(
-      await screen.findByRole("application", { name: /アクティブルームの推移/ }),
+      await screen.findByRole("img", { name: /アクティブルームの推移/ }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("application", { name: /同時接続の推移/ })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /同時接続の推移/ })).toBeInTheDocument();
     expect(
-      screen.getByRole("application", { name: /Ingress \/ 時間の推移/ }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("application", { name: /Egress \/ 時間の推移/ }),
+      screen.getByRole("img", { name: /Ingress \/ 時間の推移/ }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("application", { name: /転送量 \/ 時間の推移/ }),
+      screen.getByRole("img", { name: /Egress \/ 時間の推移/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /転送量 \/ 時間の推移/ }),
     ).toBeInTheDocument();
     expect(screen.getAllByText("400 KB/h").length).toBeGreaterThan(0);
     expect(screen.getAllByText("800 KB/h").length).toBeGreaterThan(0);

@@ -1,13 +1,13 @@
-import Badge from "@cloudscape-design/components/badge";
-import Box from "@cloudscape-design/components/box";
-import Button from "@cloudscape-design/components/button";
-import ColumnLayout from "@cloudscape-design/components/column-layout";
-import FormField from "@cloudscape-design/components/form-field";
-import Input from "@cloudscape-design/components/input";
-import Modal from "@cloudscape-design/components/modal";
-import Select from "@cloudscape-design/components/select";
-import SpaceBetween from "@cloudscape-design/components/space-between";
-import Textarea from "@cloudscape-design/components/textarea";
+import { Badge } from "@/components/ui";
+import { Box } from "@/components/ui";
+import { Button } from "@/components/ui";
+import { ColumnLayout } from "@/components/ui";
+import { FormField } from "@/components/ui";
+import { Input } from "@/components/ui";
+import { Modal } from "@/components/ui";
+import { Select } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
+import { TagInput } from "@/components/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo, useState } from "react";
@@ -184,19 +184,11 @@ export function IamPoliciesPage() {
             </FormField>
           </ColumnLayout>
           <ColumnLayout columns={2}>
-            <FormField label="アクション" description="改行またはカンマ区切り">
-              <Textarea
-                value={actions}
-                placeholder={"flow:ListInstances\nflow:GetInstance"}
-                onChange={({ detail }) => setActions(detail.value)}
-              />
+            <FormField label="アクション" description="許可または拒否する操作を追加してください。">
+              <TagInput values={parseList(actions)} onChange={(items) => setActions(items.join("\n"))} ariaLabel="アクションを追加" placeholder="例: flow:ListInstances" />
             </FormField>
-            <FormField label="リソース" description="末尾wildcardのみ使用可能">
-              <Textarea
-                value={resources}
-                placeholder="hc:org:*:flow/*"
-                onChange={({ detail }) => setResources(detail.value)}
-              />
+            <FormField label="リソース" description="対象を追加してください。ワイルドカードは末尾のみ使用できます。">
+              <TagInput values={parseList(resources)} onChange={(items) => setResources(items.join("\n"))} ariaLabel="リソースを追加" placeholder="例: hc:org:*:flow/*" />
             </FormField>
           </ColumnLayout>
           <FormError message={createPolicy.isError ? getApiErrorMessage(createPolicy.error) : null} />

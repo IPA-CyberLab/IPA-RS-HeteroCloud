@@ -1,13 +1,13 @@
-import Button from "@cloudscape-design/components/button";
-import ColumnLayout from "@cloudscape-design/components/column-layout";
-import FormField from "@cloudscape-design/components/form-field";
-import Header from "@cloudscape-design/components/header";
-import Input from "@cloudscape-design/components/input";
-import SegmentedControl from "@cloudscape-design/components/segmented-control";
-import Select from "@cloudscape-design/components/select";
-import SpaceBetween from "@cloudscape-design/components/space-between";
-import Textarea from "@cloudscape-design/components/textarea";
-import Toggle from "@cloudscape-design/components/toggle";
+import { Button } from "@/components/ui";
+import { ColumnLayout } from "@/components/ui";
+import { FormField } from "@/components/ui";
+import { Header } from "@/components/ui";
+import { Input, Multiselect, TagInput } from "@/components/ui";
+import { SegmentedControl } from "@/components/ui";
+import { Select } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
+import { Textarea } from "@/components/ui";
+import { Toggle } from "@/components/ui";
 import ipaddr from "ipaddr.js";
 import type { FormEvent, ReactNode } from "react";
 import "./flash-service-form.css";
@@ -255,6 +255,24 @@ export function flashFormWithGpuType(
     minReplicas: Math.min(value.minReplicas, 1),
     maxReplicas: 1,
   };
+}
+
+function EnvironmentEditor({ value, disabled, onChange }: { value: string; disabled?: boolean; onChange: (value: string) => void }) {
+  const rows = value ? value.split("\n") : [];
+  const updateRow = (index: number, name: string, entryValue: string) => onChange(rows.map((row, rowIndex) => rowIndex === index ? `${name}=${entryValue}` : row).join("\n"));
+  return <div className="flash-environment-editor">
+    {rows.map((row, index) => {
+      const separator = row.indexOf("=");
+      const name = separator < 0 ? row : row.slice(0, separator);
+      const entryValue = separator < 0 ? "" : row.slice(separator + 1);
+      return <div className="flash-environment-editor__row" key={index}>
+        <Input ariaLabel={`環境変数名 ${index + 1}`} value={name} disabled={disabled} placeholder="名前" onChange={({detail}) => updateRow(index, detail.value, entryValue)} />
+        <Input ariaLabel={`環境変数値 ${index + 1}`} value={entryValue} disabled={disabled} placeholder="値" onChange={({detail}) => updateRow(index, name, detail.value)} />
+        <Button variant="icon" iconName="remove" ariaLabel={`環境変数 ${index + 1} を削除`} disabled={disabled} onClick={() => onChange(rows.filter((_, i) => i !== index).join("\n"))} />
+      </div>;
+    })}
+    <Button iconName="add-plus" disabled={disabled} onClick={() => onChange([...rows, "="].join("\n"))}>環境変数を追加</Button>
+  </div>;
 }
 
 export function parseFlashEnvironment(value: string): {
@@ -1181,29 +1199,17 @@ export function FlashServiceForm({
         <ColumnLayout columns={2}>
           <FormField
             label="受信許可元IP / CIDR"
-            constraintText={value.endpointMode === "web" ? "HTTP/HTTPS公開では未対応" : "空欄の場合はすべて許可。1行につき1件"}
+            constraintText={value.endpointMode === "web" ? "HTTP/HTTPS公開では未対応" : "空欄の場合はすべて許可"}
             errorText={allowedSourceError ?? undefined}
           >
-            <Textarea
-              value={value.allowedSourceCidrs}
-              disabled={disabled}
-              placeholder={"203.0.113.10\n2001:db8::/48"}
-              rows={4}
-              onChange={({ detail }) => update("allowedSourceCidrs", detail.value)}
-            />
+            <TagInput values={value.allowedSourceCidrs.split(/[\n,]/).map(item => item.trim()).filter(Boolean)} ariaLabel="受信許可元IP / CIDR" placeholder="例: 203.0.113.10" disabled={disabled} onChange={(items) => update("allowedSourceCidrs", items.join("\n"))} />
           </FormField>
           <FormField
             label="受信拒否元IP / CIDR"
-            constraintText={value.endpointMode === "web" ? "HTTP/HTTPS公開では未対応" : "許可IPより優先。1行につき1件"}
+            constraintText={value.endpointMode === "web" ? "HTTP/HTTPS公開では未対応" : "許可IPより優先"}
             errorText={deniedSourceError ?? undefined}
           >
-            <Textarea
-              value={value.deniedSourceCidrs}
-              disabled={disabled}
-              placeholder={"198.51.100.25\n2001:db8:ffff::/48"}
-              rows={4}
-              onChange={({ detail }) => update("deniedSourceCidrs", detail.value)}
-            />
+            <TagInput values={value.deniedSourceCidrs.split(/[\n,]/).map(item => item.trim()).filter(Boolean)} ariaLabel="受信拒否元IP / CIDR" placeholder="例: 198.51.100.25" disabled={disabled} onChange={(items) => update("deniedSourceCidrs", items.join("\n"))} />
           </FormField>
         </ColumnLayout>
         <SpaceBetween size="m">
@@ -1214,7 +1220,12 @@ export function FlashServiceForm({
               onChange={({detail}) => onChange({...value,vpcId:detail.selectedOption.value ?? "",securityGroups:vpcs.find(v => v.id === detail.selectedOption.value)?.spec.security_groups[0] ?? "default",allowSameOrganization:false})} />
           </FormField>
           {value.vpcId && <>
-            <FormField label="セキュリティグループ" description={`使用可能: ${vpcs.find(v => v.id === value.vpcId)?.spec.security_groups.join(", ") ?? "取得中"}`}><Textarea disabled={disabled} value={value.securityGroups ?? "default"} onChange={({detail}) => update("securityGroups",detail.value)} /></FormField>
+            <FormField label="セキュリティグループ" description="このサービスを所属させるグループを選択してください。">
+              <Multiselect disabled={disabled} ariaLabel="セキュリティグループ" placeholder="グループを選択"
+                options={[...new Set([...(vpcs.find(v => v.id === value.vpcId)?.spec.security_groups ?? []), ...(value.securityGroups ?? "default").split(/[\s,]+/).filter(Boolean)])].map(group => ({value:group,label:group}))}
+                selectedOptions={(value.securityGroups ?? "default").split(/[\s,]+/).filter(Boolean).map(group => ({value:group,label:group}))}
+                onChange={({detail}) => update("securityGroups",detail.selectedOptions.map(option => option.value ?? "").filter(Boolean).join("\n"))} />
+            </FormField>
             <FormField label="内部DNS名（省略可）" description="VPC内で一意の名前。省略するとサービスIDから自動生成します。"><Input disabled={disabled} value={value.privateName ?? ""} onChange={({detail}) => update("privateName",detail.value)} /></FormField>
           </>}
         </SpaceBetween>
@@ -1260,41 +1271,23 @@ export function FlashServiceForm({
               constraintText="許可リストモードで使用。内部ネットワークは指定不可"
               errorText={allowedDestinationError ?? undefined}
             >
-              <Textarea
-                value={value.allowedDestinationCidrs}
-                disabled={disabled || value.egressMode !== "restricted"}
-                placeholder={"8.8.8.8/32\n2606:4700:4700::1111/128"}
-                rows={4}
-                onChange={({ detail }) => update("allowedDestinationCidrs", detail.value)}
-              />
+              <TagInput values={value.allowedDestinationCidrs.split(/[\n,]/).map(item => item.trim()).filter(Boolean)} ariaLabel="送信許可先IP / CIDR" placeholder="例: 8.8.8.8/32" disabled={disabled || value.egressMode !== "restricted"} onChange={(items) => update("allowedDestinationCidrs", items.join("\n"))} />
             </FormField>
             <FormField
               label="送信拒否先IP / CIDR"
               constraintText="公開インターネット・許可リストから除外"
               errorText={deniedDestinationError ?? undefined}
             >
-              <Textarea
-                value={value.deniedDestinationCidrs}
-                disabled={disabled || value.egressMode === "disabled"}
-                placeholder={"203.0.113.0/24\n2001:db8::/32"}
-                rows={4}
-                onChange={({ detail }) => update("deniedDestinationCidrs", detail.value)}
-              />
+              <TagInput values={value.deniedDestinationCidrs.split(/[\n,]/).map(item => item.trim()).filter(Boolean)} ariaLabel="送信拒否先IP / CIDR" placeholder="例: 203.0.113.0/24" disabled={disabled || value.egressMode === "disabled"} onChange={(items) => update("deniedDestinationCidrs", items.join("\n"))} />
             </FormField>
           </ColumnLayout>
         </SpaceBetween>
         <FormField
           label="環境変数"
-          description="1行につき KEY=value"
+          description="名前と値を指定します。機密情報はシークレットから設定してください。"
           errorText={environmentError ?? undefined}
         >
-          <Textarea
-            value={value.environment}
-            disabled={disabled}
-            placeholder={"GAME_MODE=production\nLOG_LEVEL=info"}
-            rows={4}
-            onChange={({ detail }) => update("environment", detail.value)}
-          />
+          <EnvironmentEditor value={value.environment} disabled={disabled} onChange={(environment) => update("environment", environment)} />
         </FormField>
         <FormField label="起動方法">
           <SegmentedControl

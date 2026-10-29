@@ -82,7 +82,7 @@ describe("OwnerGpusPage", () => {
         name: "NVIDIA GeForce GTX 1080 Tiのアクセス設定",
       }),
     );
-    await user.click(screen.getByText("Open", { selector: "span" }));
+    await user.click(screen.getByRole("button", { name: "Open" }));
     await user.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() =>

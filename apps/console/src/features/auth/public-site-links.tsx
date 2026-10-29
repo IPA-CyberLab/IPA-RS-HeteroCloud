@@ -1,4 +1,4 @@
-import SpaceBetween from "@cloudscape-design/components/space-between";
+import { SpaceBetween } from "@/components/ui";
 import { PUBLIC_HOME_URL } from "@/lib/public-site";
 
 export function PublicSiteLinks() {

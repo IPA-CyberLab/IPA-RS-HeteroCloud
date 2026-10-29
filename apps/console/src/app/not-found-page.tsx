@@ -1,6 +1,6 @@
-import Alert from "@cloudscape-design/components/alert";
-import Box from "@cloudscape-design/components/box";
-import Button from "@cloudscape-design/components/button";
+import { Alert } from "@/components/ui";
+import { Box } from "@/components/ui";
+import { Button } from "@/components/ui";
 
 export function NotFoundPage() {
   return (

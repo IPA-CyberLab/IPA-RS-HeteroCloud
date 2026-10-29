@@ -1,4 +1,4 @@
-import Alert from "@cloudscape-design/components/alert";
+import { Alert } from "@/components/ui";
 
 interface FormErrorProps {
   message?: string | null;

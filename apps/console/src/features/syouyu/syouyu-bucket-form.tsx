@@ -1,8 +1,8 @@
-import Box from "@cloudscape-design/components/box";
-import ColumnLayout from "@cloudscape-design/components/column-layout";
-import FormField from "@cloudscape-design/components/form-field";
-import Input from "@cloudscape-design/components/input";
-import SpaceBetween from "@cloudscape-design/components/space-between";
+import { Box } from "@/components/ui";
+import { ColumnLayout } from "@/components/ui";
+import { FormField } from "@/components/ui";
+import { Input } from "@/components/ui";
+import { SpaceBetween } from "@/components/ui";
 import type { FormEvent, ReactNode } from "react";
 import { ProjectSelector } from "@/components/shared/resource-selectors";
 import type { SyouyuQuotaLimits } from "@/lib/api-types";

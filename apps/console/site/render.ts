@@ -58,7 +58,7 @@ ${draft ? '<meta name="robots" content="noindex, follow">' : ""}
 <link rel="stylesheet" href="/site-assets/fonts/noto-sans-jp/index.css">
 <link rel="stylesheet" href="/site-assets/site.css">
 </head>
-<body>
+<body${page.path === "/" ? ' class="site-home"' : ""}>
 <a class="skip-link" href="#main">本文へ移動</a>
 <header class="site-header">
 <a class="site-name" href="/"${page.path === "/" ? ' aria-current="page"' : ""}>HeteroCloud</a>
@@ -66,7 +66,7 @@ ${draft ? '<meta name="robots" content="noindex, follow">' : ""}
 </header>
 <main id="main" tabindex="-1">
 <article>
-<header><h1>${escapeHtml(page.title)}</h1><p class="lead">${escapeHtml(page.lead)}</p></header>
+<header><h1>${escapeHtml(page.title)}</h1><p class="lead">${escapeHtml(page.lead)}</p>${page.path === "/" ? '<div class="home-actions"><a class="home-action home-action--primary" href="/login">コンソールへ</a><a class="home-action" href="/getting-started/">利用ガイドを見る</a></div>' : ""}</header>
 ${draft ? '<aside class="policy-status" aria-label="文書の状態"><strong>公開準備中の草案</strong><p>運営者情報、問い合わせ先、料金・保管条件などの確認が残っています。施行済みの規約や、登録時に同意した条件を示すものではありません。</p></aside>' : ""}
 ${page.legal && config.legal.effectiveDate && !draft ? `<p>施行日：<time datetime="${escapeHtml(config.legal.effectiveDate)}">${escapeHtml(config.legal.effectiveDate)}</time></p>` : ""}
 ${page.sections.length > 3 ? `<nav class="contents" aria-label="このページの目次"><p>このページの内容</p><ol>${page.sections.map(({ id, title }) => `<li><a href="#${escapeHtml(id)}">${escapeHtml(title)}</a></li>`).join("")}</ol></nav>` : ""}
