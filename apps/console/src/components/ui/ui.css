@@ -208,6 +208,7 @@ summary {
   padding: 14px 12px 7px;
   cursor: pointer;
 }
+.ui-nav-section summary::after { display: none; }
 .ui-nav-section summary::-webkit-details-marker {
   display: none;
 }
@@ -489,7 +490,7 @@ pre.ui-box {
   min-height: 40px;
   border: 1px solid
     color-mix(in oklab, var(--color-base-content) 23%, transparent);
-  background: var(--color-base-100);
+  background-color: var(--color-base-100);
   border-radius: 8px;
   box-shadow: none;
 }

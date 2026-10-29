@@ -32,7 +32,9 @@ test("VPC private defaults, NAT, rules and deletion work in the console", async 
   const dialog=page.getByRole("dialog",{name:"VPCを作成"});
   await expect(dialog.getByRole("checkbox",{name:"有効にする"})).not.toBeChecked();
   await dialog.getByRole("textbox",{name:"名前",exact:true}).fill("Coder network");
-  await dialog.getByRole("combobox",{name:"プロジェクト"}).selectOption({label:"Example Project"});
+  const project = dialog.getByRole("combobox",{name:"プロジェクト"});
+  await expect(project).toHaveCSS("background-image", /linear-gradient/);
+  await project.selectOption({label:"Example Project"});
   const group = dialog.getByRole("textbox",{name:"新しいセキュリティグループ"});
   await group.fill("coder");
   await group.press("Enter");
