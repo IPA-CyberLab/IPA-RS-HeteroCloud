@@ -15,7 +15,6 @@ export function RealtimeMetricChart({
   samples: RealtimeServiceMetricSample[];
   value: (sample: RealtimeServiceMetricSample) => number;
   formatValue: (value: number) => string;
-  color: string;
   loading?: boolean;
 }) {
   const data = [...samples]

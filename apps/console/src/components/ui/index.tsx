@@ -41,6 +41,7 @@ import {
   Shield,
   Sun,
   Terminal,
+  TriangleAlert,
   Trash2,
   UserRound,
   X,
@@ -390,7 +391,7 @@ export function Alert({
     type === "error"
       ? CircleAlert
       : type === "warning"
-        ? CircleAlert
+        ? TriangleAlert
         : type === "success"
           ? CheckCircle2
           : CircleHelp;

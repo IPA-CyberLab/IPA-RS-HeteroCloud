@@ -184,6 +184,25 @@ async function expectNoPageOverflow(page: Page) {
     .toBe(true);
 }
 
+async function expectMonochromeTheme(page: Page) {
+  const colors = await page.evaluate(() => {
+    const probe = document.createElement("span");
+    document.body.append(probe);
+    const values = ["primary", "primary-content", "secondary", "accent", "neutral", "info", "success", "warning", "error", "base-100", "base-200", "base-content"].map((name) => {
+      probe.style.color = `var(--color-${name})`;
+      return getComputedStyle(probe).color;
+    });
+    probe.remove();
+    return values;
+  });
+  for (const color of colors) {
+    const match = /^rgb\((\d+), (\d+), (\d+)\)$/.exec(color);
+    expect(match, `Expected a grayscale theme color, got ${color}`).not.toBeNull();
+    expect(match![1]).toBe(match![2]);
+    expect(match![2]).toBe(match![3]);
+  }
+}
+
 test.beforeEach(async ({ page }) => {
   await mockApi(page);
 });
@@ -274,11 +293,18 @@ test("モバイルのコンソールホームでもサービスを探せる", as
   expect(browserErrors).toEqual([]);
 });
 
-test("カラーモードを切り替え、リロード後も保持する", async ({ page }) => {
+test("白黒のカラーモードを切り替え、リロード後も保持する", async ({ page }, testInfo) => {
   await page.addInitScript(() => { if (!localStorage.getItem("heterocloud_theme")) localStorage.setItem("heterocloud_theme", "light"); });
   await page.goto("/overview");
+  await expect(page.getByRole("heading", { name: "何を構築しますか？" })).toBeVisible();
+  await expectMonochromeTheme(page);
+  await expect(page.locator(".ui-layout__sidebar")).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await page.screenshot({ path: testInfo.outputPath("monochrome-light.png"), fullPage: true });
   await page.getByRole("button", { name: "ダークモードに切り替え" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expectMonochromeTheme(page);
+  await expect(page.locator(".ui-layout__sidebar")).toHaveCSS("background-color", "rgb(23, 23, 23)");
+  await page.screenshot({ path: testInfo.outputPath("monochrome-dark.png"), fullPage: true });
   await expect(page.getByRole("heading", { name: "何を構築しますか？" })).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem("heterocloud_theme"))).toBe("dark");
   await page.reload();

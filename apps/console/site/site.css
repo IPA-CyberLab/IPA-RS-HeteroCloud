@@ -1,7 +1,7 @@
 /* Public pages share the console typography and colour palette. */
 :root {
   font-family: "Noto Sans Variable", "Noto Sans JP Variable", sans-serif;
-  color: #172a24;
+  color: #171717;
   background: #fff;
   line-height: 1.8;
   font-synthesis: none;
@@ -14,14 +14,14 @@ body {
   overflow-wrap: anywhere;
 }
 a {
-  color: #087d68;
+  color: #171717;
   text-underline-offset: 0.2em;
 }
 a:hover {
   text-decoration-thickness: 0.15em;
 }
 :focus-visible {
-  outline: 2px solid #087d68;
+  outline: 2px solid #171717;
   outline-offset: 4px;
 }
 .site-header,
@@ -35,14 +35,14 @@ main {
   padding-block: 1.25rem;
 }
 .site-header {
-  border-bottom: 1px solid #dfebe5;
+  border-bottom: 1px solid #e5e5e5;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 2rem;
 }
 .site-name {
-  color: #12372c;
+  color: #171717;
   font-size: 1.25rem;
   font-weight: 800;
   text-decoration: none;
@@ -92,9 +92,9 @@ li + li {
 .contents,
 .policy-status {
   padding: 1.25rem 1.5rem;
-  border: 1px solid #dceae3;
+  border: 1px solid #e5e5e5;
   border-radius: 12px;
-  background: #f6faf8;
+  background: #f7f7f7;
   margin-block: 1.5rem;
 }
 .contents p {
@@ -162,23 +162,23 @@ code {
 }
 
 .site-header nav a {
-  color: #345349;
+  color: #404040;
   text-decoration: none;
   font-size: 0.9rem;
   font-weight: 600;
 }
 .site-header nav a:hover,
 .site-header nav a[aria-current="page"] {
-  color: #087d68;
+  color: #171717;
 }
 .site-header nav a[href="/login"] {
-  background: #087d68;
+  background: #171717;
   color: #fff;
   padding: 0.6rem 0.9rem;
   border-radius: 0.55rem;
 }
 .site-home {
-  background: #f3f7f5;
+  background: #f7f7f7;
 }
 .site-home article {
   max-width: none;
@@ -191,9 +191,7 @@ code {
   padding: clamp(2rem, 5vw, 4.5rem);
   color: #fff;
   border-radius: 1rem;
-  background:
-    radial-gradient(circle at 90% 8%, #258e6d88, transparent 38%),
-    linear-gradient(125deg, #102b27, #154b3d);
+  background: #171717;
 }
 .site-home article > header h1 {
   max-width: 52rem;
@@ -202,7 +200,7 @@ code {
 }
 .site-home article > header .lead {
   max-width: 52rem;
-  color: #d1e9df;
+  color: #d4d4d4;
 }
 .home-actions {
   display: flex;
@@ -214,16 +212,19 @@ code {
   display: inline-flex;
   padding: 0.7rem 1rem;
   color: #fff;
-  border: 1px solid #a1cdbb;
+  border: 1px solid #a3a3a3;
   border-radius: 0.6rem;
   text-decoration: none;
   font-weight: 700;
   font-size: 0.9rem;
 }
+.home-action:focus-visible {
+  outline-color: #fff;
+}
 .home-action--primary {
   background: #fff;
   border-color: #fff;
-  color: #126650;
+  color: #171717;
 }
 .site-home .contents {
   grid-column: 1/-1;
@@ -232,10 +233,10 @@ code {
 .site-home article > section {
   margin: 0;
   padding: 1.5rem;
-  border: 1px solid #dce9e2;
+  border: 1px solid #e5e5e5;
   border-radius: 0.85rem;
   background: #fff;
-  box-shadow: 0 3px 10px #1c49310a;
+  box-shadow: 0 3px 10px #0000000a;
 }
 .site-home article > section[aria-labelledby="cloud"],
 .site-home article > section[aria-labelledby="services"] {
@@ -255,7 +256,7 @@ code {
   display: inline-block;
   padding: 0.45rem 0.75rem;
   border-radius: 0.5rem;
-  background: #edf7f2;
+  background: #f2f2f2;
   text-decoration: none;
   font-weight: 700;
 }

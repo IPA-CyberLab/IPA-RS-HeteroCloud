@@ -33,10 +33,10 @@ export function FlashWebShell({
       fontSize: 14,
       scrollback: 5_000,
       theme: {
-        background: "#111418",
-        foreground: "#f2f3f3",
-        cursor: "#22d3a7",
-        selectionBackground: "#356d9b88",
+        background: "#171717",
+        foreground: "#f5f5f5",
+        cursor: "#f5f5f5",
+        selectionBackground: "#80808088",
       },
     });
     const fit = new FitAddon();

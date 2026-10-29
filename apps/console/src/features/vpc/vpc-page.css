@@ -63,11 +63,13 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #e2a73a;
+  background: transparent;
+  border: 2px solid var(--color-base-content);
   margin-right: 7px;
 }
 .vpc-state-dot.is-ready {
-  background: #11a577;
+  background: var(--color-base-content);
+  border: none;
 }
 .vpc-facts {
   display: grid;

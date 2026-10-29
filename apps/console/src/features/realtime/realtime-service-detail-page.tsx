@@ -177,13 +177,12 @@ export function RealtimeServiceDetailPage() {
     samples: RealtimeServiceMetricSample[];
     value: (sample: RealtimeServiceMetricSample) => number;
     formatValue: (value: number) => string;
-    color: string;
   }[] = [
-    { label: "アクティブルーム", samples: historySamples, value: (sample) => sample.active_rooms, formatValue: formatNumber, color: "#0972d3" },
-    { label: "同時接続", samples: historySamples, value: (sample) => sample.concurrent_connections, formatValue: formatNumber, color: "#1d8102" },
-    { label: "Ingress / 時間", samples: transferRateSamples, value: (sample) => sample.ingress_bytes, formatValue: (value) => `${formatBytes(value)}/h`, color: "#8d6605" },
-    { label: "Egress / 時間", samples: transferRateSamples, value: (sample) => sample.egress_bytes, formatValue: (value) => `${formatBytes(value)}/h`, color: "#d91515" },
-    { label: "転送量 / 時間", samples: transferRateSamples, value: (sample) => sample.transferred_bytes, formatValue: (value) => `${formatBytes(value)}/h`, color: "#414d5c" },
+    { label: "アクティブルーム", samples: historySamples, value: (sample) => sample.active_rooms, formatValue: formatNumber },
+    { label: "同時接続", samples: historySamples, value: (sample) => sample.concurrent_connections, formatValue: formatNumber },
+    { label: "Ingress / 時間", samples: transferRateSamples, value: (sample) => sample.ingress_bytes, formatValue: (value) => `${formatBytes(value)}/h` },
+    { label: "Egress / 時間", samples: transferRateSamples, value: (sample) => sample.egress_bytes, formatValue: (value) => `${formatBytes(value)}/h` },
+    { label: "転送量 / 時間", samples: transferRateSamples, value: (sample) => sample.transferred_bytes, formatValue: (value) => `${formatBytes(value)}/h` },
   ];
   const submitEdit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

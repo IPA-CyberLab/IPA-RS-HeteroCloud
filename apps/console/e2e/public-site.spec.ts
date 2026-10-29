@@ -9,6 +9,8 @@ test("the public homepage is readable without a session API", async ({ page }) =
 
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1 })).toContainText("分散したリソースを");
+  await expect(page.locator(".site-home article > header")).toHaveCSS("background-color", "rgb(23, 23, 23)");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveCSS("color", "rgb(255, 255, 255)");
   await expect(page).toHaveURL(/\/$/);
   expect(await page.locator("script").count()).toBe(0);
   expect(apiRequests).toEqual([]);
