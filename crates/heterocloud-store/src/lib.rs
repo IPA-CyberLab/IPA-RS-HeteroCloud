@@ -3056,6 +3056,7 @@ impl Store {
                 provider,
                 &spec,
                 &organization_limits,
+                false,
             )
             .await?;
         }
@@ -3286,6 +3287,9 @@ impl Store {
         if let Some(user_id) = quota_user_id {
             let organization_limits =
                 resource_quota_in_transaction(&mut transaction, organization_id).await?;
+            let starting_flash = provider == "flash"
+                && existing.spec.get("stopped").and_then(Value::as_bool) == Some(true)
+                && spec.get("stopped").and_then(Value::as_bool) != Some(true);
             organizations::validate_member_allocation(
                 &mut transaction,
                 organization_id,
@@ -3294,6 +3298,7 @@ impl Store {
                 provider,
                 &spec,
                 &organization_limits,
+                !starting_flash,
             )
             .await?;
         }
@@ -3431,6 +3436,7 @@ impl Store {
                     "flash",
                     &spec,
                     &quota,
+                    false,
                 )
                 .await?;
             }

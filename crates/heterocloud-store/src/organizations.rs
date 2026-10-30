@@ -377,6 +377,7 @@ pub(super) async fn member_quota_in_transaction(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn validate_member_allocation(
     transaction: &mut Transaction<'_, Postgres>,
     organization_id: OrganizationId,
@@ -385,6 +386,7 @@ pub(super) async fn validate_member_allocation(
     provider: &str,
     requested: &Value,
     organization_limits: &ResourceQuotaLimits,
+    allow_reduction: bool,
 ) -> Result<(), StoreError> {
     if !matches!(provider, "flow" | "flash" | "syouyu") {
         return Ok(());
@@ -402,8 +404,19 @@ pub(super) async fn validate_member_allocation(
     .bind(excluded_service.map(|id| id.0))
     .fetch_all(&mut **transaction)
     .await?;
-    let mut usage = ResourceQuotaUsage::default();
-    for value in rows.iter().chain(std::iter::once(requested)) {
+    let previous = if allow_reduction {
+        sqlx::query_scalar::<_, Value>(
+            "SELECT spec FROM service_instances WHERE id = $1 AND organization_id = $2 AND quota_user_id = $3 AND provider = $4 AND state <> 'deleting'",
+        ).bind(excluded_service.map(|id| id.0)).bind(organization_id.0).bind(user_id.0).bind(provider)
+            .fetch_optional(&mut **transaction).await?
+    } else {
+        None
+    };
+    fn add(
+        usage: &mut ResourceQuotaUsage,
+        provider: &str,
+        value: &Value,
+    ) -> Result<(), StoreError> {
         match provider {
             "flow" => usage.add_flow_spec(&serde_json::from_value::<FlowSpec>(value.clone())?),
             "flash" => usage.add_flash_spec(&serde_json::from_value::<FlashSpec>(value.clone())?),
@@ -412,35 +425,111 @@ pub(super) async fn validate_member_allocation(
             }
             _ => unreachable!(),
         }
+        Ok(())
     }
+    let mut others = ResourceQuotaUsage::default();
+    for value in &rows {
+        add(&mut others, provider, value)?;
+    }
+    let mut before = others.clone();
+    let mut previous_service = ResourceQuotaUsage::default();
+    if let Some(value) = &previous {
+        add(&mut before, provider, value)?;
+        add(&mut previous_service, provider, value)?;
+    }
+    let mut usage = others;
+    let mut requested_service = ResourceQuotaUsage::default();
+    add(&mut usage, provider, requested)?;
+    add(&mut requested_service, provider, requested)?;
+    // Above a newly reduced ceiling, permit only changes that do not increase
+    // the particular exceeded dimension. Start operations remain strict.
+    let over =
+        |after: u64, limit: u64, old: u64| after > limit && (previous.is_none() || after > old);
     let exceeded = match provider {
         "flow" => {
-            usage.flow_services > u64::from(limits.flow.max_services)
-                || usage.flow_configured_rooms > limits.flow.max_total_rooms
-                || usage.flow_max_rooms_per_service > u64::from(limits.flow.max_rooms_per_service)
-                || usage.flow_max_participants_per_service
-                    > u64::from(limits.flow.max_participants_per_service)
-                || usage.flow_max_rate_limit_requests_per_second
-                    > u64::from(limits.flow.max_rate_limit_requests_per_second)
-                || usage.flow_max_rate_limit_burst > u64::from(limits.flow.max_rate_limit_burst)
+            over(
+                usage.flow_services,
+                u64::from(limits.flow.max_services),
+                before.flow_services,
+            ) || over(
+                usage.flow_configured_rooms,
+                limits.flow.max_total_rooms,
+                before.flow_configured_rooms,
+            ) || over(
+                requested_service.flow_max_rooms_per_service,
+                u64::from(limits.flow.max_rooms_per_service),
+                previous_service.flow_max_rooms_per_service,
+            ) || over(
+                requested_service.flow_max_participants_per_service,
+                u64::from(limits.flow.max_participants_per_service),
+                previous_service.flow_max_participants_per_service,
+            ) || over(
+                requested_service.flow_max_rate_limit_requests_per_second,
+                u64::from(limits.flow.max_rate_limit_requests_per_second),
+                previous_service.flow_max_rate_limit_requests_per_second,
+            ) || over(
+                requested_service.flow_max_rate_limit_burst,
+                u64::from(limits.flow.max_rate_limit_burst),
+                previous_service.flow_max_rate_limit_burst,
+            )
         }
         "flash" => {
-            usage.flash_services > u64::from(limits.flash.max_services)
-                || usage.flash_replicas > limits.flash.max_total_replicas
-                || usage.flash_cpu_millis > limits.flash.max_total_cpu_millis
-                || usage.flash_memory_mib > limits.flash.max_total_memory_mib
-                || usage.flash_disk_gib > limits.flash.max_total_disk_gib
-                || usage.flash_max_replicas_per_service
-                    > u64::from(limits.flash.max_replicas_per_service)
-                || usage.flash_max_cpu_millis_per_vm > u64::from(limits.flash.max_cpu_millis_per_vm)
-                || usage.flash_max_memory_mib_per_vm > u64::from(limits.flash.max_memory_mib_per_vm)
-                || usage.flash_max_disk_gib_per_vm > u64::from(limits.flash.max_disk_gib_per_vm)
+            over(
+                usage.flash_services,
+                u64::from(limits.flash.max_services),
+                before.flash_services,
+            ) || over(
+                usage.flash_replicas,
+                limits.flash.max_total_replicas,
+                before.flash_replicas,
+            ) || over(
+                usage.flash_cpu_millis,
+                limits.flash.max_total_cpu_millis,
+                before.flash_cpu_millis,
+            ) || over(
+                usage.flash_memory_mib,
+                limits.flash.max_total_memory_mib,
+                before.flash_memory_mib,
+            ) || over(
+                usage.flash_disk_gib,
+                limits.flash.max_total_disk_gib,
+                before.flash_disk_gib,
+            ) || over(
+                requested_service.flash_max_replicas_per_service,
+                u64::from(limits.flash.max_replicas_per_service),
+                previous_service.flash_max_replicas_per_service,
+            ) || over(
+                requested_service.flash_max_cpu_millis_per_vm,
+                u64::from(limits.flash.max_cpu_millis_per_vm),
+                previous_service.flash_max_cpu_millis_per_vm,
+            ) || over(
+                requested_service.flash_max_memory_mib_per_vm,
+                u64::from(limits.flash.max_memory_mib_per_vm),
+                previous_service.flash_max_memory_mib_per_vm,
+            ) || over(
+                requested_service.flash_max_disk_gib_per_vm,
+                u64::from(limits.flash.max_disk_gib_per_vm),
+                previous_service.flash_max_disk_gib_per_vm,
+            )
         }
         "syouyu" => {
-            usage.syouyu_buckets > u64::from(limits.syouyu.max_buckets)
-                || usage.syouyu_configured_bytes > limits.syouyu.max_total_bytes
-                || usage.syouyu_max_bytes_per_bucket > limits.syouyu.max_bytes_per_bucket
-                || usage.syouyu_max_objects_per_bucket > limits.syouyu.max_objects_per_bucket
+            over(
+                usage.syouyu_buckets,
+                u64::from(limits.syouyu.max_buckets),
+                before.syouyu_buckets,
+            ) || over(
+                usage.syouyu_configured_bytes,
+                limits.syouyu.max_total_bytes,
+                before.syouyu_configured_bytes,
+            ) || over(
+                requested_service.syouyu_max_bytes_per_bucket,
+                limits.syouyu.max_bytes_per_bucket,
+                previous_service.syouyu_max_bytes_per_bucket,
+            ) || over(
+                requested_service.syouyu_max_objects_per_bucket,
+                limits.syouyu.max_objects_per_bucket,
+                previous_service.syouyu_max_objects_per_bucket,
+            )
         }
         _ => false,
     };

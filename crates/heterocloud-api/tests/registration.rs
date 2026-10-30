@@ -532,6 +532,16 @@ async fn registration_checks_invitation_before_hashing_and_consumes_it_once()
             joined_membership.principal_id,
             "flash",
             "allowed-flash",
+            flash_spec.clone(),
+        )
+        .await?;
+    store
+        .create_service_instance(
+            org,
+            project.id,
+            joined_membership.principal_id,
+            "flash",
+            "another-flash",
             flash_spec,
         )
         .await?;
@@ -540,13 +550,51 @@ async fn registration_checks_invitation_before_hashing_and_consumes_it_once()
     store
         .set_member_resource_quota(org, oidc_user.user.id, Some(&personal))
         .await?;
-    assert!(
+    let mut reduced = flash.spec.clone();
+    reduced["cpu_millis"] = json!(90);
+    let flash = store
+        .update_service_instance(
+            org,
+            flash.id,
+            "flash",
+            joined_membership.principal_id,
+            "allowed-flash",
+            reduced.clone(),
+        )
+        .await?;
+    reduced["cpu_millis"] = json!(95);
+    assert!(matches!(
         store
-            .set_flash_service_stopped(org, flash.id, joined_membership.principal_id, true)
-            .await?
-            .spec["stopped"]
-            == json!(true)
-    );
+            .update_service_instance(
+                org,
+                flash.id,
+                "flash",
+                joined_membership.principal_id,
+                "allowed-flash",
+                reduced
+            )
+            .await,
+        Err(StoreError::RequestRejected(_))
+    ));
+    let stopped = store
+        .set_flash_service_stopped(org, flash.id, joined_membership.principal_id, true)
+        .await?;
+    assert_eq!(stopped.spec["stopped"], json!(true));
+    let mut start_via_edit = stopped.spec.clone();
+    start_via_edit["stopped"] = json!(false);
+    assert!(matches!(
+        store
+            .update_service_instance(
+                org,
+                flash.id,
+                "flash",
+                joined_membership.principal_id,
+                "allowed-flash",
+                start_via_edit
+            )
+            .await,
+        Err(StoreError::RequestRejected(_))
+    ));
     assert!(matches!(
         store
             .set_flash_service_stopped(org, flash.id, joined_membership.principal_id, false)
