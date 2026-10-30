@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ui_only: ${{ steps.identity.outputs.ui_only }}
+      image_only: ${{ steps.identity.outputs.image_only }}
     services:
       postgres:
         image: postgres:17.6
@@ -177,9 +178,9 @@ jobs:
 
   cli:
     needs: validate
-    # UI-only prereleases publish the tested image without advertising binaries
-    # whose Cargo version belongs to the existing stable CLI release.
-    if: needs.validate.outputs.ui_only != 'true'
+    # Image-only prereleases publish the tested platform without advertising
+    # binaries whose Cargo version belongs to the existing stable CLI release.
+    if: needs.validate.outputs.image_only != 'true'
     permissions:
       contents: write
     strategy:

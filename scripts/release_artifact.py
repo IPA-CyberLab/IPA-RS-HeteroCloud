@@ -44,6 +44,15 @@ def is_ui_only(version, prerelease):
     return prerelease == "true" and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-ui\.[0-9]+", version) is not None
 
 
+def is_image_only(version, prerelease):
+    # Platform-only prereleases publish a tested server image without claiming
+    # a new CLI version. Stable releases always build and publish the CLI.
+    return is_ui_only(version, prerelease) or (
+        prerelease == "true"
+        and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-platform\.[0-9]+", version) is not None
+    )
+
+
 def artifact(version, commit, digest):
     if not isinstance(digest, str) or not DIGEST.fullmatch(digest):
         raise ValueError("missing or invalid pushed image digest")
@@ -93,6 +102,7 @@ def main():
         print(f"version={version}\ncargo_version={cargo}")
         print(f"latest={str(allows_latest(version, os.environ.get('RELEASE_PRERELEASE'))).lower()}")
         print(f"ui_only={str(is_ui_only(version, os.environ.get('RELEASE_PRERELEASE'))).lower()}")
+        print(f"image_only={str(is_image_only(version, os.environ.get('RELEASE_PRERELEASE'))).lower()}")
     elif args.command == "generate":
         digest = (final_digest(json.loads(Path(args.metadata).read_text()))
                   if args.metadata else os.environ["IMAGE_DIGEST"])

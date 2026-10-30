@@ -37,6 +37,14 @@ class ReleaseTests(unittest.TestCase):
                               ("1.2.3", "true")):
             self.assertFalse(release.is_ui_only(version, flag))
 
+    def test_platform_only_skips_cli_only_for_explicit_numbered_prerelease(self):
+        self.assertTrue(release.is_image_only("1.2.3-platform.1", "true"))
+        self.assertTrue(release.is_image_only("1.2.3-ui.4", "true"))
+        for version, flag in (("1.2.3-platform.1", "false"), ("1.2.3-platform.1", None),
+                              ("1.2.3-platform.test", "true"), ("1.2.3", "true"),
+                              ("1.2.3-dev.4", "true")):
+            self.assertFalse(release.is_image_only(version, flag))
+
     def test_release_resolves_exact_qualified_tag(self):
         with patch.dict(release.os.environ, {"RELEASE_TAG": "v1.2.3-dev.1", "GITHUB_SHA": self.commit}), \
              patch.object(release.subprocess, "check_output", return_value=self.commit + "\n") as git:
