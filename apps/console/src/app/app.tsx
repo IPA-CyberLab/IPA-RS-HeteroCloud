@@ -24,6 +24,11 @@ const OrganizationsPage = lazy(() =>
     default: module.OrganizationsPage,
   })),
 );
+const OrganizationQuotasPage = lazy(() =>
+  import("@/features/organizations/organization-quotas-page").then((module) => ({
+    default: module.OrganizationQuotasPage,
+  })),
+);
 const ProjectsPage = lazy(() =>
   import("@/features/projects/projects-page").then((module) => ({
     default: module.ProjectsPage,
@@ -172,6 +177,7 @@ export function App() {
                   </LazyPage>
                 }
               />
+              <Route path="/organizations/quotas" element={<LazyPage><OrganizationQuotasPage /></LazyPage>} />
               <Route
                 path="/projects"
                 element={

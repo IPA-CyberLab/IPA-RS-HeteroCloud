@@ -107,11 +107,23 @@ pub struct ReconcileRequest {
     pub spec: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy: Option<FlashProviderPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_user_id: Option<UserId>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlashProviderPolicy {
+    pub max_weekly_cpu_millicore_seconds: u64,
+    pub max_weekly_memory_mib_seconds: u64,
+    pub max_weekly_gpu_seconds: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member: Option<FlashMemberWeeklyLimits>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlashMemberWeeklyLimits {
     pub max_weekly_cpu_millicore_seconds: u64,
     pub max_weekly_memory_mib_seconds: u64,
     pub max_weekly_gpu_seconds: u64,

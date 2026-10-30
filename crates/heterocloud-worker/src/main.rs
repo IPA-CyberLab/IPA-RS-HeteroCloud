@@ -8,9 +8,10 @@ use heterocloud_domain::{
     OrganizationId, PrincipalId, ProjectId, ServiceInstance, ServiceInstanceId, SyouyuSpec,
 };
 use heterocloud_provider::{
-    AcceptedOperation, FlashProviderPolicy, PRINCIPAL_CONTEXT_REVOCATION_GRACE_SECONDS,
-    PRINCIPAL_CONTEXT_REVOKE_ACTION, PrincipalContextId, PrincipalContextRevocationRequest,
-    ProviderContext, ProviderSigner, ReconcileRequest,
+    AcceptedOperation, FlashMemberWeeklyLimits, FlashProviderPolicy,
+    PRINCIPAL_CONTEXT_REVOCATION_GRACE_SECONDS, PRINCIPAL_CONTEXT_REVOKE_ACTION,
+    PrincipalContextId, PrincipalContextRevocationRequest, ProviderContext, ProviderSigner,
+    ReconcileRequest,
 };
 use heterocloud_store::{OutboxEvent, Store};
 use secrecy::{ExposeSecret, SecretString};
@@ -257,12 +258,15 @@ async fn deliver(
     }
     if !matches!(
         event.topic.as_str(),
-        "service-instance.reconcile" | "service-instance.delete"
+        "service-instance.reconcile" | "service-instance.delete" | "service-instance.flash-quota"
     ) {
         return Err(WorkerError::UnsupportedTopic(event.topic.clone()));
     }
     let payload: ReconcilePayload = serde_json::from_value(event.payload.clone())?;
     if payload.service_instance_id.0 != event.aggregate_id {
+        return Err(WorkerError::InvalidPayload);
+    }
+    if event.topic == "service-instance.flash-quota" && payload.provider != "flash" {
         return Err(WorkerError::InvalidPayload);
     }
     let target = providers.target(&payload.provider)?;
@@ -285,7 +289,13 @@ async fn deliver(
         organization_id: payload.organization_id,
         project_id: payload.project_id,
         service_instance_id: payload.service_instance_id,
-        action: event.topic.clone(),
+        // The Flash API still authorizes this as a reconcile. Older workers
+        // retry this new topic instead of consuming and losing quota updates.
+        action: if event.topic == "service-instance.flash-quota" {
+            "service-instance.reconcile".into()
+        } else {
+            event.topic.clone()
+        },
         generation: payload.generation,
     })?;
     let mut url = target.endpoint.join(&format!(
@@ -311,14 +321,43 @@ async fn deliver(
         request.send().await?
     } else {
         let spec = provider_reconcile_spec(&payload.provider, instance.spec)?;
+        let quota_user_id = if payload.provider == "flash" {
+            store
+                .service_quota_user(payload.organization_id, payload.service_instance_id)
+                .await?
+        } else {
+            None
+        };
         let policy = if payload.provider == "flash" {
             let quota = store
                 .effective_resource_quota(payload.organization_id)
                 .await?;
+            let member = if let Some(user_id) = quota_user_id {
+                let limits = store
+                    .effective_member_quota(payload.organization_id, user_id)
+                    .await?;
+                Some(FlashMemberWeeklyLimits {
+                    max_weekly_cpu_millicore_seconds: limits
+                        .flash
+                        .max_weekly_cpu_millicore_seconds
+                        .min(quota.flash.max_weekly_cpu_millicore_seconds),
+                    max_weekly_memory_mib_seconds: limits
+                        .flash
+                        .max_weekly_memory_mib_seconds
+                        .min(quota.flash.max_weekly_memory_mib_seconds),
+                    max_weekly_gpu_seconds: limits
+                        .flash
+                        .max_weekly_gpu_seconds
+                        .min(quota.flash.max_weekly_gpu_seconds),
+                })
+            } else {
+                None
+            };
             Some(FlashProviderPolicy {
                 max_weekly_cpu_millicore_seconds: quota.flash.max_weekly_cpu_millicore_seconds,
                 max_weekly_memory_mib_seconds: quota.flash.max_weekly_memory_mib_seconds,
                 max_weekly_gpu_seconds: quota.flash.max_weekly_gpu_seconds,
+                member,
             })
         } else {
             None
@@ -329,6 +368,7 @@ async fn deliver(
                 name: instance.name,
                 spec,
                 policy,
+                quota_user_id,
             })
             .send()
             .await?

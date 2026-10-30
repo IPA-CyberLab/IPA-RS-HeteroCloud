@@ -17,6 +17,7 @@ import { ErrorState } from "@/components/shared/error-state";
 import { FormError } from "@/components/shared/form-error";
 import { PageHeader } from "@/components/shared/page-header";
 import { PageLoading } from "@/components/shared/page-loading";
+import { QuotaSummary } from "@/features/organizations/quota-summary";
 import { api, getApiErrorMessage } from "@/lib/api-client";
 import type {
   FlashQuotaLimits,
@@ -383,12 +384,14 @@ function NumberField({
   );
 }
 
-function QuotaEditor({
+export function QuotaEditor({
   value,
   onChange,
+  member = false,
 }: {
   value: ResourceQuotaLimits;
   onChange: (value: ResourceQuotaLimits) => void;
+  member?: boolean;
 }) {
   const update = (next: ResourceQuotaLimits) =>
     onChange(normalizeResourceQuotaLimits(next));
@@ -463,7 +466,7 @@ function QuotaEditor({
             <ColumnLayout columns={3}>
               <NumberField
                 label="CPU 上限 (millicore-seconds)"
-                description={`${formatNumber(value.flash.max_weekly_cpu_millicore_seconds / 3_600_000)} vCPU 時間。組織内で共有し、毎週月曜 00:00 UTC にリセットします。`}
+                description={`${formatNumber(value.flash.max_weekly_cpu_millicore_seconds / 3_600_000)} vCPU 時間。${member ? "このメンバーに適用。" : "組織内で共有。"}毎週月曜 00:00 UTC にリセットします。`}
                 value={value.flash.max_weekly_cpu_millicore_seconds}
                 min={0}
                 max={QUOTA_BOUNDS.flash.maxWeeklyCpuMillicoreSeconds}
@@ -471,7 +474,7 @@ function QuotaEditor({
               />
               <NumberField
                 label="メモリ上限 (MiB-seconds)"
-                description={`${formatNumber(value.flash.max_weekly_memory_mib_seconds / (1_024 * 3_600))} GiB 時間。組織内で共有し、毎週月曜 00:00 UTC にリセットします。`}
+                description={`${formatNumber(value.flash.max_weekly_memory_mib_seconds / (1_024 * 3_600))} GiB 時間。${member ? "このメンバーに適用。" : "組織内で共有。"}毎週月曜 00:00 UTC にリセットします。`}
                 value={value.flash.max_weekly_memory_mib_seconds}
                 min={0}
                 max={QUOTA_BOUNDS.flash.maxWeeklyMemoryMibSeconds}
@@ -479,7 +482,7 @@ function QuotaEditor({
               />
               <NumberField
                 label="週次 GPU 上限 (秒)"
-                description="組織内の全 Flash サービスで共有します。40,320 秒は 11.2 GPU 時間です。毎週月曜 00:00 UTC にリセットされます。"
+                description={`${member ? "このメンバーの" : "組織内の"}全 Flash サービスで共有します。毎週月曜 00:00 UTC にリセットされます。`}
                 value={value.flash.max_weekly_gpu_seconds}
                 min={0}
                 max={QUOTA_BOUNDS.flash.maxWeeklyGpuSeconds}
@@ -489,7 +492,7 @@ function QuotaEditor({
           </SpaceBetween>
         </SpaceBetween>
       </Container>
-      <Container header={<Header variant="h3">Flash Registry</Header>}>
+      {!member ? <Container header={<Header variant="h3">Flash Registry</Header>}>
         <ColumnLayout columns={2}>
           <NumberField
             label="保存容量 / テナント (GiB)"
@@ -508,7 +511,7 @@ function QuotaEditor({
             }
           />
         </ColumnLayout>
-      </Container>
+      </Container> : <Box color="text-body-secondary">Flash Registry の保存容量と認証情報数は組織で共有されます。</Box>}
       <Container header={<Header variant="h3">Syouyu Object Storage</Header>}>
         <SpaceBetween size="m">
           <SpaceBetween size="xs">
@@ -523,9 +526,10 @@ function QuotaEditor({
             <Box variant="awsui-key-label">オブジェクトと認証情報</Box>
             <ColumnLayout columns={3}>
               <NumberField label="オブジェクト / バケット" value={value.syouyu.max_objects_per_bucket} max={QUOTA_BOUNDS.syouyu.maxObjectsPerBucket} onChange={(next) => syouyu("max_objects_per_bucket", next)} />
-              <NumberField label="認証情報 / バケット" value={value.syouyu.max_credentials_per_bucket} max={QUOTA_BOUNDS.syouyu.maxCredentialsPerBucket} onChange={(next) => syouyu("max_credentials_per_bucket", next)} />
-              <NumberField label="合計認証情報" value={value.syouyu.max_total_credentials} min={value.syouyu.max_credentials_per_bucket} max={QUOTA_BOUNDS.syouyu.maxTotalCredentials} onChange={(next) => syouyu("max_total_credentials", next)} />
+              {!member ? <NumberField label="認証情報 / バケット" value={value.syouyu.max_credentials_per_bucket} max={QUOTA_BOUNDS.syouyu.maxCredentialsPerBucket} onChange={(next) => syouyu("max_credentials_per_bucket", next)} /> : null}
+              {!member ? <NumberField label="合計認証情報" value={value.syouyu.max_total_credentials} min={value.syouyu.max_credentials_per_bucket} max={QUOTA_BOUNDS.syouyu.maxTotalCredentials} onChange={(next) => syouyu("max_total_credentials", next)} /> : null}
             </ColumnLayout>
+            {member ? <Box color="text-body-secondary">Syouyu の認証情報数は組織の上限を適用します。</Box> : null}
           </SpaceBetween>
         </SpaceBetween>
       </Container>
@@ -548,6 +552,11 @@ export function OwnerQuotasPage() {
   const [tenantLimits, setTenantLimits] = useState<ResourceQuotaLimits | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<OwnerAccount | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const memberQuotas = useQuery({
+    queryKey: ["owner", "resource-quotas", editing?.organization.id, "members"],
+    queryFn: ({ signal }) => api.owner.quotas.members(editing?.organization.id ?? "", signal),
+    enabled: editing !== null,
+  });
   const accountLogins = useQuery({
     queryKey: [...accountQueryKey, selectedAccount?.user.id, "logins"],
     queryFn: ({ signal }) =>
@@ -865,6 +874,80 @@ export function OwnerQuotasPage() {
           ))}
         </ColumnLayout>
       </Container>
+      {clearTenant.isError ? <FormError message={getApiErrorMessage(clearTenant.error)} /> : null}
+      <Header
+        variant="h2"
+        counter={`(${formatNumber(tenants.length)})`}
+        description={`${formatNumber(customLimitCount)}件に個別上限を設定中です。個別設定を解除すると既定値へ戻ります。`}
+      >
+        組織別ハードリミット
+      </Header>
+      <DataTable
+        columns={columns}
+        data={tenants}
+        getRowId={(tenant) => tenant.organization.id}
+        onRowClick={(tenant) => {
+          setEditing(tenant);
+          setTenantLimits(normalizeResourceQuotaLimits(tenant.effective_limits));
+        }}
+        getRowAriaLabel={(tenant) => `${tenant.organization.name}の使用量と上限を表示`}
+        searchPlaceholder="組織名またはIDで検索"
+        emptyTitle="組織がありません"
+        emptyDescription="登録済みの組織はありません。"
+      />
+      <Modal
+        visible={editing !== null && tenantLimits !== null}
+        size="max"
+        header={
+          editing
+            ? `${editing.organization.name} のリソース使用量とハードリミット`
+            : "アカウントリソース"
+        }
+        onDismiss={() => {
+          setEditing(null);
+          setTenantLimits(null);
+        }}
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button onClick={() => setEditing(null)}>キャンセル</Button>
+              <Button
+                variant="primary"
+                loading={saveTenant.isPending}
+                disabled={!editing || !tenantLimits}
+                onClick={() => {
+                  if (editing && tenantLimits) {
+                    saveTenant.mutate({ id: editing.organization.id, limits: tenantLimits });
+                  }
+                }}
+              >
+                個別上限を保存
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="l">
+          {saveTenant.isError ? <FormError message={getApiErrorMessage(saveTenant.error)} /> : null}
+          {editing && tenantLimits ? (
+            <QuotaUsagePanel usage={editing.usage} limits={tenantLimits} />
+          ) : null}
+          <Header variant="h3" description="メンバーの上限変更は、その組織の管理者が行います。">メンバーと適用中の上限</Header>
+          {memberQuotas.isPending ? <PageLoading label="メンバーを読み込んでいます" /> : memberQuotas.isError ?
+            <ErrorState description="メンバーの上限を取得できませんでした。" onRetry={() => void memberQuotas.refetch()} /> :
+            memberQuotas.data.items.map((member) => <details key={member.user_id}>
+              <summary className="cursor-pointer font-semibold">{member.display_name} · {member.email} · {member.role === "owner" ? "オーナー" : member.role === "admin" ? "管理者" : "メンバー"}</summary>
+              <QuotaSummary limits={member.effective_limits} member />
+            </details>)}
+          <Header
+            variant="h3"
+            description="このアカウントに適用する上限です。変更中の値に対する使用率を上に表示します。"
+          >
+            個別ハードリミット
+          </Header>
+          {tenantLimits ? <QuotaEditor value={tenantLimits} onChange={setTenantLimits} /> : null}
+        </SpaceBetween>
+      </Modal>
       <Header
         variant="h2"
         counter={`(${formatNumber(registeredAccounts.length)})`}
@@ -967,7 +1050,7 @@ export function OwnerQuotasPage() {
                     </Box>
                     <Box>{membership.organization_slug}</Box>
                     <Box color="text-body-secondary">
-                      {membership.role === "owner" ? "所有者" : "メンバー"} · {membership.organization_id}
+                      {membership.role === "owner" ? "所有者" : membership.role === "admin" ? "管理者" : "メンバー"} · {membership.organization_id}
                     </Box>
                   </div>
                 ))}
@@ -1021,73 +1104,6 @@ export function OwnerQuotasPage() {
         全アカウントの既定ハードリミット
       </Header>
       <QuotaEditor value={currentDefaults} onChange={setDefaults} />
-      {clearTenant.isError ? <FormError message={getApiErrorMessage(clearTenant.error)} /> : null}
-      <Header
-        variant="h2"
-        counter={`(${formatNumber(tenants.length)})`}
-        description={`${formatNumber(customLimitCount)}件に個別上限を設定中です。個別設定を解除すると既定値へ戻ります。`}
-      >
-        クラウドアカウント別ハードリミット
-      </Header>
-      <DataTable
-        columns={columns}
-        data={tenants}
-        getRowId={(tenant) => tenant.organization.id}
-        onRowClick={(tenant) => {
-          setEditing(tenant);
-          setTenantLimits(normalizeResourceQuotaLimits(tenant.effective_limits));
-        }}
-        getRowAriaLabel={(tenant) => `${tenant.organization.name}の使用量と上限を表示`}
-        searchPlaceholder="アカウント名またはIDで検索"
-        emptyTitle="クラウドアカウントがありません"
-        emptyDescription="登録済みクラウドアカウントはありません。"
-      />
-      <Modal
-        visible={editing !== null && tenantLimits !== null}
-        size="max"
-        header={
-          editing
-            ? `${editing.organization.name} のリソース使用量とハードリミット`
-            : "アカウントリソース"
-        }
-        onDismiss={() => {
-          setEditing(null);
-          setTenantLimits(null);
-        }}
-        footer={
-          <Box float="right">
-            <SpaceBetween direction="horizontal" size="xs">
-              <Button onClick={() => setEditing(null)}>キャンセル</Button>
-              <Button
-                variant="primary"
-                loading={saveTenant.isPending}
-                disabled={!editing || !tenantLimits}
-                onClick={() => {
-                  if (editing && tenantLimits) {
-                    saveTenant.mutate({ id: editing.organization.id, limits: tenantLimits });
-                  }
-                }}
-              >
-                個別上限を保存
-              </Button>
-            </SpaceBetween>
-          </Box>
-        }
-      >
-        <SpaceBetween size="l">
-          {saveTenant.isError ? <FormError message={getApiErrorMessage(saveTenant.error)} /> : null}
-          {editing && tenantLimits ? (
-            <QuotaUsagePanel usage={editing.usage} limits={tenantLimits} />
-          ) : null}
-          <Header
-            variant="h3"
-            description="このアカウントに適用する上限です。変更中の値に対する使用率を上に表示します。"
-          >
-            個別ハードリミット
-          </Header>
-          {tenantLimits ? <QuotaEditor value={tenantLimits} onChange={setTenantLimits} /> : null}
-        </SpaceBetween>
-      </Modal>
     </SpaceBetween>
   );
 }

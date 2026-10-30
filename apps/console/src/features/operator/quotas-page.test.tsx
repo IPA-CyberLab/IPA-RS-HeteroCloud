@@ -147,6 +147,7 @@ describe("OwnerQuotasPage", () => {
         },
       ],
     });
+    vi.spyOn(api.owner.quotas, "members").mockResolvedValue({ items: [] });
     vi.spyOn(api.owner.quotas, "updateDefaults").mockImplementation(
       async (next) => next,
     );

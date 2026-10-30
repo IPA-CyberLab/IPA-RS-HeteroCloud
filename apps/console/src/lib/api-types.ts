@@ -13,7 +13,7 @@ export interface Membership {
   organization_slug: string;
   organization_name: string;
   principal_id: string;
-  role: "owner" | "member";
+  role: "owner" | "admin" | "member";
 }
 
 export interface Session {
@@ -170,6 +170,34 @@ export interface ResourceQuotaTenant {
   override_limits: ResourceQuotaLimits | null;
   effective_limits: ResourceQuotaLimits;
   usage: ResourceQuotaUsage;
+}
+
+export interface OrganizationMemberQuota {
+  user_id: string;
+  principal_id: string;
+  display_name: string;
+  email: string;
+  role: "owner" | "admin" | "member";
+  override_limits: ResourceQuotaLimits | null;
+  effective_limits: ResourceQuotaLimits;
+  usage: Omit<ResourceQuotaUsage, "flow_developer_credentials" | "flow_max_developer_credentials_per_service" | "registry_credentials" | "syouyu_credentials"> & {
+    flow_developer_credentials: null;
+    flow_max_developer_credentials_per_service: null;
+    registry_credentials: null;
+    syouyu_credentials: null;
+  };
+}
+
+export interface OrganizationQuotaOverview {
+  organization: ResourceQuotaTenant | null;
+  member: OrganizationMemberQuota;
+  members: OrganizationMemberQuota[];
+}
+
+export interface UnassignedQuotaResource {
+  id: string;
+  name: string;
+  provider: "flow" | "flash" | "syouyu" | "service_account";
 }
 
 export interface OwnerQuotaOverview {

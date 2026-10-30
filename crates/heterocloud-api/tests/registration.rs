@@ -222,6 +222,368 @@ async fn registration_checks_invitation_before_hashing_and_consumes_it_once()
         browser_token,
         &SecretString::from("test-csrf-key-at-least-32-bytes"),
     )?;
+    let no_csrf = app(state.clone(), None)
+        .oneshot(
+            Request::post("/api/v1/organizations")
+                .header(header::ORIGIN, PUBLIC_ORIGIN)
+                .header(header::COOKIE, format!("hc_session={browser_token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"slug":"second-org","name":"Second Org"}"#))?,
+        )
+        .await?;
+    assert_eq!(no_csrf.status(), StatusCode::FORBIDDEN);
+    let created = app(state.clone(), None)
+        .oneshot(
+            Request::post("/api/v1/organizations")
+                .header(header::ORIGIN, PUBLIC_ORIGIN)
+                .header(header::COOKIE, format!("hc_session={browser_token}"))
+                .header("x-heterocloud-csrf", browser_csrf.expose_secret())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"slug":"second-org","name":"Second Org"}"#))?,
+        )
+        .await?;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created: Value =
+        serde_json::from_slice(&to_bytes(created.into_body(), 1024 * 1024).await?)?;
+    let refreshed = store
+        .session_user(owner.user.id)
+        .await?
+        .ok_or("missing owner")?;
+    assert_eq!(refreshed.memberships.len(), 2);
+    assert!(refreshed.memberships.iter().any(|item| {
+        item.organization_id.to_string() == created["id"].as_str().unwrap_or_default()
+            && item.role == "owner"
+    }));
+
+    // An existing OIDC user can join another organization without creating a
+    // second identity. The invitation remains single-use.
+    let org = membership.organization_id;
+    let invitation = "existing-user-invitation";
+    store
+        .create_invitation(
+            org,
+            owner.user.id,
+            &heterocloud_auth::token_hash(invitation),
+            Utc::now() + Duration::hours(1),
+        )
+        .await?;
+    let member_token = "existing-user-browser-session";
+    store
+        .create_session(
+            oidc_user.user.id,
+            &heterocloud_auth::token_hash(member_token),
+            Utc::now() + Duration::hours(1),
+            None,
+            "oidc",
+        )
+        .await?;
+    let member_csrf = heterocloud_auth::csrf_token(
+        member_token,
+        &SecretString::from("test-csrf-key-at-least-32-bytes"),
+    )?;
+    let join = || {
+        Request::post("/api/v1/organizations/join")
+            .header(header::ORIGIN, PUBLIC_ORIGIN)
+            .header(header::COOKIE, format!("hc_session={member_token}"))
+            .header("x-heterocloud-csrf", member_csrf.expose_secret())
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"invitation_code":invitation}).to_string(),
+            ))
+    };
+    assert_eq!(
+        app(state.clone(), None).oneshot(join()?).await?.status(),
+        StatusCode::OK
+    );
+    assert_ne!(
+        app(state.clone(), None).oneshot(join()?).await?.status(),
+        StatusCode::OK
+    );
+    let joined = store
+        .session_user(oidc_user.user.id)
+        .await?
+        .ok_or("missing member")?;
+    let joined_membership = joined
+        .memberships
+        .iter()
+        .find(|m| m.organization_id == org)
+        .ok_or("member did not join")?;
+    assert_eq!(joined.memberships.len(), 2);
+    let quota_path = format!("/api/v1/organizations/{org}/quotas");
+    let response = app(state.clone(), None)
+        .oneshot(
+            Request::get(&quota_path)
+                .header(header::COOKIE, format!("hc_session={member_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let visible: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await?)?;
+    assert!(visible["organization"].is_null());
+    assert_eq!(visible["member"]["user_id"], json!(oidc_user.user.id));
+    assert_eq!(visible["members"], json!([]));
+    let quota = store.effective_resource_quota(org).await?;
+    let member_path = format!(
+        "/api/v1/organizations/{org}/members/{}/quota",
+        oidc_user.user.id
+    );
+    let request = Request::put(&member_path)
+        .header(header::ORIGIN, PUBLIC_ORIGIN)
+        .header(header::COOKIE, format!("hc_session={member_token}"))
+        .header("x-heterocloud-csrf", member_csrf.expose_secret())
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&quota)?))?;
+    assert_eq!(
+        app(state.clone(), None).oneshot(request).await?.status(),
+        StatusCode::FORBIDDEN
+    );
+    let role_path = format!(
+        "/api/v1/organizations/{org}/members/{}/role",
+        oidc_user.user.id
+    );
+    let promoted = app(state.clone(), None)
+        .oneshot(
+            Request::put(&role_path)
+                .header(header::ORIGIN, PUBLIC_ORIGIN)
+                .header(header::COOKIE, format!("hc_session={browser_token}"))
+                .header("x-heterocloud-csrf", browser_csrf.expose_secret())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"role":"admin"}"#))?,
+        )
+        .await?;
+    assert_eq!(promoted.status(), StatusCode::NO_CONTENT);
+    let forbidden_role_change = app(state.clone(), None)
+        .oneshot(
+            Request::put(format!(
+                "/api/v1/organizations/{org}/members/{}/role",
+                owner.user.id
+            ))
+            .header(header::ORIGIN, PUBLIC_ORIGIN)
+            .header(header::COOKIE, format!("hc_session={member_token}"))
+            .header("x-heterocloud-csrf", member_csrf.expose_secret())
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"role":"admin"}"#))?,
+        )
+        .await?;
+    assert_eq!(forbidden_role_change.status(), StatusCode::FORBIDDEN);
+    let response = app(state.clone(), None)
+        .oneshot(
+            Request::get(&quota_path)
+                .header(header::COOKIE, format!("hc_session={member_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let visible: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await?)?;
+    let visible_members = visible["members"].as_array().ok_or("members")?;
+    assert!(
+        visible_members
+            .iter()
+            .any(|item| item["user_id"] == json!(owner.user.id))
+    );
+    assert!(
+        visible_members
+            .iter()
+            .any(|item| item["user_id"] == json!(oidc_user.user.id))
+    );
+    let mut personal = quota.clone();
+    personal.flow.max_services = 1;
+    let legacy_account = store
+        .create_service_account(org, "legacy-controller")
+        .await?;
+    let blocked = app(state.clone(), None)
+        .oneshot(
+            Request::put(&member_path)
+                .header(header::ORIGIN, PUBLIC_ORIGIN)
+                .header(header::COOKIE, format!("hc_session={member_token}"))
+                .header("x-heterocloud-csrf", member_csrf.expose_secret())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&personal)?))?,
+        )
+        .await?;
+    assert_ne!(blocked.status(), StatusCode::OK);
+    let unassigned = app(state.clone(), None)
+        .oneshot(
+            Request::get(format!("/api/v1/organizations/{org}/quota-unassigned"))
+                .header(header::COOKIE, format!("hc_session={member_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let resources: Value =
+        serde_json::from_slice(&to_bytes(unassigned.into_body(), 1024 * 1024).await?)?;
+    assert_eq!(resources["items"][0]["id"], json!(legacy_account.id));
+    let assign_path = format!(
+        "/api/v1/organizations/{org}/quota-unassigned/service-account/{}",
+        legacy_account.id
+    );
+    let assigned = app(state.clone(), None)
+        .oneshot(
+            Request::put(&assign_path)
+                .header(header::ORIGIN, PUBLIC_ORIGIN)
+                .header(header::COOKIE, format!("hc_session={member_token}"))
+                .header("x-heterocloud-csrf", member_csrf.expose_secret())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"user_id":oidc_user.user.id}).to_string()))?,
+        )
+        .await?;
+    assert_eq!(assigned.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        store.principal_quota_user(org, legacy_account.id).await?,
+        Some(oidc_user.user.id)
+    );
+    let saved = app(state.clone(), None)
+        .oneshot(
+            Request::put(&member_path)
+                .header(header::ORIGIN, PUBLIC_ORIGIN)
+                .header(header::COOKIE, format!("hc_session={member_token}"))
+                .header("x-heterocloud-csrf", member_csrf.expose_secret())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&personal)?))?,
+        )
+        .await?;
+    assert_eq!(saved.status(), StatusCode::OK);
+    let mut invalid_shared = personal.clone();
+    invalid_shared.registry.storage_gib = quota.registry.storage_gib - 1;
+    assert!(matches!(
+        store
+            .set_member_resource_quota(org, oidc_user.user.id, Some(&invalid_shared))
+            .await,
+        Err(StoreError::RequestRejected(_))
+    ));
+    // Allocation checks and inserts share a transaction lock: two concurrent
+    // creations cannot both consume the last remaining slot.
+    let project = store
+        .create_project(org, "member-quota", "Member quota")
+        .await?;
+    let spec = json!({"region":"test","max_participants":1,"max_rooms":1,
+        "rate_limit":{"requests_per_second":1,"burst":1},"metadata":{}});
+    let first = store.create_service_instance(
+        org,
+        project.id,
+        joined_membership.principal_id,
+        "flow",
+        "member-flow-one",
+        spec.clone(),
+    );
+    let second = store.create_service_instance(
+        org,
+        project.id,
+        joined_membership.principal_id,
+        "flow",
+        "member-flow-two",
+        spec.clone(),
+    );
+    let (first, second) = tokio::join!(first, second);
+    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
+    let service_account_attempt = store
+        .create_service_instance(
+            org,
+            project.id,
+            legacy_account.id,
+            "flow",
+            "account-flow",
+            spec.clone(),
+        )
+        .await;
+    assert!(matches!(
+        service_account_attempt,
+        Err(StoreError::RequestRejected(_))
+    ));
+    let pending_before: i64 = sqlx::query_scalar("SELECT count(*) FROM outbox_events")
+        .fetch_one(store.pool())
+        .await?;
+    let _ = store.effective_member_quota(org, oidc_user.user.id).await?;
+    let pending_after: i64 = sqlx::query_scalar("SELECT count(*) FROM outbox_events")
+        .fetch_one(store.pool())
+        .await?;
+    assert_eq!(
+        pending_before, pending_after,
+        "reading a quota must not enqueue reconciliations"
+    );
+    personal.flash.max_cpu_millis_per_vm = 500;
+    personal.flash.max_total_cpu_millis = 500;
+    store
+        .set_member_resource_quota(org, oidc_user.user.id, Some(&personal))
+        .await?;
+    let flash_spec = json!({"region":"test", "image":"example/workspace:v1", "replicas":1,
+        "cpu_millis":100, "memory_mib":256, "ephemeral_storage_gib":1,
+        "ports":[], "exposure":{"type":"internal", "traffic_mode":"forwarded"},
+        "env":{}, "command":[], "args":[], "metadata":{}});
+    let mut too_large = flash_spec.clone();
+    too_large["cpu_millis"] = json!(600);
+    assert!(matches!(
+        store
+            .create_service_instance(
+                org,
+                project.id,
+                joined_membership.principal_id,
+                "flash",
+                "too-large",
+                too_large
+            )
+            .await,
+        Err(StoreError::RequestRejected(_))
+    ));
+    let flash = store
+        .create_service_instance(
+            org,
+            project.id,
+            joined_membership.principal_id,
+            "flash",
+            "allowed-flash",
+            flash_spec,
+        )
+        .await?;
+    personal.flash.max_cpu_millis_per_vm = 50;
+    personal.flash.max_total_cpu_millis = 50;
+    store
+        .set_member_resource_quota(org, oidc_user.user.id, Some(&personal))
+        .await?;
+    assert!(
+        store
+            .set_flash_service_stopped(org, flash.id, joined_membership.principal_id, true)
+            .await?
+            .spec["stopped"]
+            == json!(true)
+    );
+    assert!(matches!(
+        store
+            .set_flash_service_stopped(org, flash.id, joined_membership.principal_id, false)
+            .await,
+        Err(StoreError::RequestRejected(_))
+    ));
+    assert_eq!(
+        store
+            .organization_member_quotas(org)
+            .await?
+            .iter()
+            .find(|item| item.user_id == oidc_user.user.id)
+            .ok_or("member quota")?
+            .usage["flow_services"],
+        json!(1)
+    );
+    // A different member has an independent allocation, still subject to the
+    // organization ceiling.
+    store
+        .create_service_instance(
+            org,
+            project.id,
+            membership.principal_id,
+            "flow",
+            "owner-flow",
+            spec,
+        )
+        .await?;
+    let other_org = created["id"].as_str().ok_or("created organization id")?;
+    let forbidden = app(state.clone(), None)
+        .oneshot(
+            Request::get(format!("/api/v1/organizations/{other_org}/quotas"))
+                .header(header::COOKIE, format!("hc_session={member_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
     let device_response = app(state.clone(), None)
         .oneshot(
             Request::post("/api/v1/auth/cli/device")

@@ -24,6 +24,9 @@ import type {
   InvitationResponse,
   LoginRequest,
   Organization,
+  OrganizationMemberQuota,
+  OrganizationQuotaOverview,
+  UnassignedQuotaResource,
   OwnerAccount,
   OwnerGpu,
   OwnerFlashCostManagement,
@@ -267,6 +270,24 @@ export class HeteroCloudApiClient {
       this.request<CollectionResponse<Organization>>("/organizations", {
         signal,
       }),
+    create: (input: { name: string; slug: string }) =>
+      this.request<Organization>("/organizations", { method: "POST", body: input }),
+    join: (invitationCode: string) =>
+      this.request<Organization>("/organizations/join", {
+        method: "POST", body: { invitation_code: invitationCode },
+      }),
+    quotas: (organizationId: string, signal?: AbortSignal) =>
+      this.request<OrganizationQuotaOverview>(organizationPath(organizationId, "quotas"), { signal }),
+    unassignedQuotaResources: (organizationId: string, signal?: AbortSignal) =>
+      this.request<CollectionResponse<UnassignedQuotaResource>>(organizationPath(organizationId, "quota-unassigned"), { signal }),
+    assignQuotaResource: (organizationId: string, resource: UnassignedQuotaResource, userId: string) =>
+      this.request<void>(organizationPath(organizationId, `quota-unassigned/${resource.provider === "service_account" ? "service-account" : "service"}/${encodeURIComponent(resource.id)}`), { method: "PUT", body: { user_id: userId } }),
+    updateMemberQuota: (organizationId: string, userId: string, limits: ResourceQuotaLimits) =>
+      this.request<ResourceQuotaLimits>(organizationPath(organizationId, `members/${encodeURIComponent(userId)}/quota`), { method: "PUT", body: limits }),
+    clearMemberQuota: (organizationId: string, userId: string) =>
+      this.request<ResourceQuotaLimits>(organizationPath(organizationId, `members/${encodeURIComponent(userId)}/quota`), { method: "DELETE" }),
+    updateMemberRole: (organizationId: string, userId: string, role: "admin" | "member") =>
+      this.request<void>(organizationPath(organizationId, `members/${encodeURIComponent(userId)}/role`), { method: "PUT", body: { role } }),
   };
 
   readonly owner = {
@@ -282,6 +303,8 @@ export class HeteroCloudApiClient {
     quotas: {
       overview: (signal?: AbortSignal) =>
         this.request<OwnerQuotaOverview>("/owner/quotas", { signal }),
+      members: (organizationId: string, signal?: AbortSignal) =>
+        this.request<CollectionResponse<OrganizationMemberQuota>>(`/owner/quotas/organizations/${encodeURIComponent(organizationId)}/members`, { signal }),
       updateDefaults: (limits: ResourceQuotaLimits) =>
         this.request<ResourceQuotaLimits>("/owner/quotas/defaults", {
           method: "PUT",

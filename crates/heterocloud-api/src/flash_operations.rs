@@ -56,7 +56,7 @@ pub async fn allowed(
     let Ok(Some(context)) = context else {
         return false;
     };
-    context.role == "owner"
+    matches!(context.role.as_str(), "owner" | "admin")
         || authorize(
             &AuthorizationRequest {
                 principal_organization_id: org,

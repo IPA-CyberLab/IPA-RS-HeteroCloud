@@ -69,6 +69,8 @@ jobs:
         run: |
           HETEROCLOUD_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
             cargo test --locked -p heterocloud-api --test registration
+          HETEROCLOUD_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+            cargo test --locked -p heterocloud-api --test member_quota_migration
           HETEROCLOUD_FLOW_CREDENTIAL_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
             cargo test --locked -p heterocloud-api --test flow_developer_credentials
           HETEROCLOUD_STORE_TEST_DATABASE_URL="$TEST_DATABASE_URL" \

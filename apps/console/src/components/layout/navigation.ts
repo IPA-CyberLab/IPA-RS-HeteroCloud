@@ -27,6 +27,7 @@ const baseNavigationItems: SideNavigationProps.Item[] = [
     text: "管理",
     items: [
       { type: "link", text: "組織", href: "/organizations" },
+      { type: "link", text: "リソース上限", href: "/organizations/quotas" },
       { type: "link", text: "プロジェクト", href: "/projects" },
       { type: "link", text: "IAMプリンシパル", href: "/iam/principals" },
       { type: "link", text: "IAMポリシー", href: "/iam/policies" },
@@ -50,6 +51,7 @@ export function navigationItems(ownerConsole: boolean): SideNavigationProps.Item
 export const routeTitles: Record<string, string> = {
   "/overview": "コンソールホーム",
   "/organizations": "組織",
+  "/organizations/quotas": "リソース上限",
   "/projects": "プロジェクト",
   "/iam/principals": "プリンシパル",
   "/iam/policies": "ポリシー",

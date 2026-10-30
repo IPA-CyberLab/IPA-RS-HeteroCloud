@@ -1,8 +1,10 @@
 mod flash_backups;
 mod flash_operations;
+mod organizations;
 pub use flash_operations::{
     BackupPolicyInput, FlashBackupPolicy, FlashEvent, FlashRevision, rollback_spec,
 };
+pub use organizations::{OrganizationMemberQuota, UnassignedQuotaResource};
 mod flash_domains;
 mod workload_identity;
 pub use flash_backups::FlashBackup;
@@ -538,6 +540,7 @@ impl Store {
     ) -> Result<ResourceQuotaLimits, StoreError> {
         validate_resource_quota(limits)?;
         let value = serde_json::to_value(limits)?;
+        let mut transaction = self.pool.begin().await?;
         let stored = sqlx::query_scalar::<_, Value>(
             "UPDATE resource_quota_defaults
              SET limits = $1, updated_at = now()
@@ -545,8 +548,11 @@ impl Store {
              RETURNING limits",
         )
         .bind(value)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *transaction)
         .await?;
+        self.enqueue_flash_quota_reconcile_tx(&mut transaction, None)
+            .await?;
+        transaction.commit().await?;
         parse_resource_quota(stored)
     }
 
@@ -557,6 +563,8 @@ impl Store {
     ) -> Result<ResourceQuotaLimits, StoreError> {
         validate_resource_quota(limits)?;
         let value = serde_json::to_value(limits)?;
+        let mut transaction = self.pool.begin().await?;
+        lock_tenant_allocations(&mut transaction, organization_id).await?;
         let stored = sqlx::query_scalar::<_, Value>(
             "INSERT INTO organization_resource_quotas (organization_id, limits)
              SELECT id, $2 FROM organizations WHERE id = $1
@@ -566,9 +574,12 @@ impl Store {
         )
         .bind(organization_id.0)
         .bind(value)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *transaction)
         .await?
         .ok_or(StoreError::NotFound)?;
+        self.enqueue_flash_quota_reconcile_tx(&mut transaction, Some(organization_id))
+            .await?;
+        transaction.commit().await?;
         parse_resource_quota(stored)
     }
 
@@ -576,24 +587,43 @@ impl Store {
         &self,
         organization_id: OrganizationId,
     ) -> Result<ResourceQuotaLimits, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        lock_tenant_allocations(&mut transaction, organization_id).await?;
         let exists = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM organizations WHERE id = $1)",
         )
         .bind(organization_id.0)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *transaction)
         .await?;
         if !exists {
             return Err(StoreError::NotFound);
         }
         sqlx::query("DELETE FROM organization_resource_quotas WHERE organization_id = $1")
             .bind(organization_id.0)
-            .execute(&self.pool)
+            .execute(&mut *transaction)
             .await?;
-        self.resource_quota_defaults().await
+        let limits = resource_quota_in_transaction(&mut transaction, organization_id).await?;
+        self.enqueue_flash_quota_reconcile_tx(&mut transaction, Some(organization_id))
+            .await?;
+        transaction.commit().await?;
+        Ok(limits)
     }
 
     pub async fn enqueue_flash_quota_reconcile(
         &self,
+        organization_id: Option<OrganizationId>,
+    ) -> Result<u64, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        let count = self
+            .enqueue_flash_quota_reconcile_tx(&mut transaction, organization_id)
+            .await?;
+        transaction.commit().await?;
+        Ok(count)
+    }
+
+    async fn enqueue_flash_quota_reconcile_tx(
+        &self,
+        transaction: &mut Transaction<'_, Postgres>,
         organization_id: Option<OrganizationId>,
     ) -> Result<u64, StoreError> {
         let rows = sqlx::query_as::<_, FlashQuotaReconcileRow>(
@@ -604,7 +634,12 @@ impl Store {
                  SELECT p.id
                  FROM principals p
                  WHERE p.organization_id = s.organization_id AND p.enabled = true
-                 ORDER BY p.id
+                 ORDER BY (p.id::text = (
+                   SELECT e.payload->>'principal_id' FROM outbox_events e
+                   WHERE e.aggregate_id = s.id AND e.topic = 'service-instance.reconcile'
+                     AND e.payload->>'generation' = s.generation::text
+                   ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+                 )) DESC NULLS LAST, p.id
                  LIMIT 1
              ) principal ON true
              WHERE s.provider = 'flash' AND s.state <> 'deleting'
@@ -612,13 +647,12 @@ impl Store {
              ORDER BY s.id",
         )
         .bind(organization_id.map(|id| id.0))
-        .fetch_all(&self.pool)
+        .fetch_all(&mut **transaction)
         .await?;
-        let mut transaction = self.pool.begin().await?;
         for row in &rows {
             sqlx::query(
                 "INSERT INTO outbox_events (id, topic, aggregate_id, payload)
-                 VALUES ($1, 'service-instance.reconcile', $2, $3)",
+                 VALUES ($1, 'service-instance.flash-quota', $2, $3)",
             )
             .bind(Uuid::now_v7())
             .bind(row.id)
@@ -630,10 +664,9 @@ impl Store {
                 "provider": "flash",
                 "generation": row.generation,
             }))
-            .execute(&mut *transaction)
+            .execute(&mut **transaction)
             .await?;
         }
-        transaction.commit().await?;
         u64::try_from(rows.len()).map_err(|_| StoreError::Invariant("too many Flash services"))
     }
 
@@ -777,8 +810,8 @@ impl Store {
             .await?;
         sqlx::query(
             "INSERT INTO principals
-                (id, organization_id, kind, name, user_id, enabled)
-             VALUES ($1, $2, 'user', $3, $4, true)",
+                (id, organization_id, kind, name, user_id, quota_user_id, enabled)
+             VALUES ($1, $2, 'user', $3, $4, $4, true)",
         )
         .bind(principal_id.0)
         .bind(organization_id.0)
@@ -899,7 +932,7 @@ impl Store {
                 (id, code_hash, created_by, organization_id, max_uses, expires_at)
              SELECT $1, $2, $3, m.organization_id, 1, $5
              FROM organization_memberships m
-             WHERE m.organization_id = $4 AND m.user_id = $3 AND m.role = 'owner'",
+             WHERE m.organization_id = $4 AND m.user_id = $3 AND m.role IN ('owner', 'admin')",
         )
         .bind(id)
         .bind(code_hash.as_slice())
@@ -932,6 +965,78 @@ impl Store {
         .fetch_one(&self.pool)
         .await
         .map_err(StoreError::from)
+    }
+
+    /// Accept an invitation using an existing authenticated account. Locking
+    /// the invitation makes registration and joining mutually exclusive.
+    pub async fn join_organization_with_invitation(
+        &self,
+        user_id: UserId,
+        code_hash: &[u8; 32],
+    ) -> Result<Organization, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        let (invitation_id, organization_id) = sqlx::query_as::<_, (Uuid, Uuid)>(
+            "SELECT id, organization_id FROM invitations
+             WHERE code_hash = $1 AND organization_id IS NOT NULL
+               AND revoked_at IS NULL AND expires_at > now()
+               AND max_uses = 1 AND used_count = 0 FOR UPDATE",
+        )
+        .bind(code_hash.as_slice())
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(StoreError::InvitationUnavailable)?;
+        let active = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM users WHERE id = $1 AND status = 'active')",
+        )
+        .bind(user_id.0)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if !active {
+            return Err(StoreError::NotFound);
+        }
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM organization_memberships
+             WHERE organization_id = $1 AND user_id = $2)",
+        )
+        .bind(organization_id)
+        .bind(user_id.0)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if exists {
+            return Err(StoreError::Conflict);
+        }
+        let principal_id = PrincipalId::new();
+        sqlx::query(
+            "INSERT INTO principals (id, organization_id, kind, name, user_id, quota_user_id)
+             VALUES ($1, $2, 'user', $3, $4, $4)",
+        )
+        .bind(principal_id.0)
+        .bind(organization_id)
+        .bind(format!("user-{}", user_id.0.simple()))
+        .bind(user_id.0)
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "INSERT INTO organization_memberships (organization_id, user_id, principal_id, role)
+             VALUES ($1, $2, $3, 'member')",
+        )
+        .bind(organization_id)
+        .bind(user_id.0)
+        .bind(principal_id.0)
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query("UPDATE invitations SET used_count = 1 WHERE id = $1")
+            .bind(invitation_id)
+            .execute(&mut *transaction)
+            .await?;
+        let organization = sqlx::query_as::<_, OrganizationRow>(
+            "SELECT id, slug, name, created_at FROM organizations WHERE id = $1",
+        )
+        .bind(organization_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Organization::try_from(organization)
     }
 
     pub async fn register_with_invitation(
@@ -990,8 +1095,8 @@ impl Store {
         .await?;
         sqlx::query(
             "INSERT INTO principals
-                (id, organization_id, kind, name, user_id, enabled)
-             VALUES ($1, $2, 'user', $3, $4, true)",
+                (id, organization_id, kind, name, user_id, quota_user_id, enabled)
+             VALUES ($1, $2, 'user', $3, $4, $4, true)",
         )
         .bind(principal_id.0)
         .bind(organization_id)
@@ -1089,8 +1194,8 @@ impl Store {
             .await?;
         sqlx::query(
             "INSERT INTO principals
-                (id, organization_id, kind, name, user_id, enabled)
-             VALUES ($1, $2, 'user', $3, $4, true)",
+                (id, organization_id, kind, name, user_id, quota_user_id, enabled)
+             VALUES ($1, $2, 'user', $3, $4, $4, true)",
         )
         .bind(principal_id.0)
         .bind(organization_id.0)
@@ -1496,6 +1601,56 @@ impl Store {
         .collect()
     }
 
+    /// Creates a separate tenant and makes the authenticated user its owner.
+    /// The membership and its principal must never exist independently.
+    pub async fn create_organization(
+        &self,
+        user_id: UserId,
+        slug: &str,
+        name: &str,
+    ) -> Result<Organization, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        let display_name = sqlx::query_scalar::<_, String>(
+            "SELECT display_name FROM users WHERE id = $1 AND status = 'active' FOR SHARE",
+        )
+        .bind(user_id.0)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        let organization_id = OrganizationId::new();
+        let principal_id = PrincipalId::new();
+        let row = sqlx::query_as::<_, OrganizationRow>(
+            "INSERT INTO organizations (id, slug, name) VALUES ($1, $2, $3)
+             RETURNING id, slug, name, created_at",
+        )
+        .bind(organization_id.0)
+        .bind(slug)
+        .bind(name)
+        .fetch_one(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "INSERT INTO principals (id, organization_id, kind, name, user_id, quota_user_id, enabled)
+             VALUES ($1, $2, 'user', $3, $4, $4, true)",
+        )
+        .bind(principal_id.0)
+        .bind(organization_id.0)
+        .bind(display_name)
+        .bind(user_id.0)
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "INSERT INTO organization_memberships (organization_id, user_id, principal_id, role)
+             VALUES ($1, $2, $3, 'owner')",
+        )
+        .bind(organization_id.0)
+        .bind(user_id.0)
+        .bind(principal_id.0)
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Organization::try_from(row)
+    }
+
     pub async fn organization(
         &self,
         organization_id: OrganizationId,
@@ -1703,17 +1858,30 @@ impl Store {
         organization_id: OrganizationId,
         name: &str,
     ) -> Result<Principal, StoreError> {
+        self.create_service_account_owned(organization_id, name, None)
+            .await
+    }
+
+    pub async fn create_service_account_owned(
+        &self,
+        organization_id: OrganizationId,
+        name: &str,
+        quota_user_id: Option<UserId>,
+    ) -> Result<Principal, StoreError> {
         let row = sqlx::query_as::<_, PrincipalRow>(
             "INSERT INTO principals
-                (id, organization_id, kind, name, enabled)
-             VALUES ($1, $2, 'service_account', $3, true)
+                (id, organization_id, kind, name, enabled, quota_user_id)
+             SELECT $1, $2, 'service_account', $3, true, $4
+             WHERE $4::uuid IS NULL OR EXISTS
+                 (SELECT 1 FROM organization_memberships WHERE organization_id = $2 AND user_id = $4)
              RETURNING id, organization_id, kind, name, user_id, enabled, created_at",
         )
         .bind(PrincipalId::new().0)
         .bind(organization_id.0)
         .bind(name)
-        .fetch_one(&self.pool)
-        .await?;
+        .bind(quota_user_id.map(|id| id.0))
+        .fetch_optional(&self.pool)
+        .await?.ok_or(StoreError::NotFound)?;
         Principal::try_from(row)
     }
 
@@ -2087,8 +2255,8 @@ impl Store {
         let mut transaction = self.pool.begin().await?;
         lock_tenant_allocations(&mut transaction, input.organization_id).await?;
         let quota = resource_quota_in_transaction(&mut transaction, input.organization_id).await?;
-        let service_exists = sqlx::query_scalar::<_, Uuid>(
-            "SELECT id
+        let service_owner = sqlx::query_scalar::<_, Option<Uuid>>(
+            "SELECT quota_user_id
              FROM service_instances
              WHERE id = $1 AND organization_id = $2 AND provider = 'flow'
              FOR UPDATE",
@@ -2097,10 +2265,20 @@ impl Store {
         .bind(input.organization_id.0)
         .fetch_optional(&mut *transaction)
         .await?
-        .is_some();
-        if !service_exists {
-            return Err(StoreError::NotFound);
-        }
+        .ok_or(StoreError::NotFound)?;
+        let member_quota = if let Some(user_id) = service_owner {
+            Some(
+                organizations::member_quota_in_transaction(
+                    &mut transaction,
+                    input.organization_id,
+                    UserId(user_id),
+                    &quota,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
         let active_count = sqlx::query_scalar::<_, i64>(
             "SELECT count(*)
              FROM flow_developer_credentials
@@ -2111,11 +2289,20 @@ impl Store {
         .bind(input.service_instance_id.0)
         .fetch_one(&mut *transaction)
         .await?;
-        if active_count >= i64::from(quota.flow.max_developer_credentials_per_service) {
+        let credential_limit = member_quota.as_ref().map_or(
+            quota.flow.max_developer_credentials_per_service,
+            |member| {
+                member
+                    .flow
+                    .max_developer_credentials_per_service
+                    .min(quota.flow.max_developer_credentials_per_service)
+            },
+        );
+        if active_count >= i64::from(credential_limit) {
             transaction.rollback().await?;
             return Err(StoreError::RequestRejected(format!(
                 "Flow developer credential limit exceeded: limit is {} per service",
-                quota.flow.max_developer_credentials_per_service
+                credential_limit
             )));
         }
         let row = sqlx::query_as::<_, FlowDeveloperCredentialRecord>(
@@ -2668,6 +2855,31 @@ impl Store {
         .await
     }
 
+    /// Records the human allocation to charge for a workload-created service.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_service_instance_for_user(
+        &self,
+        organization_id: OrganizationId,
+        project_id: ProjectId,
+        principal_id: PrincipalId,
+        provider: &str,
+        name: &str,
+        spec: Value,
+        quota_user_id: Option<UserId>,
+    ) -> Result<ServiceInstance, StoreError> {
+        self.create_service_instance_with_id_for_user(
+            organization_id,
+            project_id,
+            principal_id,
+            provider,
+            name,
+            spec,
+            ServiceInstanceId::new(),
+            Some(quota_user_id),
+        )
+        .await
+    }
+
     /// The backup restore request reserves this ID before retrying creation.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_service_instance_with_id(
@@ -2680,6 +2892,58 @@ impl Store {
         spec: Value,
         id: ServiceInstanceId,
     ) -> Result<ServiceInstance, StoreError> {
+        self.create_service_instance_with_id_for_user(
+            organization_id,
+            project_id,
+            principal_id,
+            provider,
+            name,
+            spec,
+            id,
+            None,
+        )
+        .await
+    }
+
+    /// A restore reserves its identifier in advance, but is charged to the
+    /// requesting user (or the owner of the requesting workload).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn restore_service_instance_for_user(
+        &self,
+        organization_id: OrganizationId,
+        project_id: ProjectId,
+        principal_id: PrincipalId,
+        provider: &str,
+        name: &str,
+        spec: Value,
+        id: ServiceInstanceId,
+        quota_user_id: Option<UserId>,
+    ) -> Result<ServiceInstance, StoreError> {
+        self.create_service_instance_with_id_for_user(
+            organization_id,
+            project_id,
+            principal_id,
+            provider,
+            name,
+            spec,
+            id,
+            Some(quota_user_id),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn create_service_instance_with_id_for_user(
+        &self,
+        organization_id: OrganizationId,
+        project_id: ProjectId,
+        principal_id: PrincipalId,
+        provider: &str,
+        name: &str,
+        spec: Value,
+        id: ServiceInstanceId,
+        requested_quota_user_id: Option<Option<UserId>>,
+    ) -> Result<ServiceInstance, StoreError> {
         let mut transaction = self.pool.begin().await?;
         lock_tenant_allocations(&mut transaction, organization_id).await?;
         if let Some(row) = sqlx::query_as::<_, ServiceRow>(
@@ -2690,6 +2954,36 @@ impl Store {
             }
             transaction.commit().await?;
             return ServiceInstance::try_from(row);
+        }
+        let principal_quota_user_id = sqlx::query_scalar::<_, Option<Uuid>>(
+            "SELECT COALESCE(user_id, quota_user_id) FROM principals
+             WHERE id = $1 AND organization_id = $2 AND enabled = true",
+        )
+        .bind(principal_id.0)
+        .bind(organization_id.0)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        let quota_user_id =
+            requested_quota_user_id.map_or(principal_quota_user_id, |value| value.map(|id| id.0));
+        if let Some(user_id) = quota_user_id {
+            let member: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM organization_memberships WHERE organization_id = $1 AND user_id = $2)",
+            ).bind(organization_id.0).bind(user_id).fetch_one(&mut *transaction).await?;
+            if !member {
+                return Err(StoreError::NotFound);
+            }
+        }
+        if quota_user_id.is_none() && matches!(provider, "flow" | "flash" | "syouyu") {
+            let has_member_limits: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM organization_member_resource_quotas WHERE organization_id = $1)",
+            ).bind(organization_id.0).fetch_one(&mut *transaction).await?;
+            if has_member_limits {
+                return Err(StoreError::RequestRejected(
+                    "a service account must have an allocation owner before creating resources"
+                        .into(),
+                ));
+            }
         }
         if provider == "flash"
             && let Some(backup) = spec.get("restore_from_backup_id").and_then(Value::as_str)
@@ -2751,14 +3045,28 @@ impl Store {
                 return Err(error);
             }
         };
+        if let Some(user_id) = quota_user_id {
+            let organization_limits =
+                resource_quota_in_transaction(&mut transaction, organization_id).await?;
+            organizations::validate_member_allocation(
+                &mut transaction,
+                organization_id,
+                UserId(user_id),
+                None,
+                provider,
+                &spec,
+                &organization_limits,
+            )
+            .await?;
+        }
         if provider == "flash" {
             validate_vpc_attachment(&mut transaction, organization_id, project_id, id, &spec)
                 .await?;
         }
         let row = sqlx::query_as::<_, ServiceRow>(
             "INSERT INTO service_instances
-                (id, organization_id, project_id, provider, name, state, spec)
-             SELECT $1, $2, p.id, $4, $5, 'provisioning', $6
+                (id, organization_id, project_id, provider, name, state, spec, quota_user_id)
+             SELECT $1, $2, p.id, $4, $5, 'provisioning', $6, $7
              FROM projects p
              WHERE p.id = $3 AND p.organization_id = $2
              RETURNING id, organization_id, project_id, provider, name,
@@ -2770,9 +3078,19 @@ impl Store {
         .bind(provider)
         .bind(name)
         .bind(spec.clone())
+        .bind(quota_user_id)
         .fetch_optional(&mut *transaction)
         .await?
         .ok_or(StoreError::NotFound)?;
+        sqlx::query(
+            "INSERT INTO service_quota_owners (service_instance_id, organization_id, user_id)
+             VALUES ($1, $2, $3)",
+        )
+        .bind(id.0)
+        .bind(organization_id.0)
+        .bind(quota_user_id)
+        .execute(&mut *transaction)
+        .await?;
         if provider == "flash" {
             replace_flash_gpu_service_request(
                 &mut transaction,
@@ -2893,6 +3211,13 @@ impl Store {
             transaction.rollback().await?;
             return Err(StoreError::NotFound);
         };
+        let quota_user_id = sqlx::query_scalar::<_, Option<Uuid>>(
+            "SELECT quota_user_id FROM service_instances WHERE id = $1 AND organization_id = $2",
+        )
+        .bind(id.0)
+        .bind(organization_id.0)
+        .fetch_one(&mut *transaction)
+        .await?;
         if expected_generation.is_some_and(|g| g != existing.generation) {
             return Err(StoreError::Conflict);
         }
@@ -2958,6 +3283,20 @@ impl Store {
                 return Err(error);
             }
         };
+        if let Some(user_id) = quota_user_id {
+            let organization_limits =
+                resource_quota_in_transaction(&mut transaction, organization_id).await?;
+            organizations::validate_member_allocation(
+                &mut transaction,
+                organization_id,
+                UserId(user_id),
+                Some(id),
+                provider,
+                &spec,
+                &organization_limits,
+            )
+            .await?;
+        }
         if provider == "flash" {
             validate_flash_disk_update(&existing.spec, &existing.status, &spec)?;
             validate_vpc_attachment(&mut transaction, organization_id, project_id, id, &spec)
@@ -3080,6 +3419,21 @@ impl Store {
                 &quota,
             )
             .await?;
+            let quota_user_id = sqlx::query_scalar::<_, Option<Uuid>>(
+                "SELECT quota_user_id FROM service_instances WHERE id = $1 AND organization_id = $2",
+            ).bind(id.0).bind(organization_id.0).fetch_one(&mut *transaction).await?;
+            if let Some(user_id) = quota_user_id {
+                organizations::validate_member_allocation(
+                    &mut transaction,
+                    organization_id,
+                    UserId(user_id),
+                    Some(id),
+                    "flash",
+                    &spec,
+                    &quota,
+                )
+                .await?;
+            }
             validate_vpc_attachment(
                 &mut transaction,
                 organization_id,
@@ -4932,7 +5286,7 @@ impl TryFrom<MembershipRow> for Membership {
     type Error = StoreError;
 
     fn try_from(row: MembershipRow) -> Result<Self, Self::Error> {
-        if row.role != "owner" && row.role != "member" {
+        if !matches!(row.role.as_str(), "owner" | "admin" | "member") {
             return Err(StoreError::Invariant("unknown membership role"));
         }
         Ok(Self {

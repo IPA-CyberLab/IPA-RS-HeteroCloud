@@ -49,6 +49,7 @@ export function RegisterPage() {
     },
   });
 
+  if (session.data && invitationCode) return <JoinExistingOrganization invitationCode={invitationCode} />;
   if (session.data) return <Navigate to="/overview" replace />;
   if (!invitationCode) return <MissingInvitationPage />;
 
@@ -153,6 +154,37 @@ export function RegisterPage() {
       </main>
     </div>
   );
+}
+
+function JoinExistingOrganization({ invitationCode }: { invitationCode: string }) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const join = useMutation({
+    mutationFn: api.organizations.join,
+    onSuccess: async (organization) => {
+      try { window.localStorage.setItem("heterocloud.active-organization", organization.id); } catch { /* optional */ }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["auth", "session"] }),
+        queryClient.invalidateQueries({ queryKey: ["organizations"] }),
+      ]);
+      navigate("/organizations", { replace: true });
+    },
+  });
+  return <div className="auth-shell">
+    <AuthTopNavigation />
+    <main className="auth-page"><div className="auth-panel">
+      <SpaceBetween size="l">
+        <Header variant="h1" description="現在のアカウントで招待先の組織に参加します。">組織への招待</Header>
+        <Container><SpaceBetween size="m">
+          {join.isError ? <Alert type="error">{getApiErrorMessage(join.error)}</Alert> : null}
+          <Button variant="primary" loading={join.isPending} onClick={() => join.mutate(invitationCode)}>
+            招待を受け入れる
+          </Button>
+          <Button href="/organizations">キャンセル</Button>
+        </SpaceBetween></Container>
+      </SpaceBetween>
+    </div></main>
+  </div>;
 }
 
 function MissingInvitationPage() {

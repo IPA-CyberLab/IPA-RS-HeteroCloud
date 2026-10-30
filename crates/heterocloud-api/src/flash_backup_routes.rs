@@ -289,9 +289,10 @@ pub(super) async fn restore_backup(
         )
         .await
         .map_err(ApiError::from_store)?;
+    let quota_user = quota_user_for_actor(&state, &actor, OrganizationId(org)).await?;
     let service = state
         .store
-        .create_service_instance_with_id(
+        .restore_service_instance_for_user(
             OrganizationId(org),
             ProjectId(request.project_id),
             authorization.principal_id,
@@ -299,6 +300,7 @@ pub(super) async fn restore_backup(
             &request.name,
             serde_json::to_value(spec).map_err(|_| ApiError::Internal)?,
             target,
+            quota_user,
         )
         .await
         .map_err(ApiError::from_store)?;

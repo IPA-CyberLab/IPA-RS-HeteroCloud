@@ -31,7 +31,7 @@ use heterocloud_domain::{
     FlowSpec, MAX_FLOW_RATE_LIMIT_BURST, MAX_FLOW_RATE_LIMIT_REQUESTS_PER_SECOND, MAX_FLOW_ROOMS,
     Organization, OrganizationId, PolicyDocument, PolicyId, PrincipalId, ProjectId,
     ResourceQuotaLimits, ServiceInstance, ServiceInstanceId, ServiceState, SyouyuQuotaLimits,
-    SyouyuSpec, UserStatus, VpcSpec,
+    SyouyuSpec, UserId, UserStatus, VpcSpec,
 };
 use heterocloud_iam::{AuthorizationRequest, Decision, authorize, semantics_digest};
 use heterocloud_store::{
@@ -155,7 +155,26 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             axum::routing::put(update_owner_organization_quota)
                 .delete(clear_owner_organization_quota),
         )
-        .route("/organizations", get(list_organizations))
+        .route(
+            "/owner/quotas/organizations/{organization_id}/members",
+            get(owner_organization_member_quotas),
+        )
+        .route("/organizations", get(list_organizations).post(create_organization))
+        .route("/organizations/join", post(join_organization))
+        .route("/organizations/{organization_id}/quotas", get(organization_quotas))
+        .route("/organizations/{organization_id}/quota-unassigned", get(unassigned_quota_resources))
+        .route(
+            "/organizations/{organization_id}/quota-unassigned/{kind}/{resource_id}",
+            axum::routing::put(assign_quota_resource),
+        )
+        .route(
+            "/organizations/{organization_id}/members/{user_id}/quota",
+            axum::routing::put(update_member_quota).delete(clear_member_quota),
+        )
+        .route(
+            "/organizations/{organization_id}/members/{user_id}/role",
+            axum::routing::put(update_member_role),
+        )
         .route(
             "/organizations/{organization_id}/projects",
             get(list_projects).post(create_project),
@@ -588,6 +607,22 @@ async fn owner_quota_overview(
     Ok(Json(json!({ "defaults": defaults, "tenants": tenants })))
 }
 
+async fn owner_organization_member_quotas(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &jar, peer, false).await?;
+    let members = state
+        .store
+        .organization_member_quotas(OrganizationId(organization_id))
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(json!({ "items": members })))
+}
+
 async fn list_owner_accounts(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -725,11 +760,6 @@ async fn update_owner_quota_defaults(
         .update_resource_quota_defaults(&limits)
         .await
         .map_err(ApiError::from_store)?;
-    state
-        .store
-        .enqueue_flash_quota_reconcile(None)
-        .await
-        .map_err(ApiError::from_store)?;
     schedule_registry_quota_reconcile(Arc::clone(&state), None);
     Ok(Json(limits))
 }
@@ -746,11 +776,6 @@ async fn update_owner_organization_quota(
     let limits = state
         .store
         .set_organization_resource_quota(OrganizationId(organization_id), &limits)
-        .await
-        .map_err(ApiError::from_store)?;
-    state
-        .store
-        .enqueue_flash_quota_reconcile(Some(OrganizationId(organization_id)))
         .await
         .map_err(ApiError::from_store)?;
     schedule_registry_quota_reconcile(
@@ -771,11 +796,6 @@ async fn clear_owner_organization_quota(
     let limits = state
         .store
         .clear_organization_resource_quota(OrganizationId(organization_id))
-        .await
-        .map_err(ApiError::from_store)?;
-    state
-        .store
-        .enqueue_flash_quota_reconcile(Some(OrganizationId(organization_id)))
         .await
         .map_err(ApiError::from_store)?;
     schedule_registry_quota_reconcile(
@@ -1732,6 +1752,289 @@ async fn list_organizations(
     Ok(Json(json!({ "items": organizations })))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateOrganization {
+    slug: String,
+    name: String,
+}
+
+async fn create_organization(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<CreateOrganization>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    validate_slug(&request.slug)?;
+    validate_name(&request.name)?;
+    let user_id = match actor {
+        AuthenticatedActor::User(session) => session.user.user.id,
+        // CLI and workload credentials are scoped to an existing organization;
+        // they must not create a separate tenant outside that scope.
+        AuthenticatedActor::CliToken(_)
+        | AuthenticatedActor::Workload(_)
+        | AuthenticatedActor::ApiKey { .. } => {
+            return Err(ApiError::Forbidden);
+        }
+    };
+    let organization = state
+        .store
+        .create_organization(user_id, &request.slug, &request.name)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::CREATED, Json(organization)))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JoinOrganization {
+    invitation_code: SecretString,
+}
+
+async fn join_organization(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<JoinOrganization>,
+) -> Result<impl IntoResponse, ApiError> {
+    let authenticated = authenticated_mutation(&state, &headers, &jar).await?;
+    let code = request.invitation_code.expose_secret();
+    if code.is_empty() || code.len() > 256 {
+        return Err(ApiError::BadRequest(
+            "The invitation is invalid or no longer available.".into(),
+        ));
+    }
+    let organization = state
+        .store
+        .join_organization_with_invitation(authenticated.user.user.id, &token_hash(code))
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::OK, Json(organization)))
+}
+
+async fn quota_human_context(
+    state: &AppState,
+    actor: &AuthenticatedActor,
+    organization: OrganizationId,
+) -> Result<(UserId, AuthorizationContext), ApiError> {
+    let user_id = match actor {
+        AuthenticatedActor::User(session) => session.user.user.id,
+        AuthenticatedActor::CliToken(token) if token.organization_id == organization => {
+            token.user.user.id
+        }
+        _ => return Err(ApiError::Forbidden),
+    };
+    let context = state
+        .store
+        .authorization_context(user_id, organization)
+        .await
+        .map_err(ApiError::from_store)?
+        .ok_or(ApiError::Forbidden)?;
+    Ok((user_id, context))
+}
+
+async fn quota_user_for_actor(
+    state: &AppState,
+    actor: &AuthenticatedActor,
+    organization: OrganizationId,
+) -> Result<Option<UserId>, ApiError> {
+    match actor {
+        AuthenticatedActor::User(session) => Ok(Some(session.user.user.id)),
+        AuthenticatedActor::CliToken(token) if token.organization_id == organization => {
+            Ok(Some(token.user.user.id))
+        }
+        AuthenticatedActor::Workload(token) if token.organization_id == organization.0 => state
+            .store
+            .service_quota_user(organization, ServiceInstanceId(token.service_instance_id))
+            .await
+            .map_err(ApiError::from_store),
+        AuthenticatedActor::ApiKey {
+            organization_id,
+            principal_id,
+            ..
+        } if *organization_id == organization => state
+            .store
+            .principal_quota_user(organization, *principal_id)
+            .await
+            .map_err(ApiError::from_store),
+        _ => Err(ApiError::Forbidden),
+    }
+}
+
+async fn quota_administrator(
+    state: &AppState,
+    actor: &AuthenticatedActor,
+    organization: OrganizationId,
+    action: &str,
+) -> Result<AuthorizationContext, ApiError> {
+    let (_, context) = quota_human_context(state, actor, organization).await?;
+    if !matches!(context.role.as_str(), "owner" | "admin") {
+        return Err(ApiError::Forbidden);
+    }
+    // Use the regular authorization path for its audit record.
+    authorize_actor(
+        state,
+        actor,
+        organization,
+        action,
+        &organization_resource(organization.0, "identity/member-quota/*"),
+    )
+    .await
+}
+
+async fn organization_quotas(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    let organization = OrganizationId(organization_id);
+    let (user_id, context) = quota_human_context(&state, &actor, organization).await?;
+    let members = state
+        .store
+        .organization_member_quotas(organization)
+        .await
+        .map_err(ApiError::from_store)?;
+    let own = members
+        .iter()
+        .find(|member| member.user_id == user_id)
+        .ok_or(ApiError::Forbidden)?;
+    if matches!(context.role.as_str(), "owner" | "admin") {
+        let tenant = state
+            .store
+            .list_resource_quota_tenants()
+            .await
+            .map_err(ApiError::from_store)?
+            .into_iter()
+            .find(|tenant| tenant.organization.id == organization)
+            .ok_or(ApiError::NotFound)?;
+        Ok(Json(
+            json!({ "organization": tenant, "member": own, "members": members }),
+        ))
+    } else {
+        Ok(Json(
+            json!({ "organization": null, "member": own, "members": [] }),
+        ))
+    }
+}
+
+async fn update_member_quota(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, user_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(limits): Json<ResourceQuotaLimits>,
+) -> Result<Json<ResourceQuotaLimits>, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let organization = OrganizationId(organization_id);
+    quota_administrator(&state, &actor, organization, "identity:UpdateMemberQuota").await?;
+    let limits = state
+        .store
+        .set_member_resource_quota(organization, UserId(user_id), Some(&limits))
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(limits))
+}
+
+async fn unassigned_quota_resources(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    let organization = OrganizationId(organization_id);
+    quota_administrator(
+        &state,
+        &actor,
+        organization,
+        "identity:ListUnassignedQuotaResources",
+    )
+    .await?;
+    let items = state
+        .store
+        .unassigned_quota_resources(organization)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(json!({"items": items})))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AssignQuotaResource {
+    user_id: UserId,
+}
+
+async fn assign_quota_resource(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, kind, resource_id)): Path<(Uuid, String, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<AssignQuotaResource>,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let organization = OrganizationId(organization_id);
+    quota_administrator(&state, &actor, organization, "identity:AssignQuotaResource").await?;
+    let service_account = match kind.as_str() {
+        "service" => false,
+        "service-account" => true,
+        _ => return Err(ApiError::NotFound),
+    };
+    state
+        .store
+        .assign_quota_resource(organization, resource_id, request.user_id, service_account)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn clear_member_quota(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, user_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<ResourceQuotaLimits>, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let organization = OrganizationId(organization_id);
+    quota_administrator(&state, &actor, organization, "identity:UpdateMemberQuota").await?;
+    let limits = state
+        .store
+        .set_member_resource_quota(organization, UserId(user_id), None)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(limits))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateMemberRole {
+    role: String,
+}
+
+async fn update_member_role(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, user_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<UpdateMemberRole>,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let organization = OrganizationId(organization_id);
+    let (_, context) = quota_human_context(&state, &actor, organization).await?;
+    if context.role != "owner" {
+        return Err(ApiError::Forbidden);
+    }
+    quota_administrator(&state, &actor, organization, "identity:UpdateMemberRole").await?;
+    state
+        .store
+        .set_organization_member_role(organization, UserId(user_id), &request.role)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn list_projects(
     State(state): State<Arc<AppState>>,
     Path(organization_id): Path<Uuid>,
@@ -1838,9 +2141,10 @@ async fn create_service_account(
         &organization_resource(organization_id, "iam/principal/*"),
     )
     .await?;
+    let quota_user = quota_user_for_actor(&state, &actor, OrganizationId(organization_id)).await?;
     let principal = state
         .store
-        .create_service_account(OrganizationId(organization_id), &request.name)
+        .create_service_account_owned(OrganizationId(organization_id), &request.name, quota_user)
         .await
         .map_err(ApiError::from_store)?;
     Ok((StatusCode::CREATED, Json(principal)))
@@ -2139,15 +2443,17 @@ async fn create_realtime_service(
         &organization_resource(organization_id, "realtime/*"),
     )
     .await?;
+    let quota_user = quota_user_for_actor(&state, &actor, OrganizationId(organization_id)).await?;
     let instance = state
         .store
-        .create_service_instance(
+        .create_service_instance_for_user(
             OrganizationId(organization_id),
             ProjectId(request.project_id),
             authorization.principal_id,
             "flow",
             &request.name,
             serde_json::to_value(request.spec).map_err(|_| ApiError::Internal)?,
+            quota_user,
         )
         .await
         .map_err(ApiError::from_store)?;
@@ -2484,15 +2790,17 @@ async fn create_vpc(
         &vpc_resource(org, None),
     )
     .await?;
+    let quota_user = quota_user_for_actor(&state, &actor, OrganizationId(org)).await?;
     let instance = state
         .store
-        .create_service_instance(
+        .create_service_instance_for_user(
             OrganizationId(org),
             ProjectId(request.project_id),
             auth.principal_id,
             "vpc",
             &request.name,
             serde_json::to_value(request.spec).map_err(|_| ApiError::Internal)?,
+            quota_user,
         )
         .await
         .map_err(ApiError::from_store)?;
@@ -2638,15 +2946,17 @@ async fn create_flash_service(
         &flash_collection_resource(organization_id),
     )
     .await?;
+    let quota_user = quota_user_for_actor(&state, &actor, OrganizationId(organization_id)).await?;
     let instance = state
         .store
-        .create_service_instance(
+        .create_service_instance_for_user(
             OrganizationId(organization_id),
             ProjectId(request.project_id),
             authorization.principal_id,
             "flash",
             &request.name,
             serde_json::to_value(request.spec).map_err(|_| ApiError::Internal)?,
+            quota_user,
         )
         .await
         .map_err(ApiError::from_store)?;
@@ -3195,15 +3505,17 @@ async fn create_syouyu_bucket(
         &syouyu_collection_resource(organization_id),
     )
     .await?;
+    let quota_user = quota_user_for_actor(&state, &actor, OrganizationId(organization_id)).await?;
     let instance = state
         .store
-        .create_service_instance(
+        .create_service_instance_for_user(
             OrganizationId(organization_id),
             ProjectId(request.project_id),
             authorization.principal_id,
             "syouyu",
             &request.name,
             serde_json::to_value(request.spec).map_err(|_| ApiError::Internal)?,
+            quota_user,
         )
         .await
         .map_err(ApiError::from_store)?;
@@ -5331,8 +5643,8 @@ async fn authorize_organization(
         .await
         .map_err(ApiError::from_store)?
         .ok_or(ApiError::Forbidden)?;
-    let (decision, reason) = if context.role == "owner" {
-        (Decision::Allow, "organization_owner")
+    let (decision, reason) = if matches!(context.role.as_str(), "owner" | "admin") {
+        (Decision::Allow, "organization_administrator")
     } else {
         let evaluation = authorize(
             &AuthorizationRequest {
@@ -5449,8 +5761,8 @@ async fn authorize_actor(
             )
         }
     };
-    let (decision, reason) = if context.role == "owner" {
-        (Decision::Allow, "organization_owner")
+    let (decision, reason) = if matches!(context.role.as_str(), "owner" | "admin") {
+        (Decision::Allow, "organization_administrator")
     } else {
         let evaluation = authorize(
             &AuthorizationRequest {

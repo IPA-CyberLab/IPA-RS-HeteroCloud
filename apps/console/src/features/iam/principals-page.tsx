@@ -115,7 +115,7 @@ export function IamPrincipalsPage() {
         description={`${activeOrganization.organization_name} のユーザーおよびサービスアカウントを管理します。`}
         actions={
           <SpaceBetween direction="horizontal" size="xs">
-            {activeOrganization.role === "owner" ? (
+            {activeOrganization.role === "owner" || activeOrganization.role === "admin" ? (
               <Button
                 iconName="key"
                 onClick={() => {
