@@ -412,6 +412,35 @@ export interface IamGroup {
   policies: string[];
 }
 
+export interface IamRole {
+  principal_id: string;
+  organization_id: string;
+  name: string;
+  arn: string;
+  trust_policy: Record<string, unknown>;
+  max_session_seconds: number;
+  created_at: string;
+}
+
+export interface IamRoleCredentials {
+  access_token: string;
+  token_type: "Bearer";
+  session_id: string;
+  role_arn: string;
+  account_id: string;
+  principal_id: string;
+  expires_at: string;
+}
+
+export interface IamRoleSessionInfo {
+  id: string;
+  source_arn: string;
+  session_name: string;
+  expires_at: string;
+  revoked_at: string | null;
+  created_at: string;
+}
+
 export interface CreatePolicyRequest {
   name: string;
   document: PolicyDocument | Record<string, unknown>;

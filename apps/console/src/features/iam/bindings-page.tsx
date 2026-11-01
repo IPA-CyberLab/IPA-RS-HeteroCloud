@@ -16,6 +16,7 @@ import { api, getApiErrorMessage } from "@/lib/api-client";
 import { iamPoliciesQueryOptions, iamPrincipalsQueryOptions } from "@/lib/queries";
 import { IamGroups } from "@/features/iam/groups";
 import { IamBoundaries } from "@/features/iam/permissions-boundaries";
+import { IamRoles } from "@/features/iam/roles";
 
 export function IamBindingsPage() {
   const { activeOrganization } = useActiveOrganization();
@@ -58,6 +59,7 @@ export function IamBindingsPage() {
       />
       <IamGroups accountId={organizationId} principals={principals.data.items} policies={policies.data.items} />
       <IamBoundaries accountId={organizationId} principals={principals.data.items} policies={policies.data.items} />
+      <IamRoles accountId={organizationId} policies={policies.data.items} />
       <Container header={<Header variant="h2">割り当て済みポリシー</Header>}>
         <SpaceBetween size="m">
           {bindings.isError && <Alert type="error">{getApiErrorMessage(bindings.error)}</Alert>}

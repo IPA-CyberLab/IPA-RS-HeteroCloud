@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod role_trust;
+pub use role_trust::{RoleTrustDocument, RoleTrustError};
+
 pub const LEAN_SEMANTICS_SOURCE: &str = include_str!("../../../lean/HeteroCloud/IAM.lean");
 
 #[must_use]
@@ -202,6 +205,23 @@ pub fn enforce_permissions_boundary(
         });
     }
     Ok(identity)
+}
+
+pub fn enforce_session_policy(
+    request: &AuthorizationRequest<'_>,
+    identity: Evaluation,
+    session_policy: Option<&PolicyDocument>,
+) -> Result<Evaluation, IamError> {
+    if identity.decision == Decision::Deny {
+        return Ok(identity);
+    }
+    let mut evaluation = enforce_permissions_boundary(request, identity, session_policy)?;
+    evaluation.reason = match evaluation.reason {
+        "permissions_boundary_explicit_deny" => "session_policy_explicit_deny",
+        "permissions_boundary_no_allow" => "session_policy_no_allow",
+        reason => reason,
+    };
+    Ok(evaluation)
 }
 
 fn pattern_matches(pattern: &str, value: &str) -> bool {

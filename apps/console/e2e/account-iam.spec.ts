@@ -67,16 +67,19 @@ test("管理アカウントからOU、メンバーアカウントとSCPを設定
   await expect(page.getByRole("row").filter({ hasText: "DenyDelete" }).getByText("OU: Workloads", { exact: false })).toBeVisible();
 });
 
-test("IAMグループとアクセス許可の境界を設定する", async ({ page }) => {
+test("IAMグループ、アクセス許可の境界とロールを設定する", async ({ page }) => {
   const createdAt = "2026-10-30T00:00:00Z";
   const groups: { id: string; name: string; created_at: string; members: string[]; policies: string[] }[] = [];
   const boundaries: { principal_id: string; policy_id: string }[] = [];
+  const roles: { principal_id: string; organization_id: string; name: string; arn: string; trust_policy: object; max_session_seconds: number; created_at: string }[] = [];
+  const roleSessions: { id: string; source_arn: string; session_name: string; expires_at: string; revoked_at: string | null; created_at: string }[] = [];
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     const method = route.request().method();
     if (path.endsWith("/auth/session")) return route.fulfill({ json: { user: { id: "user", email: "test@example.test", display_name: "Test" }, memberships: [{ organization_id: "account", organization_name: "Example", organization_slug: "example", principal_id: "principal", role: "owner" }], csrf_token: "test", owner_console: false } });
     if (path.endsWith("/iam/principals")) return route.fulfill({ json: { items: [{ id: "principal", organization_id: "account", kind: "user", name: "Test User", user_id: "user", enabled: true, created_at: createdAt }] } });
     if (path.endsWith("/iam/policies")) return route.fulfill({ json: { items: [{ id: "policy", organization_id: "account", name: "ReadOnly", document: { version: "2026-07-31", statements: [] }, semantics_digest: "0".repeat(64), created_at: createdAt, updated_at: createdAt }] } });
+    if (path.endsWith("/iam/bindings") && method === "POST") return route.fulfill({ status: 201, json: { id: "binding" } });
     if (path.endsWith("/iam/bindings")) return route.fulfill({ json: { items: [] } });
     if (path.endsWith("/iam/groups") && method === "POST") {
       groups.push({ id: "group", name: route.request().postDataJSON().name, created_at: createdAt, members: [], policies: [] });
@@ -96,6 +99,19 @@ test("IAMグループとアクセス許可の境界を設定する", async ({ pa
       boundaries.push({ principal_id: "principal", policy_id: route.request().postDataJSON().policy_id });
       return route.fulfill({ status: 204 });
     }
+    if (path.endsWith("/iam/roles") && method === "POST") {
+      const body = route.request().postDataJSON();
+      roles.push({ principal_id: "role", organization_id: "account", name: body.name, arn: "arn:aws:iam::100000000000:role/Reader", trust_policy: body.trust_policy, max_session_seconds: body.max_session_seconds, created_at: createdAt });
+      return route.fulfill({ status: 201, json: roles[0] });
+    }
+    if (path.endsWith("/iam/roles")) return route.fulfill({ json: { enabled: true, items: roles } });
+    if (path.endsWith("/iam/roles/role/sessions")) return route.fulfill({ json: { items: roleSessions } });
+    if (path.endsWith("/iam/roles/role/sessions/session") && method === "DELETE") { roleSessions[0].revoked_at = createdAt; return route.fulfill({ status: 204 }); }
+    if (path.endsWith("/sts/caller-identity")) return route.fulfill({ json: { account_id: "100000000000", arn: "arn:aws:iam::100000000000:user/principal", principal_id: "principal" } });
+    if (path.endsWith("/sts/assume-role") && method === "POST") {
+      roleSessions.push({ id: "session", source_arn: "arn:aws:iam::100000000000:user/principal", session_name: "console-session", expires_at: createdAt, revoked_at: null, created_at: createdAt });
+      return route.fulfill({ json: { access_token: "hcr_fixture", token_type: "Bearer", session_id: "session", role_arn: route.request().postDataJSON().role_arn, account_id: "account", principal_id: "role", expires_at: createdAt } });
+    }
     return route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } });
   });
   await page.goto("/iam/bindings");
@@ -114,4 +130,18 @@ test("IAMグループとアクセス許可の境界を設定する", async ({ pa
   await page.getByLabel("境界ポリシー").selectOption("policy");
   await page.getByRole("button", { name: "境界を設定" }).click();
   await expect(page.getByText("Test User / ReadOnly", { exact: false })).toBeVisible();
+  await page.getByLabel("ロール名").fill("Reader");
+  await page.getByLabel("信頼するアカウントID").fill("100000000000");
+  await page.getByRole("button", { name: "ロールを作成" }).click();
+  await expect(page.getByRole("cell", { name: "Reader", exact: true })).toBeVisible();
+  await page.getByLabel("ポリシーを付与するロール").selectOption("role");
+  await page.getByLabel("ロールに付与するポリシー").selectOption("policy");
+  await page.getByRole("button", { name: "ロールにポリシーを付与" }).click();
+  await page.getByLabel("引き受けるロールARN").fill("arn:aws:iam::100000000000:role/Reader");
+  await page.getByRole("button", { name: "一時認証情報を発行" }).click();
+  const credentials = page.getByRole("dialog", { name: "一時認証情報" });
+  await expect(credentials.getByText("hcr_fixture")).toBeVisible();
+  await credentials.getByRole("button", { name: "閉じる", exact: true }).click();
+  await page.getByRole("button", { name: "失効", exact: true }).click();
+  await expect(page.getByText("失効済み", { exact: false })).toBeVisible();
 });

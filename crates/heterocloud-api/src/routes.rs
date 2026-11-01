@@ -34,16 +34,18 @@ use heterocloud_domain::{
     SyouyuSpec, UserId, UserStatus, VpcSpec,
 };
 use heterocloud_iam::{
-    AuthorizationRequest, Decision, authorize_with_administrator, enforce_permissions_boundary,
-    enforce_service_control_policies, semantics_digest,
+    AuthorizationRequest, Decision, RoleTrustDocument, authorize_with_administrator,
+    enforce_permissions_boundary, enforce_service_control_policies, enforce_session_policy,
+    semantics_digest,
 };
 use heterocloud_store::{
     AuditEvent, AuthorizationContext, CliAccessTokenPrincipal, CliDeviceApprovalOutcome,
     CliDeviceExchangeOutcome, DeveloperCredentialMint, DeveloperCredentialMintOutcome,
     FlowDeveloperCredentialRecord, GpuVisibility, MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE,
     MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE, MAX_REALTIME_METRIC_HISTORY_SAMPLES,
-    MAX_USER_LOGIN_EVENTS_PER_USER, NewFlowAccessContext, NewFlowDeveloperCredential, OidcUser,
-    RealtimeMetricCollectionTarget, RegisterWithInvitation, SessionUser, Store,
+    MAX_USER_LOGIN_EVENTS_PER_USER, NewFlowAccessContext, NewFlowDeveloperCredential,
+    NewIamRoleSession, OidcUser, RealtimeMetricCollectionTarget, RegisterWithInvitation,
+    SessionUser, Store,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -197,6 +199,13 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route("/organizations/{organization_id}/iam/groups/{group_id}/policies/{policy_id}", axum::routing::put(change_iam_group_policy).delete(change_iam_group_policy))
         .route("/organizations/{organization_id}/iam/permissions-boundaries", get(list_permissions_boundaries))
         .route("/organizations/{organization_id}/iam/principals/{principal_id}/permissions-boundary", axum::routing::put(put_permissions_boundary).delete(delete_permissions_boundary))
+        .route("/organizations/{organization_id}/iam/roles", get(list_iam_roles).post(create_iam_role))
+        .route("/organizations/{organization_id}/iam/roles/{principal_id}", axum::routing::delete(delete_iam_role))
+        .route("/organizations/{organization_id}/iam/roles/{principal_id}/trust", axum::routing::put(update_iam_role_trust))
+        .route("/organizations/{organization_id}/iam/roles/{principal_id}/sessions", get(list_iam_role_sessions))
+        .route("/organizations/{organization_id}/iam/roles/{principal_id}/sessions/{session_id}", axum::routing::delete(revoke_iam_role_session))
+        .route("/organizations/{organization_id}/sts/assume-role", post(assume_iam_role))
+        .route("/organizations/{organization_id}/sts/caller-identity", get(iam_caller_identity))
         .route(
             "/organizations/{organization_id}/iam/principals",
             get(list_principals).post(create_service_account),
@@ -2032,7 +2041,9 @@ async fn create_cloud_member_account(
     let user_id = match &actor {
         AuthenticatedActor::User(session) => session.user.user.id,
         AuthenticatedActor::CliToken(token) => token.user.user.id,
-        AuthenticatedActor::Workload(_) | AuthenticatedActor::ApiKey { .. } => {
+        AuthenticatedActor::Workload(_)
+        | AuthenticatedActor::RoleSession(_)
+        | AuthenticatedActor::ApiKey { .. } => {
             return Err(ApiError::Forbidden);
         }
     };
@@ -2106,6 +2117,7 @@ async fn create_organization(
         // they must not create a separate tenant outside that scope.
         AuthenticatedActor::CliToken(_)
         | AuthenticatedActor::Workload(_)
+        | AuthenticatedActor::RoleSession(_)
         | AuthenticatedActor::ApiKey { .. } => {
             return Err(ApiError::Forbidden);
         }
@@ -2130,6 +2142,9 @@ async fn join_organization(
     jar: CookieJar,
     Json(request): Json<JoinOrganization>,
 ) -> Result<impl IntoResponse, ApiError> {
+    if headers.contains_key(header::AUTHORIZATION) {
+        return Err(ApiError::Forbidden);
+    }
     let authenticated = authenticated_mutation(&state, &headers, &jar).await?;
     let code = request.invitation_code.expose_secret();
     if code.is_empty() || code.len() > 256 {
@@ -2188,6 +2203,11 @@ async fn quota_user_for_actor(
         } if *organization_id == organization => state
             .store
             .principal_quota_user(organization, *principal_id)
+            .await
+            .map_err(ApiError::from_store),
+        AuthenticatedActor::RoleSession(token) if token.organization_id == organization.0 => state
+            .store
+            .principal_quota_user(organization, PrincipalId(token.principal_id))
             .await
             .map_err(ApiError::from_store),
         _ => Err(ApiError::Forbidden),
@@ -2442,6 +2462,394 @@ async fn create_project(
         .await
         .map_err(ApiError::from_store)?;
     Ok((StatusCode::CREATED, Json(project)))
+}
+
+async fn require_roles_enabled(state: &AppState) -> Result<(), ApiError> {
+    if !state
+        .store
+        .roles_enabled()
+        .await
+        .map_err(ApiError::from_store)?
+    {
+        return Err(ApiError::ServiceControlUnavailable);
+    }
+    Ok(())
+}
+
+fn validate_iam_role_name(name: &str) -> Result<(), ApiError> {
+    if name.is_empty()
+        || name.len() > 64
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"+=,.@_-".contains(&b))
+    {
+        return Err(ApiError::BadRequest(
+            "Role names must use 1 to 64 ASCII letters, numbers, or +=,.@_-".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_role_trust(value: &Value) -> Result<RoleTrustDocument, ApiError> {
+    let size = serde_json::to_string(value)
+        .map_err(|_| ApiError::Internal)?
+        .chars()
+        .count();
+    if size > 4096 {
+        return Err(ApiError::BadRequest(
+            "Role trust policies are limited to 4,096 characters.".into(),
+        ));
+    }
+    let trust: RoleTrustDocument = serde_json::from_value(value.clone())
+        .map_err(|error| ApiError::BadRequest(format!("Invalid role trust policy: {error}")))?;
+    trust
+        .validate()
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(trust)
+}
+
+async fn list_iam_roles(
+    State(state): State<Arc<AppState>>,
+    Path(account): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account),
+        "iam:ListRoles",
+        &organization_resource(account, "iam/role/*"),
+    )
+    .await?;
+    let items = state
+        .store
+        .list_iam_roles(OrganizationId(account))
+        .await
+        .map_err(ApiError::from_store)?;
+    let enabled = state
+        .store
+        .roles_enabled()
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(json!({"items":items,"enabled":enabled})))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateIamRole {
+    name: String,
+    trust_policy: Value,
+    #[serde(default = "default_role_duration")]
+    max_session_seconds: i32,
+}
+const fn default_role_duration() -> i32 {
+    3600
+}
+
+async fn create_iam_role(
+    State(state): State<Arc<AppState>>,
+    Path(account): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(input): Json<CreateIamRole>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    validate_iam_role_name(&input.name)?;
+    validate_role_trust(&input.trust_policy)?;
+    if !(3600..=43200).contains(&input.max_session_seconds) {
+        return Err(ApiError::BadRequest(
+            "Maximum session duration must be between one and twelve hours.".into(),
+        ));
+    }
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account),
+        "iam:CreateRole",
+        &organization_resource(account, "iam/role/*"),
+    )
+    .await?;
+    require_roles_enabled(&state).await?;
+    let quota_user = quota_user_for_actor(&state, &actor, OrganizationId(account)).await?;
+    let role = state
+        .store
+        .create_iam_role(
+            OrganizationId(account),
+            &input.name,
+            &input.trust_policy,
+            input.max_session_seconds,
+            quota_user,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::CREATED, Json(role)))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateIamRoleTrust {
+    trust_policy: Value,
+}
+
+async fn update_iam_role_trust(
+    State(state): State<Arc<AppState>>,
+    Path((account, principal)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(input): Json<UpdateIamRoleTrust>,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    validate_role_trust(&input.trust_policy)?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account),
+        "iam:UpdateAssumeRolePolicy",
+        &organization_resource(account, &format!("iam/role/{principal}")),
+    )
+    .await?;
+    require_roles_enabled(&state).await?;
+    state
+        .store
+        .update_iam_role_trust(
+            OrganizationId(account),
+            PrincipalId(principal),
+            &input.trust_policy,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_iam_role(
+    State(state): State<Arc<AppState>>,
+    Path((account, principal)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account),
+        "iam:DeleteRole",
+        &organization_resource(account, &format!("iam/role/{principal}")),
+    )
+    .await?;
+    require_roles_enabled(&state).await?;
+    state
+        .store
+        .delete_iam_role(OrganizationId(account), PrincipalId(principal))
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_iam_role_sessions(
+    State(state): State<Arc<AppState>>,
+    Path((account, principal)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account),
+        "iam:ListRoleSessions",
+        &organization_resource(account, &format!("iam/role/{principal}")),
+    )
+    .await?;
+    require_roles_enabled(&state).await?;
+    let sessions = state
+        .store
+        .list_iam_role_sessions(OrganizationId(account), PrincipalId(principal))
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(json!({"items":sessions})))
+}
+
+async fn revoke_iam_role_session(
+    State(state): State<Arc<AppState>>,
+    Path((account, principal, session)): Path<(Uuid, Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account),
+        "iam:RevokeRoleSession",
+        &organization_resource(account, &format!("iam/role/{principal}")),
+    )
+    .await?;
+    require_roles_enabled(&state).await?;
+    state
+        .store
+        .revoke_iam_role_session(OrganizationId(account), PrincipalId(principal), session)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn parse_iam_role_arn(arn: &str) -> Result<(&str, &str), ApiError> {
+    let rest = arn
+        .strip_prefix("arn:aws:iam::")
+        .ok_or_else(|| ApiError::BadRequest("Invalid role ARN.".into()))?;
+    let (account, name) = rest
+        .split_once(":role/")
+        .ok_or_else(|| ApiError::BadRequest("Invalid role ARN.".into()))?;
+    if account.len() != 12 || !account.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(ApiError::BadRequest("Invalid role ARN.".into()));
+    }
+    validate_iam_role_name(name)?;
+    Ok((account, name))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AssumeIamRole {
+    role_arn: String,
+    session_name: String,
+    #[serde(default = "default_role_duration")]
+    duration_seconds: i32,
+    #[serde(default)]
+    session_policy: Option<Value>,
+}
+
+async fn assume_iam_role(
+    State(state): State<Arc<AppState>>,
+    Path(source_account): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(input): Json<AssumeIamRole>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    require_roles_enabled(&state).await?;
+    let (target_number, role_name) = parse_iam_role_arn(&input.role_arn)?;
+    if input.session_name.len() < 2
+        || input.session_name.len() > 64
+        || !input
+            .session_name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"+=,.@_-".contains(&b))
+    {
+        return Err(ApiError::BadRequest(
+            "Session names must use 2 to 64 ASCII letters, numbers, or +=,.@_-".into(),
+        ));
+    }
+    if !(900..=43200).contains(&input.duration_seconds)
+        || (matches!(actor, AuthenticatedActor::RoleSession(_)) && input.duration_seconds > 3600)
+    {
+        return Err(ApiError::BadRequest(
+            "Invalid role session duration.".into(),
+        ));
+    }
+    let session_policy = input
+        .session_policy
+        .map(|value| {
+            let size = serde_json::to_string(&value)
+                .map_err(|_| ApiError::Internal)?
+                .chars()
+                .count();
+            if size > 2048 {
+                return Err(ApiError::BadRequest(
+                    "Session policies are limited to 2,048 characters.".into(),
+                ));
+            }
+            parse_policy_document(value)
+        })
+        .transpose()?;
+    let source = OrganizationId(source_account);
+    let context =
+        authorize_actor(&state, &actor, source, "sts:AssumeRole", &input.role_arn).await?;
+    let (source_number, source_arn) = state
+        .store
+        .iam_principal_arn(source, context.principal_id)
+        .await
+        .map_err(ApiError::from_store)?
+        .ok_or(ApiError::Forbidden)?;
+    let role = state
+        .store
+        .find_iam_role(target_number, role_name)
+        .await
+        .map_err(ApiError::from_store)?
+        .ok_or(ApiError::NotFound)?;
+    let trust = validate_role_trust(&role.trust_policy)?;
+    let trusted = trust
+        .permits(&source_number, &source_arn)
+        .map_err(|_| ApiError::Internal)?;
+    state.store.append_audit(&AuditEvent {
+        organization_id: Some(source), principal_id: Some(context.principal_id), user_id: None,
+        request_id: &Uuid::now_v7().to_string(), source_ip: None, action: "sts:AssumeRole",
+        resource: &input.role_arn, decision: if trusted { "allow" } else { "deny" },
+        reason: if trusted { "role_trust_allow" } else { "role_trust_deny" },
+        metadata: json!({"stage":"trust", "source_arn":source_arn, "target_account_id":role.organization_id}),
+    }).await.map_err(ApiError::from_store)?;
+    if !trusted {
+        return Err(ApiError::Forbidden);
+    }
+    let secret = generate_token().map_err(|_| ApiError::Internal)?;
+    let token = format!("hcr_{}", secret.expose_secret());
+    let expires_at = Utc::now() + ChronoDuration::seconds(i64::from(input.duration_seconds));
+    let id = state
+        .store
+        .create_iam_role_session(NewIamRoleSession {
+            organization_id: OrganizationId(role.organization_id),
+            role_principal_id: PrincipalId(role.principal_id),
+            source_organization_id: source,
+            source_principal_id: context.principal_id,
+            source_arn: &source_arn,
+            session_name: &input.session_name,
+            session_policy: session_policy.as_ref(),
+            token_hash: &token_hash(&token),
+            expires_at,
+            duration_seconds: input.duration_seconds,
+            expected_trust_policy: &role.trust_policy,
+        })
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((
+        [
+            (header::CACHE_CONTROL, "no-store"),
+            (header::PRAGMA, "no-cache"),
+        ],
+        Json(
+            json!({"access_token":token,"token_type":"Bearer","session_id":id,"role_arn":role.arn,
+            "account_id":role.organization_id,"principal_id":role.principal_id,"expires_at":expires_at}),
+        ),
+    ))
+}
+
+async fn iam_caller_identity(
+    State(state): State<Arc<AppState>>,
+    Path(account): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    require_roles_enabled(&state).await?;
+    let context = authorize_actor_with_implicit_allow(
+        &state,
+        &actor,
+        OrganizationId(account),
+        "sts:GetCallerIdentity",
+        "*",
+        true,
+    )
+    .await?;
+    let (account_number, principal_arn) = state
+        .store
+        .iam_principal_arn(OrganizationId(account), context.principal_id)
+        .await
+        .map_err(ApiError::from_store)?
+        .ok_or(ApiError::Forbidden)?;
+    Ok(Json(
+        json!({"account_id":account_number,"arn":principal_arn,"principal_id":context.principal_id}),
+    ))
 }
 
 async fn list_permissions_boundaries(
@@ -2937,6 +3345,9 @@ async fn create_invitation(
     jar: CookieJar,
     Json(request): Json<CreateInvitation>,
 ) -> Result<impl IntoResponse, ApiError> {
+    if headers.contains_key(header::AUTHORIZATION) {
+        return Err(ApiError::Forbidden);
+    }
     let authenticated = authenticated_mutation(&state, &headers, &jar).await?;
     validate_invitation_ttl(request.expires_in_hours)?;
     authorize_organization(
@@ -3157,7 +3568,7 @@ async fn list_accessible_gpu_types(
     let actor = authenticated_actor(&state, &headers, &jar).await?;
     sync_gpu_catalog_from_provider(&state).await?;
     let user_id = match &actor {
-        AuthenticatedActor::Workload(_) => None,
+        AuthenticatedActor::Workload(_) | AuthenticatedActor::RoleSession(_) => None,
         AuthenticatedActor::User(session) => Some(session.user.user.id),
         AuthenticatedActor::CliToken(token) => Some(token.user.user.id),
         AuthenticatedActor::ApiKey { principal_id, .. } => state
@@ -5715,12 +6126,13 @@ async fn list_audit_events(
     State(state): State<Arc<AppState>>,
     Path(organization_id): Path<Uuid>,
     Query(query): Query<AuditQuery>,
+    headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<Json<Value>, ApiError> {
-    let authenticated = authenticated_session(&state, &jar).await?;
-    authorize_organization(
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
         &state,
-        &authenticated.user,
+        &actor,
         OrganizationId(organization_id),
         "audit:ListEvents",
         &organization_resource(organization_id, "audit/*"),
@@ -5744,6 +6156,7 @@ enum AuthenticatedActor {
     User(AuthenticatedSession),
     Workload(heterocloud_store::WorkloadTokenPrincipal),
     CliToken(CliAccessTokenPrincipal),
+    RoleSession(heterocloud_store::IamRoleSession),
     ApiKey {
         organization_id: OrganizationId,
         principal_id: PrincipalId,
@@ -5844,6 +6257,9 @@ async fn identity_context(
         }
         AuthenticatedActor::CliToken(token) => {
             json!({"type":"cli_oauth","organization_id":token.organization_id,"user_id":token.user.user.id})
+        }
+        AuthenticatedActor::RoleSession(session) => {
+            json!({"type":"role_session","organization_id":session.organization_id,"principal_id":session.principal_id,"session_id":session.id,"source_arn":session.source_arn,"expires_at":session.expires_at})
         }
         AuthenticatedActor::User(session) => json!({"type":"user","user_id":session.user.user.id}),
     };
@@ -6061,6 +6477,9 @@ async fn authenticated_mutation(
     headers: &HeaderMap,
     jar: &CookieJar,
 ) -> Result<AuthenticatedSession, ApiError> {
+    if headers.contains_key(header::AUTHORIZATION) {
+        return Err(ApiError::Forbidden);
+    }
     require_same_origin(&state.config, headers)?;
     let authenticated = authenticated_session(state, jar).await?;
     require_csrf(headers, &authenticated.csrf)?;
@@ -6074,6 +6493,9 @@ async fn require_owner(
     peer: Option<SocketAddr>,
     mutation: bool,
 ) -> Result<AuthenticatedSession, ApiError> {
+    if headers.contains_key(header::AUTHORIZATION) {
+        return Err(ApiError::Forbidden);
+    }
     let authenticated = if mutation {
         authenticated_mutation(state, headers, jar).await?
     } else {
@@ -6179,6 +6601,18 @@ async fn authenticated_actor(
                 .map_err(ApiError::from_store)?
                 .ok_or(ApiError::Unauthorized)?;
             return Ok(AuthenticatedActor::Workload(identity));
+        }
+        if token.starts_with("hcr_") {
+            if token.len() > 256 || token.chars().any(char::is_whitespace) {
+                return Err(ApiError::Unauthorized);
+            }
+            let session = state
+                .store
+                .authenticate_iam_role_session(&token_hash(token))
+                .await
+                .map_err(ApiError::from_store)?
+                .ok_or(ApiError::Unauthorized)?;
+            return Ok(AuthenticatedActor::RoleSession(session));
         }
         if token.starts_with("hcu_") {
             return authenticated_cli_access_token_value(state, token)
@@ -6330,6 +6764,25 @@ async fn authorize_actor_with_implicit_allow(
                 json!({ "actor": "user" }),
             )
         }
+        AuthenticatedActor::RoleSession(session) => {
+            if session.organization_id != organization_id.0 {
+                return Err(ApiError::Forbidden);
+            }
+            let context = state
+                .store
+                .authorization_context_for_principal(
+                    PrincipalId(session.principal_id),
+                    organization_id,
+                )
+                .await
+                .map_err(ApiError::from_store)?
+                .ok_or(ApiError::Forbidden)?;
+            (
+                context,
+                None,
+                json!({"actor":"role_session","session_id":session.id,"source_arn":session.source_arn}),
+            )
+        }
         AuthenticatedActor::CliToken(token) => {
             if token.organization_id != organization_id {
                 return Err(ApiError::Forbidden);
@@ -6395,6 +6848,21 @@ async fn authorize_actor_with_implicit_allow(
         implicit_allow,
     )
     .await?;
+    let session_policy = match actor {
+        AuthenticatedActor::RoleSession(session) => session.session_policy.as_ref(),
+        _ => None,
+    };
+    let evaluation = enforce_session_policy(
+        &AuthorizationRequest {
+            principal_organization_id: organization_id,
+            resource_organization_id: organization_id,
+            action,
+            resource,
+        },
+        evaluation,
+        session_policy,
+    )
+    .map_err(|_| ApiError::Internal)?;
     let (decision, reason) = (evaluation.decision, evaluation.reason);
     let request_id = Uuid::now_v7().to_string();
     state

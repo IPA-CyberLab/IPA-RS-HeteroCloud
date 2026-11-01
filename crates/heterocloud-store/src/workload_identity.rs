@@ -39,7 +39,7 @@ impl Store {
         org: OrganizationId,
         role: PrincipalId,
     ) -> Result<bool, StoreError> {
-        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM principals WHERE id=$1 AND organization_id=$2 AND kind='service_account' AND enabled=true)")
+        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM principals p WHERE p.id=$1 AND p.organization_id=$2 AND p.kind='service_account' AND p.enabled=true AND NOT EXISTS (SELECT 1 FROM iam_roles r WHERE r.principal_id=p.id))")
             .bind(role.0).bind(org.0).fetch_one(&self.pool).await?)
     }
 
@@ -52,7 +52,7 @@ impl Store {
         expires_at: DateTime<Utc>,
     ) -> Result<WorkloadTokenPrincipal, StoreError> {
         let mut tx = self.pool.begin().await?;
-        let org: Option<Uuid> = sqlx::query_scalar("SELECT s.organization_id FROM service_instances s JOIN principals p ON p.id=$2 AND p.organization_id=s.organization_id AND p.kind='service_account' AND p.enabled=true WHERE s.id=$1 AND s.provider='flash' AND s.state <> 'deleting' AND s.spec->>'task_role'=$2::uuid::text AND COALESCE(s.spec->>'stopped','false')='false' FOR UPDATE OF s,p")
+        let org: Option<Uuid> = sqlx::query_scalar("SELECT s.organization_id FROM service_instances s JOIN principals p ON p.id=$2 AND p.organization_id=s.organization_id AND p.kind='service_account' AND p.enabled=true AND NOT EXISTS (SELECT 1 FROM iam_roles r WHERE r.principal_id=p.id) WHERE s.id=$1 AND s.provider='flash' AND s.state <> 'deleting' AND s.spec->>'task_role'=$2::uuid::text AND COALESCE(s.spec->>'stopped','false')='false' FOR UPDATE OF s,p")
             .bind(service_id).bind(role).fetch_optional(&mut *tx).await?;
         let org = org.ok_or(StoreError::NotFound)?;
         sqlx::query("DELETE FROM workload_access_tokens WHERE expires_at <= now()")

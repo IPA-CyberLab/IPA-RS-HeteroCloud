@@ -432,5 +432,370 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
             .0,
         StatusCode::FORBIDDEN
     );
+
+    // Role trust is independent from the source identity grant. This checks
+    // real bearer credentials across two accounts and rejects privilege bypass.
+    let source_number = org["current_account_number"]
+        .as_str()
+        .ok_or("source account number")?;
+    let trust = json!({"Version":"2012-10-17","Statement":{"Effect":"Allow","Action":"sts:AssumeRole",
+        "Principal":{"AWS":format!("arn:aws:iam::{source_number}:root")}}});
+    let roles = format!("/api/v1/organizations/{member_id}/iam/roles");
+    let role_body = json!({"name":"WorkspaceReader","trust_policy":trust});
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            &roles,
+            Some(role_body.clone()),
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    sqlx::query("UPDATE cloud_security_activation SET roles_enabled = true WHERE singleton = true")
+        .execute(store.pool())
+        .await?;
+    let (status, role) = request(
+        state.clone(),
+        "POST",
+        &roles,
+        Some(role_body),
+        Some(csrf.expose_secret()),
+        None,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::CREATED);
+    let role_arn = role["arn"].as_str().ok_or("role arn")?;
+    let role_principal = heterocloud_domain::PrincipalId(uuid::Uuid::parse_str(
+        role["principal_id"].as_str().ok_or("role principal")?,
+    )?);
+    assert!(
+        !store
+            .enabled_task_role(member_account, role_principal)
+            .await?
+    );
+    assert!(
+        store
+            .create_api_key(
+                member_account,
+                role_principal,
+                "must fail",
+                "0123456789fedcba",
+                &token_hash("not-issued"),
+                None
+            )
+            .await
+            .is_err()
+    );
+    let role_policy = PolicyDocument::from_aws_json(
+        json!({"Statement":{"Effect":"Allow", "Action":"project:*", "Resource":"*"}}),
+    )?;
+    let role_policy = store
+        .create_policy(
+            member_account,
+            "RoleProjects",
+            &role_policy,
+            &semantics_digest(),
+        )
+        .await?;
+    let role_binding = store
+        .create_binding(member_account, role_principal, role_policy.id)
+        .await?;
+    let source_robot = store
+        .create_service_account(management, "source-robot")
+        .await?;
+    let source_key = "hc_abcdef0123456789_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG";
+    store
+        .create_api_key(
+            management,
+            source_robot.id,
+            "source",
+            "abcdef0123456789",
+            &token_hash(source_key),
+            Some(Utc::now() + chrono::Duration::hours(1)),
+        )
+        .await?;
+    let assume_path = format!("{base}/sts/assume-role");
+    let assume_body = json!({"role_arn":role_arn,"session_name":"read-only","session_policy":{"Version":"2012-10-17",
+        "Statement":{"Effect":"Allow","Action":"project:List","Resource":"*"}}});
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            &assume_path,
+            Some(assume_body.clone()),
+            None,
+            Some(source_key)
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let source_policy = PolicyDocument::from_aws_json(
+        json!({"Statement":{"Effect":"Allow", "Action":"sts:AssumeRole", "Resource":role_arn}}),
+    )?;
+    let source_policy = store
+        .create_policy(
+            management,
+            "AssumeReader",
+            &source_policy,
+            &semantics_digest(),
+        )
+        .await?;
+    store
+        .create_binding(management, source_robot.id, source_policy.id)
+        .await?;
+    let (status, credentials) = request(
+        state.clone(),
+        "POST",
+        &assume_path,
+        Some(assume_body.clone()),
+        None,
+        Some(source_key),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    let role_token = credentials["access_token"].as_str().ok_or("role token")?;
+    let session_id = credentials["session_id"].as_str().ok_or("role session")?;
+    assert_eq!(
+        request(state.clone(), "GET", &roles, None, None, Some(role_token))
+            .await?
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    let (_, expiring) = request(
+        state.clone(),
+        "POST",
+        &assume_path,
+        Some(assume_body.clone()),
+        None,
+        Some(source_key),
+    )
+    .await?;
+    let expired_token = expiring["access_token"]
+        .as_str()
+        .ok_or("expiring role token")?;
+    let expired_id = uuid::Uuid::parse_str(
+        expiring["session_id"]
+            .as_str()
+            .ok_or("expiring role session")?,
+    )?;
+    sqlx::query(
+        "UPDATE iam_role_sessions SET expires_at = now() - interval '1 second' WHERE id=$1",
+    )
+    .bind(expired_id)
+    .execute(store.pool())
+    .await?;
+    assert_eq!(
+        request(
+            state.clone(),
+            "GET",
+            &projects,
+            None,
+            None,
+            Some(expired_token)
+        )
+        .await?
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, sessions) = request(
+        state.clone(),
+        "GET",
+        &format!("{roles}/{role_principal}/sessions"),
+        None,
+        None,
+        None,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        sessions["items"]
+            .as_array()
+            .ok_or("session list")?
+            .iter()
+            .any(|item| item["id"] == session_id)
+    );
+    assert!(!sessions.to_string().contains(role_token));
+    assert_eq!(
+        request(
+            state.clone(),
+            "GET",
+            &projects,
+            None,
+            None,
+            Some(role_token)
+        )
+        .await?
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            &projects,
+            Some(json!({"name":"Denied","slug":"denied"})),
+            None,
+            Some(role_token)
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "GET",
+            &format!("/api/v1/organizations/{member_id}/audit-events"),
+            None,
+            None,
+            Some(role_token)
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "GET",
+            &format!("{base}/projects"),
+            None,
+            None,
+            Some(role_token)
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            &format!("/api/v1/organizations/{member_id}/sts/assume-role"),
+            Some(json!({"role_arn":role_arn,"session_name":"chain","duration_seconds":7200})),
+            None,
+            Some(role_token)
+        )
+        .await?
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let denied_trust = json!({"Version":"2012-10-17","Statement":[
+        {"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"AWS":format!("arn:aws:iam::{source_number}:root")}},
+        {"Effect":"Deny","Action":"sts:AssumeRole","Principal":{"AWS":format!("arn:aws:iam::{source_number}:user/{}",source_robot.id)}}]});
+    assert_eq!(
+        request(
+            state.clone(),
+            "PUT",
+            &format!("{roles}/{role_principal}/trust"),
+            Some(json!({"trust_policy":denied_trust})),
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            &assume_path,
+            Some(assume_body),
+            None,
+            Some(source_key)
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "GET",
+            &projects,
+            None,
+            None,
+            Some(role_token)
+        )
+        .await?
+        .0,
+        StatusCode::OK
+    );
+    store.delete_binding(member_account, role_binding).await?;
+    assert_eq!(
+        request(
+            state.clone(),
+            "DELETE",
+            &format!("{roles}/{role_principal}"),
+            None,
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let role_binding = store
+        .create_binding(member_account, role_principal, role_policy.id)
+        .await?;
+    assert_eq!(
+        request(
+            state.clone(),
+            "DELETE",
+            &format!("{roles}/{role_principal}/sessions/{session_id}"),
+            None,
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "DELETE",
+            &format!("{roles}/{role_principal}"),
+            None,
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    store.delete_binding(member_account, role_binding).await?;
+    assert_eq!(
+        request(
+            state.clone(),
+            "DELETE",
+            &format!("{roles}/{role_principal}"),
+            None,
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "GET",
+            &projects,
+            None,
+            None,
+            Some(role_token)
+        )
+        .await?
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
     Ok(())
 }

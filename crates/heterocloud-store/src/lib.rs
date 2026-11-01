@@ -2,6 +2,7 @@ mod cloud_organizations;
 mod flash_backups;
 mod flash_operations;
 mod iam_groups;
+mod iam_roles;
 pub use cloud_organizations::{
     CloudAccount, CloudOrganization, CloudOrganizationTree, CloudOrganizationalUnit,
     CloudScpAttachment, CloudServiceControlPolicy,
@@ -11,6 +12,7 @@ pub use flash_operations::{
     BackupPolicyInput, FlashBackupPolicy, FlashEvent, FlashRevision, rollback_spec,
 };
 pub use iam_groups::{IamGroup, IamPermissionsBoundary};
+pub use iam_roles::{IamRole, IamRoleSession, IamRoleSessionInfo, NewIamRoleSession};
 pub use organizations::{OrganizationMemberQuota, UnassignedQuotaResource};
 mod flash_domains;
 mod workload_identity;
@@ -1913,7 +1915,8 @@ impl Store {
              SELECT $1, $2, p.id, $4, $5, $6, $7
              FROM principals p
              WHERE p.id = $3 AND p.organization_id = $2
-               AND p.kind = 'service_account' AND p.enabled = true",
+               AND p.kind = 'service_account' AND p.enabled = true
+               AND NOT EXISTS (SELECT 1 FROM iam_roles role WHERE role.principal_id = p.id)",
         )
         .bind(id)
         .bind(organization_id.0)

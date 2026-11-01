@@ -18,16 +18,26 @@ managed `FullAWSAccess` policy, and the last attachment cannot be removed. SCPs
 do not apply to the management account. Existing HeteroCloud quota ownership
 and per-user quota extensions remain in force per account.
 
+IAM roles have a restricted AWS-style trust policy and short-lived HeteroCloud
+bearer sessions. Cross-account assumption requires both a source identity
+permission and a matching target trust policy. Optional session policies only
+reduce permissions. Role sessions are time-limited, revocable, and cannot be
+turned into long-lived API keys or used as Flash task identities to bypass the
+trust policy. The console issues the bearer token once for API use; it does not
+yet switch the browser's active identity to the assumed role.
+
 ## Deployment and activation
 
 The migration intentionally leaves `cloud_security_activation.scp_enabled`
-false. While false, the API refuses SCP, group, and permissions-boundary changes. This prevents a new
+false. While false, the API refuses SCP, group, and permissions-boundary changes. Migration 0027
+adds a separate `roles_enabled` flag, initially false, which blocks role
+management and assumption. These gates prevent a new
 replica from admitting a policy that an old replica would not enforce. After
 every API replica is ready on the new immutable image, an operator enables the
 controls once using a transactional DB migration/job:
 
 ```sql
-UPDATE cloud_security_activation SET scp_enabled = true WHERE singleton = true;
+UPDATE cloud_security_activation SET scp_enabled = true, roles_enabled = true WHERE singleton = true;
 ```
 
 Verify the deployment's actual image digests and readiness, rather than only
@@ -41,12 +51,17 @@ credentials have their own authorization and revocation mechanisms.
 
 This is not complete AWS Organizations or IAM compatibility. It does not yet
 implement IAM Identity Center and permission sets, account invitations between
-organizations, AWS root credentials, IAM role trust policies and STS, IAM
-session policies, resource-based and cross-account
-policies, policy conditions, AWS ARNs, AWS SDK/CLI APIs, consolidated billing,
+organizations, AWS root credentials, federated or service principals in role
+trust policies, general resource-based and cross-account policies, policy
+conditions, general AWS service ARNs, AWS SDK/CLI APIs, consolidated billing,
 or direct enforcement on previously issued data-plane credentials. Unsupported
 policy fields are rejected. AWS resource and action names cannot be assumed to
 map to HeteroCloud resources. Provider-specific controls must remain in place.
+Role trust supports AWS account IDs, root ARNs and explicit HeteroCloud IAM
+user/role ARNs; HeteroCloud user ARNs use the stable principal UUID. It always
+requires an identity-based `sts:AssumeRole` allow, including for same-account
+callers, which is stricter than some AWS resource-policy grants. The token is a
+HeteroCloud bearer token, not an AWS STS access-key/secret/session-token tuple.
 
 AWS describes the source semantics in its [Organizations concepts](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_getting-started_concepts.html),
 [SCP documentation](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps.html),

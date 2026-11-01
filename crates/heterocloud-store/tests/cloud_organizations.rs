@@ -57,6 +57,31 @@ async fn migration_and_organization_controls_preserve_isolation() -> Result<(), 
     .execute(store.pool())
     .await?;
 
+    let existing_service_account = Uuid::now_v7();
+    let existing_key_hash = [7_u8; 32];
+    sqlx::query("INSERT INTO principals (id, organization_id, kind, name) VALUES ($1,$2,'service_account','existing-service-account')")
+        .bind(existing_service_account).bind(old_account).execute(store.pool()).await?;
+    sqlx::query("INSERT INTO api_keys (id, organization_id, principal_id, name, prefix, secret_hash) VALUES ($1,$2,$3,'existing','0123456789abcdef',$4)")
+        .bind(Uuid::now_v7()).bind(old_account).bind(existing_service_account).bind(existing_key_hash.as_slice()).execute(store.pool()).await?;
+    sqlx::raw_sql(include_str!("../../../migrations/0027_iam_roles.sql"))
+        .execute(store.pool())
+        .await?;
+    assert!(!store.roles_enabled().await?);
+    assert!(
+        store
+            .enabled_task_role(
+                OrganizationId(old_account),
+                heterocloud_domain::PrincipalId(existing_service_account)
+            )
+            .await?
+    );
+    assert!(
+        store
+            .authenticate_api_key("0123456789abcdef", &existing_key_hash)
+            .await?
+            .is_some()
+    );
+
     sqlx::query("UPDATE cloud_security_activation SET scp_enabled = true WHERE singleton = true")
         .execute(store.pool())
         .await?;

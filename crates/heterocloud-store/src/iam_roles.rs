@@ -1,0 +1,297 @@
+use chrono::{DateTime, Utc};
+use heterocloud_domain::{OrganizationId, PolicyDocument, PrincipalId, UserId};
+use serde::Serialize;
+use serde_json::Value;
+use uuid::Uuid;
+
+use crate::{Store, StoreError};
+
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct IamRole {
+    pub principal_id: Uuid,
+    pub organization_id: Uuid,
+    pub name: String,
+    pub arn: String,
+    pub trust_policy: Value,
+    pub max_session_seconds: i32,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug)]
+pub struct IamRoleSession {
+    pub id: Uuid,
+    pub organization_id: Uuid,
+    pub principal_id: Uuid,
+    pub source_organization_id: Uuid,
+    pub source_principal_id: Uuid,
+    pub source_arn: String,
+    pub session_name: String,
+    pub expires_at: DateTime<Utc>,
+    pub session_policy: Option<PolicyDocument>,
+}
+
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct IamRoleSessionInfo {
+    pub id: Uuid,
+    pub source_arn: String,
+    pub session_name: String,
+    pub expires_at: DateTime<Utc>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct RoleSessionRow {
+    id: Uuid,
+    organization_id: Uuid,
+    principal_id: Uuid,
+    source_organization_id: Uuid,
+    source_principal_id: Uuid,
+    source_arn: String,
+    session_name: String,
+    expires_at: DateTime<Utc>,
+    session_policy: Option<Value>,
+}
+
+pub struct NewIamRoleSession<'a> {
+    pub organization_id: OrganizationId,
+    pub role_principal_id: PrincipalId,
+    pub source_organization_id: OrganizationId,
+    pub source_principal_id: PrincipalId,
+    pub source_arn: &'a str,
+    pub session_name: &'a str,
+    pub session_policy: Option<&'a PolicyDocument>,
+    pub token_hash: &'a [u8; 32],
+    pub expires_at: DateTime<Utc>,
+    pub duration_seconds: i32,
+    pub expected_trust_policy: &'a Value,
+}
+
+const ROLE_SELECT: &str = "SELECT r.principal_id, r.organization_id, r.name,
+    ('arn:aws:iam::' || a.account_number::text || ':role/' || r.name) AS arn,
+    r.trust_policy, r.max_session_seconds, r.created_at
+    FROM iam_roles r JOIN organizations a ON a.id = r.organization_id";
+
+impl Store {
+    pub async fn roles_enabled(&self) -> Result<bool, StoreError> {
+        Ok(sqlx::query_scalar::<_, bool>(
+            "SELECT roles_enabled FROM cloud_security_activation WHERE singleton = true",
+        )
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
+    pub async fn create_iam_role(
+        &self,
+        account: OrganizationId,
+        name: &str,
+        trust: &Value,
+        max_session_seconds: i32,
+        quota_user: Option<UserId>,
+    ) -> Result<IamRole, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let principal = PrincipalId::new();
+        let inserted = sqlx::query("INSERT INTO principals (id, organization_id, kind, name, enabled, quota_user_id)
+            SELECT $1, $2, 'service_account', $3, true, $4
+            WHERE $4::uuid IS NULL OR EXISTS (SELECT 1 FROM organization_memberships WHERE organization_id = $2 AND user_id = $4)")
+            .bind(principal.0).bind(account.0).bind(name).bind(quota_user.map(|id| id.0)).execute(&mut *tx).await?;
+        if inserted.rows_affected() != 1 {
+            return Err(StoreError::NotFound);
+        }
+        sqlx::query("INSERT INTO iam_roles (principal_id, organization_id, name, trust_policy, max_session_seconds) VALUES ($1, $2, $3, $4, $5)")
+            .bind(principal.0).bind(account.0).bind(name).bind(trust).bind(max_session_seconds).execute(&mut *tx).await?;
+        let query = format!("{ROLE_SELECT} WHERE r.principal_id = $1 AND r.organization_id = $2");
+        let role = sqlx::query_as::<_, IamRole>(sqlx::AssertSqlSafe(query.as_str()))
+            .bind(principal.0)
+            .bind(account.0)
+            .fetch_one(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(role)
+    }
+
+    pub async fn list_iam_roles(
+        &self,
+        account: OrganizationId,
+    ) -> Result<Vec<IamRole>, StoreError> {
+        let query =
+            format!("{ROLE_SELECT} WHERE r.organization_id = $1 ORDER BY r.name, r.principal_id");
+        Ok(
+            sqlx::query_as::<_, IamRole>(sqlx::AssertSqlSafe(query.as_str()))
+                .bind(account.0)
+                .fetch_all(&self.pool)
+                .await?,
+        )
+    }
+
+    pub async fn find_iam_role(
+        &self,
+        account_number: &str,
+        name: &str,
+    ) -> Result<Option<IamRole>, StoreError> {
+        let query = format!("{ROLE_SELECT} WHERE a.account_number::text = $1 AND r.name = $2");
+        Ok(
+            sqlx::query_as::<_, IamRole>(sqlx::AssertSqlSafe(query.as_str()))
+                .bind(account_number)
+                .bind(name)
+                .fetch_optional(&self.pool)
+                .await?,
+        )
+    }
+
+    pub async fn update_iam_role_trust(
+        &self,
+        account: OrganizationId,
+        principal: PrincipalId,
+        trust: &Value,
+    ) -> Result<(), StoreError> {
+        let changed = sqlx::query("UPDATE iam_roles SET trust_policy = $3, updated_at = now() WHERE organization_id = $1 AND principal_id = $2")
+            .bind(account.0).bind(principal.0).bind(trust).execute(&self.pool).await?;
+        if changed.rows_affected() != 1 {
+            return Err(StoreError::NotFound);
+        }
+        Ok(())
+    }
+
+    pub async fn delete_iam_role(
+        &self,
+        account: OrganizationId,
+        role: PrincipalId,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let present = sqlx::query_scalar::<_, Uuid>("SELECT r.principal_id FROM iam_roles r JOIN principals p ON p.id = r.principal_id AND p.organization_id = r.organization_id WHERE r.organization_id = $1 AND r.principal_id = $2 FOR UPDATE OF r, p")
+            .bind(account.0).bind(role.0).fetch_optional(&mut *tx).await?;
+        if present.is_none() {
+            return Err(StoreError::NotFound);
+        }
+        let in_use = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM iam_bindings WHERE organization_id = $1 AND principal_id = $2) OR
+            EXISTS(SELECT 1 FROM iam_role_sessions WHERE organization_id = $1 AND role_principal_id = $2 AND revoked_at IS NULL AND expires_at > now())")
+            .bind(account.0).bind(role.0).fetch_one(&mut *tx).await?;
+        if in_use {
+            return Err(StoreError::RequestRejected(
+                "Detach role policies and revoke active sessions before deleting the role.".into(),
+            ));
+        }
+        sqlx::query("DELETE FROM principals WHERE organization_id = $1 AND id = $2")
+            .bind(account.0)
+            .bind(role.0)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Returns canonical account and principal ARNs without exposing secrets.
+    pub async fn iam_principal_arn(
+        &self,
+        account: OrganizationId,
+        principal: PrincipalId,
+    ) -> Result<Option<(String, String)>, StoreError> {
+        Ok(sqlx::query_as::<_, (String, String)>(
+            "SELECT a.account_number::text,
+                CASE WHEN r.principal_id IS NOT NULL
+                    THEN 'arn:aws:iam::' || a.account_number::text || ':role/' || r.name
+                    ELSE 'arn:aws:iam::' || a.account_number::text || ':user/' || p.id::text END
+             FROM principals p JOIN organizations a ON a.id = p.organization_id
+             LEFT JOIN iam_roles r ON r.principal_id = p.id AND r.organization_id = p.organization_id
+             WHERE p.organization_id = $1 AND p.id = $2 AND p.enabled")
+            .bind(account.0).bind(principal.0).fetch_optional(&self.pool).await?)
+    }
+
+    pub async fn create_iam_role_session(
+        &self,
+        session: NewIamRoleSession<'_>,
+    ) -> Result<Uuid, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let role = sqlx::query_as::<_, (Value, i32)>(
+            "SELECT r.trust_policy, r.max_session_seconds FROM iam_roles r
+            JOIN principals p ON p.id = r.principal_id AND p.organization_id = r.organization_id
+            WHERE r.organization_id = $1 AND r.principal_id = $2 AND p.enabled FOR UPDATE OF r",
+        )
+        .bind(session.organization_id.0)
+        .bind(session.role_principal_id.0)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        if role.0 != *session.expected_trust_policy {
+            return Err(StoreError::Conflict);
+        }
+        if session.duration_seconds > role.1 {
+            return Err(StoreError::RequestRejected(
+                "Session duration exceeds the role maximum.".into(),
+            ));
+        }
+        sqlx::query("DELETE FROM iam_role_sessions WHERE role_principal_id = $1 AND (expires_at < now() - interval '7 days' OR revoked_at < now() - interval '7 days')")
+            .bind(session.role_principal_id.0).execute(&mut *tx).await?;
+        let count = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM iam_role_sessions WHERE role_principal_id = $1 AND revoked_at IS NULL AND expires_at > now()")
+            .bind(session.role_principal_id.0).fetch_one(&mut *tx).await?;
+        if count >= 1000 {
+            return Err(StoreError::RequestRejected(
+                "Too many active role sessions.".into(),
+            ));
+        }
+        let id = Uuid::now_v7();
+        let policy = session
+            .session_policy
+            .map(serde_json::to_value)
+            .transpose()?;
+        sqlx::query("INSERT INTO iam_role_sessions (id, organization_id, role_principal_id, source_organization_id,
+            source_principal_id, source_arn, session_name, session_policy, token_hash, expires_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
+            .bind(id).bind(session.organization_id.0).bind(session.role_principal_id.0)
+            .bind(session.source_organization_id.0).bind(session.source_principal_id.0).bind(session.source_arn)
+            .bind(session.session_name).bind(policy).bind(session.token_hash.as_slice()).bind(session.expires_at)
+            .execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(id)
+    }
+
+    pub async fn authenticate_iam_role_session(
+        &self,
+        token_hash: &[u8; 32],
+    ) -> Result<Option<IamRoleSession>, StoreError> {
+        let row = sqlx::query_as::<_, RoleSessionRow>("SELECT s.id, s.organization_id, s.role_principal_id AS principal_id,
+            s.source_organization_id, s.source_principal_id, s.source_arn, s.session_name, s.expires_at, s.session_policy
+            FROM iam_role_sessions s JOIN principals p ON p.id=s.role_principal_id AND p.organization_id=s.organization_id
+            WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at > now() AND p.enabled")
+            .bind(token_hash.as_slice()).fetch_optional(&self.pool).await?;
+        row.map(|row| {
+            Ok(IamRoleSession {
+                id: row.id,
+                organization_id: row.organization_id,
+                principal_id: row.principal_id,
+                source_organization_id: row.source_organization_id,
+                source_principal_id: row.source_principal_id,
+                source_arn: row.source_arn,
+                session_name: row.session_name,
+                expires_at: row.expires_at,
+                session_policy: row.session_policy.map(serde_json::from_value).transpose()?,
+            })
+        })
+        .transpose()
+    }
+
+    pub async fn revoke_iam_role_session(
+        &self,
+        account: OrganizationId,
+        role: PrincipalId,
+        session: Uuid,
+    ) -> Result<(), StoreError> {
+        let result = sqlx::query("UPDATE iam_role_sessions SET revoked_at = now() WHERE organization_id = $1 AND role_principal_id = $2 AND id = $3 AND revoked_at IS NULL")
+            .bind(account.0).bind(role.0).bind(session).execute(&self.pool).await?;
+        if result.rows_affected() != 1 {
+            return Err(StoreError::NotFound);
+        }
+        Ok(())
+    }
+
+    pub async fn list_iam_role_sessions(
+        &self,
+        account: OrganizationId,
+        role: PrincipalId,
+    ) -> Result<Vec<IamRoleSessionInfo>, StoreError> {
+        Ok(sqlx::query_as::<_, IamRoleSessionInfo>("SELECT id, source_arn, session_name, expires_at, revoked_at, created_at
+            FROM iam_role_sessions WHERE organization_id = $1 AND role_principal_id = $2 ORDER BY created_at DESC LIMIT 1000")
+            .bind(account.0).bind(role.0).fetch_all(&self.pool).await?)
+    }
+}
