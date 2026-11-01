@@ -18,6 +18,12 @@ managed `FullAWSAccess` policy, and the last attachment cannot be removed. SCPs
 do not apply to the management account. Existing HeteroCloud quota ownership
 and per-user quota extensions remain in force per account.
 
+Quota limits are still enforced per account and per member within that account;
+they are not an aggregate ceiling over all accounts in a cloud organization.
+The operator quota view currently lists accounts rather than grouping them by
+cloud organization. Do not rely on those account limits as an organization-wide
+cap when creating multiple member accounts.
+
 IAM roles have a restricted AWS-style trust policy and short-lived HeteroCloud
 bearer sessions. Cross-account assumption requires both a source identity
 permission and a matching target trust policy. Optional session policies only
