@@ -37,6 +37,8 @@ pub enum ApiError {
     SecretManagerUnavailable,
     #[error("organization and IAM controls are not yet activated")]
     ServiceControlUnavailable,
+    #[error("the browser role session expired or was revoked")]
+    BrowserRoleSessionExpired,
     #[error("too many requests")]
     TooManyRequests,
     #[error("authentication required")]
@@ -139,6 +141,11 @@ impl IntoResponse for ApiError {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "service_control_unavailable",
                 "Organization and IAM controls are pending activation after the API fleet upgrade.",
+            ),
+            Self::BrowserRoleSessionExpired => (
+                StatusCode::FORBIDDEN,
+                "browser_role_session_expired",
+                "The role session expired or was revoked. Exit the role to continue.",
             ),
             Self::TooManyRequests => (
                 StatusCode::TOO_MANY_REQUESTS,

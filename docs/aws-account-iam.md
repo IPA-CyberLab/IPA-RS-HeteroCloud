@@ -23,21 +23,26 @@ bearer sessions. Cross-account assumption requires both a source identity
 permission and a matching target trust policy. Optional session policies only
 reduce permissions. Role sessions are time-limited, revocable, and cannot be
 turned into long-lived API keys or used as Flash task identities to bypass the
-trust policy. The console issues the bearer token once for API use; it does not
-yet switch the browser's active identity to the assumed role.
+trust policy. The console can issue a bearer token once for API use or switch
+the browser to the role. Browser role sessions are bound to the existing browser
+session in the database; the role token is not exposed to JavaScript. A revoked,
+expired or disabled browser role fails closed until the user explicitly exits
+the role, rather than silently reverting to the original identity.
 
 ## Deployment and activation
 
 The migration intentionally leaves `cloud_security_activation.scp_enabled`
 false. While false, the API refuses SCP, group, and permissions-boundary changes. Migration 0027
 adds a separate `roles_enabled` flag, initially false, which blocks role
-management and assumption. These gates prevent a new
+management and assumption. Migration 0028 adds `browser_roles_enabled`, initially
+false, which blocks browser role switching until every API replica understands
+the switched identity. These gates prevent a new
 replica from admitting a policy that an old replica would not enforce. After
 every API replica is ready on the new immutable image, an operator enables the
 controls once using a transactional DB migration/job:
 
 ```sql
-UPDATE cloud_security_activation SET scp_enabled = true, roles_enabled = true WHERE singleton = true;
+UPDATE cloud_security_activation SET scp_enabled = true, roles_enabled = true, browser_roles_enabled = true WHERE singleton = true;
 ```
 
 Verify the deployment's actual image digests and readiness, rather than only

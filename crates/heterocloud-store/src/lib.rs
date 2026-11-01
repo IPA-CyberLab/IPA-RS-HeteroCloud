@@ -12,7 +12,9 @@ pub use flash_operations::{
     BackupPolicyInput, FlashBackupPolicy, FlashEvent, FlashRevision, rollback_spec,
 };
 pub use iam_groups::{IamGroup, IamPermissionsBoundary};
-pub use iam_roles::{IamRole, IamRoleSession, IamRoleSessionInfo, NewIamRoleSession};
+pub use iam_roles::{
+    BrowserRoleSession, IamRole, IamRoleSession, IamRoleSessionInfo, NewIamRoleSession,
+};
 pub use organizations::{OrganizationMemberQuota, UnassignedQuotaResource};
 mod flash_domains;
 mod workload_identity;
@@ -1236,10 +1238,12 @@ impl Store {
         token_hash: &[u8; 32],
     ) -> Result<Option<SessionUser>, StoreError> {
         let user_id = sqlx::query_scalar::<_, Uuid>(
-            "UPDATE sessions
+            "UPDATE sessions s
              SET last_seen_at = now()
-             WHERE token_hash = $1 AND expires_at > now()
-             RETURNING user_id",
+             FROM users u
+             WHERE s.token_hash = $1 AND s.expires_at > now()
+               AND u.id = s.user_id AND u.status = 'active'
+             RETURNING s.user_id",
         )
         .bind(token_hash.as_slice())
         .fetch_optional(&self.pool)

@@ -251,6 +251,7 @@ export class HeteroCloudApiClient {
       });
       this.csrfToken = null;
     },
+    exitRole: () => this.request<void>("/auth/role/exit", { method: "POST" }),
     cliDevice: {
       get: (userCode: string, signal?: AbortSignal) =>
         this.request<CliDeviceAuthorization>(
@@ -400,13 +401,14 @@ export class HeteroCloudApiClient {
 
   readonly iam = {
     roles: {
-      list: (account: string, signal?: AbortSignal) => this.request<CollectionResponse<import("./api-types").IamRole> & { enabled: boolean }>(organizationPath(account, "iam/roles"), { signal }),
+      list: (account: string, signal?: AbortSignal) => this.request<CollectionResponse<import("./api-types").IamRole> & { enabled: boolean; browser_switch_enabled: boolean }>(organizationPath(account, "iam/roles"), { signal }),
       create: (account: string, input: { name: string; trust_policy: Record<string, unknown>; max_session_seconds: number }) => this.request<import("./api-types").IamRole>(organizationPath(account, "iam/roles"), { method: "POST", body: input }),
       delete: (account: string, role: string) => this.request<void>(organizationPath(account, `iam/roles/${encodeURIComponent(role)}`), { method: "DELETE" }),
       updateTrust: (account: string, role: string, trust: Record<string, unknown>) => this.request<void>(organizationPath(account, `iam/roles/${encodeURIComponent(role)}/trust`), { method: "PUT", body: { trust_policy: trust } }),
       sessions: (account: string, role: string, signal?: AbortSignal) => this.request<CollectionResponse<import("./api-types").IamRoleSessionInfo>>(organizationPath(account, `iam/roles/${encodeURIComponent(role)}/sessions`), { signal }),
       revokeSession: (account: string, role: string, session: string) => this.request<void>(organizationPath(account, `iam/roles/${encodeURIComponent(role)}/sessions/${encodeURIComponent(session)}`), { method: "DELETE" }),
       assume: (account: string, input: { role_arn: string; session_name: string; duration_seconds: number; session_policy?: Record<string, unknown> }) => this.request<import("./api-types").IamRoleCredentials>(organizationPath(account, "sts/assume-role"), { method: "POST", body: input }),
+      switchConsole: (account: string, input: { role_arn: string; session_name: string; duration_seconds: number; session_policy?: Record<string, unknown> }) => this.request<{ switched: true; role_arn: string; account_id: string; principal_id: string; session_id: string; expires_at: string }>(organizationPath(account, "sts/assume-role"), { method: "POST", body: { ...input, switch_console: true } }),
       caller: (account: string, signal?: AbortSignal) => this.request<{ account_id: string; arn: string; principal_id: string }>(organizationPath(account, "sts/caller-identity"), { signal }),
     },
     boundaries: {

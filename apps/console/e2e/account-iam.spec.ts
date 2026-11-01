@@ -73,10 +73,12 @@ test("IAMグループ、アクセス許可の境界とロールを設定する",
   const boundaries: { principal_id: string; policy_id: string }[] = [];
   const roles: { principal_id: string; organization_id: string; name: string; arn: string; trust_policy: object; max_session_seconds: number; created_at: string }[] = [];
   const roleSessions: { id: string; source_arn: string; session_name: string; expires_at: string; revoked_at: string | null; created_at: string }[] = [];
+  let activeRole: { session_id: string; organization_id: string; account_number: string; account_name: string; principal_id: string; role_arn: string; session_name: string; expires_at: string; active: boolean } | undefined;
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     const method = route.request().method();
-    if (path.endsWith("/auth/session")) return route.fulfill({ json: { user: { id: "user", email: "test@example.test", display_name: "Test" }, memberships: [{ organization_id: "account", organization_name: "Example", organization_slug: "example", principal_id: "principal", role: "owner" }], csrf_token: "test", owner_console: false } });
+    if (path.endsWith("/auth/session")) return route.fulfill({ json: { user: { id: "user", email: "test@example.test", display_name: "Test" }, memberships: [{ organization_id: "account", organization_name: "Example", organization_slug: "example", principal_id: "principal", role: "owner" }], csrf_token: "test", owner_console: false, ...(activeRole ? { active_role: activeRole } : {}) } });
+    if (path.endsWith("/auth/role/exit") && method === "POST") { activeRole = undefined; return route.fulfill({ status: 204 }); }
     if (path.endsWith("/iam/principals")) return route.fulfill({ json: { items: [{ id: "principal", organization_id: "account", kind: "user", name: "Test User", user_id: "user", enabled: true, created_at: createdAt }] } });
     if (path.endsWith("/iam/policies")) return route.fulfill({ json: { items: [{ id: "policy", organization_id: "account", name: "ReadOnly", document: { version: "2026-07-31", statements: [] }, semantics_digest: "0".repeat(64), created_at: createdAt, updated_at: createdAt }] } });
     if (path.endsWith("/iam/bindings") && method === "POST") return route.fulfill({ status: 201, json: { id: "binding" } });
@@ -104,11 +106,15 @@ test("IAMグループ、アクセス許可の境界とロールを設定する",
       roles.push({ principal_id: "role", organization_id: "account", name: body.name, arn: "arn:aws:iam::100000000000:role/Reader", trust_policy: body.trust_policy, max_session_seconds: body.max_session_seconds, created_at: createdAt });
       return route.fulfill({ status: 201, json: roles[0] });
     }
-    if (path.endsWith("/iam/roles")) return route.fulfill({ json: { enabled: true, items: roles } });
+    if (path.endsWith("/iam/roles")) return route.fulfill({ json: { enabled: true, browser_switch_enabled: true, items: roles } });
     if (path.endsWith("/iam/roles/role/sessions")) return route.fulfill({ json: { items: roleSessions } });
     if (path.endsWith("/iam/roles/role/sessions/session") && method === "DELETE") { roleSessions[0].revoked_at = createdAt; return route.fulfill({ status: 204 }); }
     if (path.endsWith("/sts/caller-identity")) return route.fulfill({ json: { account_id: "100000000000", arn: "arn:aws:iam::100000000000:user/principal", principal_id: "principal" } });
     if (path.endsWith("/sts/assume-role") && method === "POST") {
+      if (route.request().postDataJSON().switch_console) {
+        activeRole = { session_id: "browser-session", organization_id: "account", account_number: "100000000000", account_name: "Example", principal_id: "role", role_arn: "arn:aws:iam::100000000000:role/Reader", session_name: "console-session", expires_at: new Date(Date.now() + 3_600_000).toISOString(), active: true };
+        return route.fulfill({ json: { switched: true, session_id: "browser-session", role_arn: activeRole.role_arn, account_id: "account", principal_id: "role", expires_at: activeRole.expires_at } });
+      }
       roleSessions.push({ id: "session", source_arn: "arn:aws:iam::100000000000:user/principal", session_name: "console-session", expires_at: createdAt, revoked_at: null, created_at: createdAt });
       return route.fulfill({ json: { access_token: "hcr_fixture", token_type: "Bearer", session_id: "session", role_arn: route.request().postDataJSON().role_arn, account_id: "account", principal_id: "role", expires_at: createdAt } });
     }
@@ -144,4 +150,12 @@ test("IAMグループ、アクセス許可の境界とロールを設定する",
   await credentials.getByRole("button", { name: "閉じる", exact: true }).click();
   await page.getByRole("button", { name: "失効", exact: true }).click();
   await expect(page.getByText("失効済み", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "コンソールをロールに切り替え" }).click();
+  await expect(page.locator('summary[aria-label="操作対象のアカウント"]')).toContainText("Example / Reader");
+  if (!activeRole) throw new Error("role switch did not occur");
+  activeRole.active = false;
+  await page.reload();
+  await expect(page.getByText("ロールセッションが終了しました")).toBeVisible();
+  await page.getByRole("button", { name: "元のアカウントに戻る" }).click();
+  await expect(page.locator('summary[aria-label="操作対象のアカウント"]')).toContainText("Example");
 });

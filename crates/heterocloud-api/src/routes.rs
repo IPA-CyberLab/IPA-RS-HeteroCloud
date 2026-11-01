@@ -124,6 +124,7 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route("/auth/oidc/callback", get(oidc_callback))
         .route("/auth/session", get(session))
         .route("/auth/logout", post(logout))
+        .route("/auth/role/exit", post(exit_browser_role))
         .route("/auth/cli/device", post(create_cli_device_authorization))
         .route("/auth/cli/token", post(exchange_cli_device_authorization))
         .route(
@@ -1406,17 +1407,21 @@ async fn session(
     PeerAddress(peer): PeerAddress,
 ) -> Result<Json<SessionResponse>, ApiError> {
     let authenticated = authenticated_session(&state, &jar).await?;
-    let owner_console = owner_request_allowed(
-        &state.config,
-        &headers,
-        peer,
-        &authenticated.user.user.email,
-    );
-    Ok(Json(SessionResponse::new(
-        authenticated.user,
-        authenticated.csrf,
-        owner_console,
-    )))
+    let active_role = state
+        .store
+        .browser_active_role(&authenticated.token_hash)
+        .await
+        .map_err(ApiError::from_store)?;
+    let owner_console = active_role.is_none()
+        && owner_request_allowed(
+            &state.config,
+            &headers,
+            peer,
+            &authenticated.user.user.email,
+        );
+    let mut response = SessionResponse::new(authenticated.user, authenticated.csrf, owner_console);
+    response.active_role = active_role;
+    Ok(Json(response))
 }
 
 async fn logout(
@@ -1440,6 +1445,25 @@ async fn logout(
         .max_age(CookieDuration::ZERO)
         .build();
     Ok((jar.remove(removal), StatusCode::NO_CONTENT))
+}
+
+async fn exit_browser_role(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<StatusCode, ApiError> {
+    if headers.contains_key(header::AUTHORIZATION) {
+        return Err(ApiError::Forbidden);
+    }
+    require_same_origin(&state.config, &headers)?;
+    let browser = authenticated_session(&state, &jar).await?;
+    require_csrf(&headers, &browser.csrf)?;
+    state
+        .store
+        .clear_browser_role(&browser.token_hash)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]
@@ -1766,14 +1790,25 @@ fn cli_device_token_error(code: &'static str, description: &'static str) -> Resp
 
 async fn list_organizations(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<Json<Value>, ApiError> {
-    let authenticated = authenticated_session(&state, &jar).await?;
-    let organizations = state
-        .store
-        .list_organizations(authenticated.user.user.id)
-        .await
-        .map_err(ApiError::from_store)?;
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    let organizations = match actor {
+        AuthenticatedActor::User(session) => state
+            .store
+            .list_organizations(session.user.user.id)
+            .await
+            .map_err(ApiError::from_store)?,
+        AuthenticatedActor::RoleSession { session, .. } => state
+            .store
+            .organization(OrganizationId(session.organization_id))
+            .await
+            .map_err(ApiError::from_store)?
+            .into_iter()
+            .collect(),
+        _ => return Err(ApiError::Forbidden),
+    };
     Ok(Json(json!({ "items": organizations })))
 }
 
@@ -2042,7 +2077,7 @@ async fn create_cloud_member_account(
         AuthenticatedActor::User(session) => session.user.user.id,
         AuthenticatedActor::CliToken(token) => token.user.user.id,
         AuthenticatedActor::Workload(_)
-        | AuthenticatedActor::RoleSession(_)
+        | AuthenticatedActor::RoleSession { .. }
         | AuthenticatedActor::ApiKey { .. } => {
             return Err(ApiError::Forbidden);
         }
@@ -2117,7 +2152,7 @@ async fn create_organization(
         // they must not create a separate tenant outside that scope.
         AuthenticatedActor::CliToken(_)
         | AuthenticatedActor::Workload(_)
-        | AuthenticatedActor::RoleSession(_)
+        | AuthenticatedActor::RoleSession { .. }
         | AuthenticatedActor::ApiKey { .. } => {
             return Err(ApiError::Forbidden);
         }
@@ -2205,11 +2240,15 @@ async fn quota_user_for_actor(
             .principal_quota_user(organization, *principal_id)
             .await
             .map_err(ApiError::from_store),
-        AuthenticatedActor::RoleSession(token) if token.organization_id == organization.0 => state
-            .store
-            .principal_quota_user(organization, PrincipalId(token.principal_id))
-            .await
-            .map_err(ApiError::from_store),
+        AuthenticatedActor::RoleSession { session: token, .. }
+            if token.organization_id == organization.0 =>
+        {
+            state
+                .store
+                .principal_quota_user(organization, PrincipalId(token.principal_id))
+                .await
+                .map_err(ApiError::from_store)
+        }
         _ => Err(ApiError::Forbidden),
     }
 }
@@ -2533,7 +2572,14 @@ async fn list_iam_roles(
         .roles_enabled()
         .await
         .map_err(ApiError::from_store)?;
-    Ok(Json(json!({"items":items,"enabled":enabled})))
+    let browser_switch_enabled = state
+        .store
+        .browser_roles_enabled()
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(
+        json!({"items":items,"enabled":enabled,"browser_switch_enabled":browser_switch_enabled}),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -2718,6 +2764,8 @@ struct AssumeIamRole {
     duration_seconds: i32,
     #[serde(default)]
     session_policy: Option<Value>,
+    #[serde(default)]
+    switch_console: bool,
 }
 
 async fn assume_iam_role(
@@ -2729,6 +2777,26 @@ async fn assume_iam_role(
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     require_roles_enabled(&state).await?;
+    let browser_switch = if input.switch_console {
+        if !state
+            .store
+            .browser_roles_enabled()
+            .await
+            .map_err(ApiError::from_store)?
+        {
+            return Err(ApiError::ServiceControlUnavailable);
+        }
+        match &actor {
+            AuthenticatedActor::User(browser) => Some((browser, None)),
+            AuthenticatedActor::RoleSession {
+                session,
+                browser: Some(browser),
+            } => Some((browser, Some(session.id))),
+            _ => return Err(ApiError::Forbidden),
+        }
+    } else {
+        None
+    };
     let (target_number, role_name) = parse_iam_role_arn(&input.role_arn)?;
     if input.session_name.len() < 2
         || input.session_name.len() > 64
@@ -2742,7 +2810,8 @@ async fn assume_iam_role(
         ));
     }
     if !(900..=43200).contains(&input.duration_seconds)
-        || (matches!(actor, AuthenticatedActor::RoleSession(_)) && input.duration_seconds > 3600)
+        || (matches!(&actor, AuthenticatedActor::RoleSession { .. })
+            && input.duration_seconds > 3600)
     {
         return Err(ApiError::BadRequest(
             "Invalid role session duration.".into(),
@@ -2812,6 +2881,31 @@ async fn assume_iam_role(
         })
         .await
         .map_err(ApiError::from_store)?;
+    if let Some((browser, previous)) = browser_switch {
+        if let Err(error) = state
+            .store
+            .switch_browser_role(&browser.token_hash, previous, id)
+            .await
+        {
+            let _ = state
+                .store
+                .revoke_iam_role_session(
+                    OrganizationId(role.organization_id),
+                    PrincipalId(role.principal_id),
+                    id,
+                )
+                .await;
+            return Err(ApiError::from_store(error));
+        }
+        return Ok((
+            [
+                (header::CACHE_CONTROL, "no-store"),
+                (header::PRAGMA, "no-cache"),
+            ],
+            Json(json!({"switched":true,"session_id":id,"role_arn":role.arn,
+                "account_id":role.organization_id,"principal_id":role.principal_id,"expires_at":expires_at})),
+        ));
+    }
     Ok((
         [
             (header::CACHE_CONTROL, "no-store"),
@@ -3568,7 +3662,7 @@ async fn list_accessible_gpu_types(
     let actor = authenticated_actor(&state, &headers, &jar).await?;
     sync_gpu_catalog_from_provider(&state).await?;
     let user_id = match &actor {
-        AuthenticatedActor::Workload(_) | AuthenticatedActor::RoleSession(_) => None,
+        AuthenticatedActor::Workload(_) | AuthenticatedActor::RoleSession { .. } => None,
         AuthenticatedActor::User(session) => Some(session.user.user.id),
         AuthenticatedActor::CliToken(token) => Some(token.user.user.id),
         AuthenticatedActor::ApiKey { principal_id, .. } => state
@@ -6156,7 +6250,10 @@ enum AuthenticatedActor {
     User(AuthenticatedSession),
     Workload(heterocloud_store::WorkloadTokenPrincipal),
     CliToken(CliAccessTokenPrincipal),
-    RoleSession(heterocloud_store::IamRoleSession),
+    RoleSession {
+        session: heterocloud_store::IamRoleSession,
+        browser: Option<AuthenticatedSession>,
+    },
     ApiKey {
         organization_id: OrganizationId,
         principal_id: PrincipalId,
@@ -6258,7 +6355,7 @@ async fn identity_context(
         AuthenticatedActor::CliToken(token) => {
             json!({"type":"cli_oauth","organization_id":token.organization_id,"user_id":token.user.user.id})
         }
-        AuthenticatedActor::RoleSession(session) => {
+        AuthenticatedActor::RoleSession { session, .. } => {
             json!({"type":"role_session","organization_id":session.organization_id,"principal_id":session.principal_id,"session_id":session.id,"source_arn":session.source_arn,"expires_at":session.expires_at})
         }
         AuthenticatedActor::User(session) => json!({"type":"user","user_id":session.user.user.id}),
@@ -6483,6 +6580,15 @@ async fn authenticated_mutation(
     require_same_origin(&state.config, headers)?;
     let authenticated = authenticated_session(state, jar).await?;
     require_csrf(headers, &authenticated.csrf)?;
+    if state
+        .store
+        .browser_active_role(&authenticated.token_hash)
+        .await
+        .map_err(ApiError::from_store)?
+        .is_some()
+    {
+        return Err(ApiError::Forbidden);
+    }
     Ok(authenticated)
 }
 
@@ -6501,6 +6607,15 @@ async fn require_owner(
     } else {
         authenticated_session(state, jar).await?
     };
+    if state
+        .store
+        .browser_active_role(&authenticated.token_hash)
+        .await
+        .map_err(ApiError::from_store)?
+        .is_some()
+    {
+        return Err(ApiError::Forbidden);
+    }
     if !owner_request_allowed(&state.config, headers, peer, &authenticated.user.user.email) {
         return Err(ApiError::Forbidden);
     }
@@ -6612,7 +6727,10 @@ async fn authenticated_actor(
                 .await
                 .map_err(ApiError::from_store)?
                 .ok_or(ApiError::Unauthorized)?;
-            return Ok(AuthenticatedActor::RoleSession(session));
+            return Ok(AuthenticatedActor::RoleSession {
+                session,
+                browser: None,
+            });
         }
         if token.starts_with("hcu_") {
             return authenticated_cli_access_token_value(state, token)
@@ -6633,9 +6751,28 @@ async fn authenticated_actor(
             api_key_id: principal.api_key_id,
         });
     }
-    Ok(AuthenticatedActor::User(
-        authenticated_session(state, jar).await?,
-    ))
+    let browser = authenticated_session(state, jar).await?;
+    if let Some(active) = state
+        .store
+        .browser_active_role(&browser.token_hash)
+        .await
+        .map_err(ApiError::from_store)?
+    {
+        if !active.active {
+            return Err(ApiError::BrowserRoleSessionExpired);
+        }
+        let session = state
+            .store
+            .authenticate_browser_role_session(active.session_id)
+            .await
+            .map_err(ApiError::from_store)?
+            .ok_or(ApiError::BrowserRoleSessionExpired)?;
+        return Ok(AuthenticatedActor::RoleSession {
+            session,
+            browser: Some(browser),
+        });
+    }
+    Ok(AuthenticatedActor::User(browser))
 }
 
 async fn authenticated_actor_mutation(
@@ -6644,7 +6781,15 @@ async fn authenticated_actor_mutation(
     jar: &CookieJar,
 ) -> Result<AuthenticatedActor, ApiError> {
     let actor = authenticated_actor(state, headers, jar).await?;
-    if let AuthenticatedActor::User(session) = &actor {
+    let browser_session = match &actor {
+        AuthenticatedActor::User(session) => Some(session),
+        AuthenticatedActor::RoleSession {
+            browser: Some(session),
+            ..
+        } => Some(session),
+        _ => None,
+    };
+    if let Some(session) = browser_session {
         require_same_origin(&state.config, headers)?;
         require_csrf(headers, &session.csrf)?;
     }
@@ -6764,7 +6909,7 @@ async fn authorize_actor_with_implicit_allow(
                 json!({ "actor": "user" }),
             )
         }
-        AuthenticatedActor::RoleSession(session) => {
+        AuthenticatedActor::RoleSession { session, browser } => {
             if session.organization_id != organization_id.0 {
                 return Err(ApiError::Forbidden);
             }
@@ -6779,7 +6924,7 @@ async fn authorize_actor_with_implicit_allow(
                 .ok_or(ApiError::Forbidden)?;
             (
                 context,
-                None,
+                browser.as_ref().map(|browser| browser.user.user.id),
                 json!({"actor":"role_session","session_id":session.id,"source_arn":session.source_arn}),
             )
         }
@@ -6849,7 +6994,7 @@ async fn authorize_actor_with_implicit_allow(
     )
     .await?;
     let session_policy = match actor {
-        AuthenticatedActor::RoleSession(session) => session.session_policy.as_ref(),
+        AuthenticatedActor::RoleSession { session, .. } => session.session_policy.as_ref(),
         _ => None,
     };
     let evaluation = enforce_session_policy(
@@ -7158,6 +7303,8 @@ struct SessionResponse {
     memberships: Vec<heterocloud_store::Membership>,
     csrf_token: String,
     owner_console: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    active_role: Option<heterocloud_store::BrowserRoleSession>,
 }
 
 impl SessionResponse {
@@ -7167,6 +7314,7 @@ impl SessionResponse {
             memberships: session.memberships,
             csrf_token: csrf_token.expose_secret().to_owned(),
             owner_console,
+            active_role: None,
         }
     }
 }

@@ -620,6 +620,165 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
             .any(|item| item["id"] == session_id)
     );
     assert!(!sessions.to_string().contains(role_token));
+    let switch_body = json!({"role_arn":role_arn, "session_name":"browser-role", "switch_console":true,
+        "session_policy":{"Version":"2012-10-17","Statement":{"Effect":"Allow","Action":"project:List","Resource":"*"}}});
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            &assume_path,
+            Some(switch_body.clone()),
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    sqlx::query(
+        "UPDATE cloud_security_activation SET browser_roles_enabled=true WHERE singleton=true",
+    )
+    .execute(store.pool())
+    .await?;
+    let (status, switched) = request(
+        state.clone(),
+        "POST",
+        &assume_path,
+        Some(switch_body),
+        Some(csrf.expose_secret()),
+        None,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(switched["switched"], true);
+    assert!(switched.get("access_token").is_none());
+    let browser_role_id = uuid::Uuid::parse_str(
+        switched["session_id"]
+            .as_str()
+            .ok_or("browser role session")?,
+    )?;
+    let (_, browser_session) = request(
+        state.clone(),
+        "GET",
+        "/api/v1/auth/session",
+        None,
+        None,
+        None,
+    )
+    .await?;
+    assert_eq!(browser_session["active_role"]["organization_id"], member_id);
+    assert_eq!(browser_session["active_role"]["active"], true);
+    assert_eq!(
+        request(state.clone(), "GET", &projects, None, None, None)
+            .await?
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "GET",
+            &format!("{base}/projects"),
+            None,
+            None,
+            None
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "GET",
+            &format!("/api/v1/organizations/{member_id}/audit-events"),
+            None,
+            None,
+            None
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            &projects,
+            Some(json!({"name":"NoCsrf","slug":"no-csrf"})),
+            None,
+            None
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    sqlx::query("UPDATE iam_role_sessions SET expires_at=now() - interval '1 second' WHERE id=$1")
+        .bind(browser_role_id)
+        .execute(store.pool())
+        .await?;
+    assert_eq!(
+        request(
+            state.clone(),
+            "GET",
+            &format!("{base}/projects"),
+            None,
+            None,
+            None
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let (_, expired_browser) = request(
+        state.clone(),
+        "GET",
+        "/api/v1/auth/session",
+        None,
+        None,
+        None,
+    )
+    .await?;
+    assert_eq!(expired_browser["active_role"]["active"], false);
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            "/api/v1/auth/role/exit",
+            None,
+            None,
+            None
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            "/api/v1/auth/role/exit",
+            None,
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "GET",
+            &format!("{base}/projects"),
+            None,
+            None,
+            None
+        )
+        .await?
+        .0,
+        StatusCode::OK
+    );
     assert_eq!(
         request(
             state.clone(),
@@ -792,6 +951,23 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
             None,
             None,
             Some(role_token)
+        )
+        .await?
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    sqlx::query("UPDATE users SET status='suspended' WHERE id=$1")
+        .bind(owner.user.id.0)
+        .execute(store.pool())
+        .await?;
+    assert_eq!(
+        request(
+            state.clone(),
+            "GET",
+            "/api/v1/auth/session",
+            None,
+            None,
+            None
         )
         .await?
         .0,

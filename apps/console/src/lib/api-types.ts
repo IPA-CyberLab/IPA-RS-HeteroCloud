@@ -21,6 +21,17 @@ export interface Session {
   memberships: Membership[];
   csrf_token: string;
   owner_console: boolean;
+  active_role?: {
+    session_id: string;
+    organization_id: string;
+    account_number: string;
+    account_name: string;
+    principal_id: string;
+    role_arn: string;
+    session_name: string;
+    expires_at: string;
+    active: boolean;
+  };
 }
 
 export interface CliDeviceAuthorization {

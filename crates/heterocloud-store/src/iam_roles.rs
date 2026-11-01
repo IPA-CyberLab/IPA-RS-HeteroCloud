@@ -40,6 +40,19 @@ pub struct IamRoleSessionInfo {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct BrowserRoleSession {
+    pub session_id: Uuid,
+    pub organization_id: Uuid,
+    pub account_number: String,
+    pub account_name: String,
+    pub principal_id: Uuid,
+    pub role_arn: String,
+    pub session_name: String,
+    pub expires_at: DateTime<Utc>,
+    pub active: bool,
+}
+
 #[derive(sqlx::FromRow)]
 struct RoleSessionRow {
     id: Uuid,
@@ -73,6 +86,81 @@ const ROLE_SELECT: &str = "SELECT r.principal_id, r.organization_id, r.name,
     FROM iam_roles r JOIN organizations a ON a.id = r.organization_id";
 
 impl Store {
+    pub async fn browser_roles_enabled(&self) -> Result<bool, StoreError> {
+        Ok(sqlx::query_scalar::<_, bool>(
+            "SELECT browser_roles_enabled FROM cloud_security_activation WHERE singleton = true",
+        )
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
+    pub async fn browser_active_role(
+        &self,
+        browser_hash: &[u8; 32],
+    ) -> Result<Option<BrowserRoleSession>, StoreError> {
+        Ok(sqlx::query_as::<_, BrowserRoleSession>("SELECT rs.id AS session_id, rs.organization_id,
+            a.account_number::text AS account_number, a.name AS account_name, rs.role_principal_id AS principal_id,
+            ('arn:aws:iam::' || a.account_number::text || ':role/' || r.name) AS role_arn,
+            rs.session_name, rs.expires_at, (rs.revoked_at IS NULL AND rs.expires_at > now() AND p.enabled) AS active
+            FROM sessions s JOIN iam_role_sessions rs ON rs.id = s.active_role_session_id
+            JOIN iam_roles r ON r.principal_id = rs.role_principal_id AND r.organization_id = rs.organization_id
+            JOIN principals p ON p.id = r.principal_id AND p.organization_id = r.organization_id
+            JOIN organizations a ON a.id = rs.organization_id
+            WHERE s.token_hash = $1 AND s.expires_at > now()")
+            .bind(browser_hash.as_slice()).fetch_optional(&self.pool).await?)
+    }
+
+    /// The expected previous role prevents concurrent browser switches from
+    /// silently overwriting a newer identity.
+    pub async fn switch_browser_role(
+        &self,
+        browser_hash: &[u8; 32],
+        expected: Option<Uuid>,
+        new_role_session: Uuid,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let changed = sqlx::query("UPDATE sessions s SET active_role_session_id = $3
+            WHERE s.token_hash = $1 AND s.expires_at > now() AND s.active_role_session_id IS NOT DISTINCT FROM $2
+            AND ($2::uuid IS NULL OR EXISTS (SELECT 1 FROM iam_role_sessions previous JOIN principals previous_principal
+                ON previous_principal.id=previous.role_principal_id AND previous_principal.organization_id=previous.organization_id
+                WHERE previous.id=$2 AND previous.revoked_at IS NULL AND previous.expires_at > now() AND previous_principal.enabled))
+            AND EXISTS (SELECT 1 FROM iam_role_sessions rs JOIN principals p ON p.id=rs.role_principal_id AND p.organization_id=rs.organization_id
+                WHERE rs.id=$3 AND rs.revoked_at IS NULL AND rs.expires_at > now() AND p.enabled)")
+            .bind(browser_hash.as_slice()).bind(expected).bind(new_role_session).execute(&mut *tx).await?;
+        if changed.rows_affected() != 1 {
+            return Err(StoreError::Conflict);
+        }
+        if let Some(previous) = expected {
+            sqlx::query(
+                "UPDATE iam_role_sessions SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL",
+            )
+            .bind(previous)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn clear_browser_role(&self, browser_hash: &[u8; 32]) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let current = sqlx::query_scalar::<_, Option<Uuid>>("SELECT active_role_session_id FROM sessions WHERE token_hash=$1 AND expires_at > now() FOR UPDATE")
+            .bind(browser_hash.as_slice()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
+        sqlx::query("UPDATE sessions SET active_role_session_id=NULL WHERE token_hash=$1")
+            .bind(browser_hash.as_slice())
+            .execute(&mut *tx)
+            .await?;
+        if let Some(id) = current {
+            sqlx::query(
+                "UPDATE iam_role_sessions SET revoked_at=COALESCE(revoked_at, now()) WHERE id=$1",
+            )
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
     pub async fn roles_enabled(&self) -> Result<bool, StoreError> {
         Ok(sqlx::query_scalar::<_, bool>(
             "SELECT roles_enabled FROM cloud_security_activation WHERE singleton = true",
@@ -165,7 +253,8 @@ impl Store {
             return Err(StoreError::NotFound);
         }
         let in_use = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM iam_bindings WHERE organization_id = $1 AND principal_id = $2) OR
-            EXISTS(SELECT 1 FROM iam_role_sessions WHERE organization_id = $1 AND role_principal_id = $2 AND revoked_at IS NULL AND expires_at > now())")
+            EXISTS(SELECT 1 FROM iam_role_sessions WHERE organization_id = $1 AND role_principal_id = $2 AND revoked_at IS NULL AND expires_at > now()) OR
+            EXISTS(SELECT 1 FROM sessions s JOIN iam_role_sessions rs ON rs.id=s.active_role_session_id WHERE rs.organization_id=$1 AND rs.role_principal_id=$2)")
             .bind(account.0).bind(role.0).fetch_one(&mut *tx).await?;
         if in_use {
             return Err(StoreError::RequestRejected(
@@ -221,7 +310,7 @@ impl Store {
                 "Session duration exceeds the role maximum.".into(),
             ));
         }
-        sqlx::query("DELETE FROM iam_role_sessions WHERE role_principal_id = $1 AND (expires_at < now() - interval '7 days' OR revoked_at < now() - interval '7 days')")
+        sqlx::query("DELETE FROM iam_role_sessions rs WHERE role_principal_id = $1 AND (expires_at < now() - interval '7 days' OR revoked_at < now() - interval '7 days') AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.active_role_session_id=rs.id)")
             .bind(session.role_principal_id.0).execute(&mut *tx).await?;
         let count = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM iam_role_sessions WHERE role_principal_id = $1 AND revoked_at IS NULL AND expires_at > now()")
             .bind(session.role_principal_id.0).fetch_one(&mut *tx).await?;
@@ -255,6 +344,31 @@ impl Store {
             FROM iam_role_sessions s JOIN principals p ON p.id=s.role_principal_id AND p.organization_id=s.organization_id
             WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at > now() AND p.enabled")
             .bind(token_hash.as_slice()).fetch_optional(&self.pool).await?;
+        row.map(|row| {
+            Ok(IamRoleSession {
+                id: row.id,
+                organization_id: row.organization_id,
+                principal_id: row.principal_id,
+                source_organization_id: row.source_organization_id,
+                source_principal_id: row.source_principal_id,
+                source_arn: row.source_arn,
+                session_name: row.session_name,
+                expires_at: row.expires_at,
+                session_policy: row.session_policy.map(serde_json::from_value).transpose()?,
+            })
+        })
+        .transpose()
+    }
+
+    pub async fn authenticate_browser_role_session(
+        &self,
+        session_id: Uuid,
+    ) -> Result<Option<IamRoleSession>, StoreError> {
+        let row = sqlx::query_as::<_, RoleSessionRow>("SELECT s.id, s.organization_id, s.role_principal_id AS principal_id,
+            s.source_organization_id, s.source_principal_id, s.source_arn, s.session_name, s.expires_at, s.session_policy
+            FROM iam_role_sessions s JOIN principals p ON p.id=s.role_principal_id AND p.organization_id=s.organization_id
+            WHERE s.id=$1 AND s.revoked_at IS NULL AND s.expires_at > now() AND p.enabled")
+            .bind(session_id).fetch_optional(&self.pool).await?;
         row.map(|row| {
             Ok(IamRoleSession {
                 id: row.id,

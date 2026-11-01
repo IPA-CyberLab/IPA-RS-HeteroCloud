@@ -70,7 +70,7 @@ export function AppShell() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const session = useSession().data!;
-  const { activeOrganization, memberships, setActiveOrganizationId } =
+  const { activeOrganization, memberships, setActiveOrganizationId, activeRole, exitRole } =
     useActiveOrganization();
 
   useEffect(() => {
@@ -134,18 +134,19 @@ export function AppShell() {
     text: activeOrganization.organization_name,
     iconName: "folder",
     ariaLabel: "操作対象のアカウント",
-    items: memberships.map((membership) => ({
+    items: [...memberships.map((membership) => ({
       id: `organization:${membership.organization_id}`,
       text: membership.organization_name,
       iconName:
         membership.organization_id === activeOrganization.organization_id
           ? "status-positive"
           : undefined,
-    })),
+    })), ...(activeRole ? [{ id: "exit-role", text: "元のアカウントに戻る", iconName: "exit-full-screen" }] : [])],
     onItemClick: ({ detail }) => {
       if (detail.id.startsWith("organization:")) {
         setActiveOrganizationId(detail.id.slice("organization:".length));
       }
+      if (detail.id === "exit-role") void exitRole().catch(() => undefined);
     },
   };
 

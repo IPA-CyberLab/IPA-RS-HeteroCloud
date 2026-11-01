@@ -51,6 +51,9 @@ async fn migration_and_organization_controls_preserve_isolation() -> Result<(), 
     sqlx::query("INSERT INTO organization_memberships(organization_id,user_id,principal_id,role) VALUES ($1,$2,$3,'owner')").bind(old_account).bind(user).bind(principal).execute(store.pool()).await?;
     sqlx::query("INSERT INTO projects(id,organization_id,slug,name) VALUES ($1,$2,'existing-project','Existing')").bind(project).bind(old_account).execute(store.pool()).await?;
     sqlx::query("INSERT INTO service_instances(id,organization_id,project_id,provider,name,state,spec) VALUES ($1,$2,$3,'flash','existing','ready','{}')").bind(service).bind(old_account).bind(project).execute(store.pool()).await?;
+    let existing_session_hash = [8_u8; 32];
+    sqlx::query("INSERT INTO sessions(id,user_id,token_hash,expires_at) VALUES ($1,$2,$3,now() + interval '1 hour')")
+        .bind(Uuid::now_v7()).bind(user).bind(existing_session_hash.as_slice()).execute(store.pool()).await?;
     sqlx::raw_sql(include_str!(
         "../../../migrations/0026_cloud_organizations.sql"
     ))
@@ -67,6 +70,24 @@ async fn migration_and_organization_controls_preserve_isolation() -> Result<(), 
         .execute(store.pool())
         .await?;
     assert!(!store.roles_enabled().await?);
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/0028_browser_role_sessions.sql"
+    ))
+    .execute(store.pool())
+    .await?;
+    assert!(!store.browser_roles_enabled().await?);
+    assert!(
+        store
+            .session_user_by_token_hash(&existing_session_hash)
+            .await?
+            .is_some()
+    );
+    assert!(
+        store
+            .browser_active_role(&existing_session_hash)
+            .await?
+            .is_none()
+    );
     assert!(
         store
             .enabled_task_role(

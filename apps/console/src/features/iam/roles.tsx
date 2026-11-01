@@ -3,10 +3,12 @@ import { useState } from "react";
 import { Box, Button, FormField, Input, Modal, Select, SpaceBetween, Textarea } from "@/components/ui";
 import { FormError } from "@/components/shared/form-error";
 import { api, getApiErrorMessage } from "@/lib/api-client";
+import { useActiveOrganization } from "@/features/organizations/organization-context";
 import type { IamPolicy, IamRole } from "@/lib/api-types";
 
 export function IamRoles({ accountId, policies }: { accountId: string; policies: IamPolicy[] }) {
   const client = useQueryClient();
+  const { switchRole } = useActiveOrganization();
   const key = ["organizations", accountId, "iam", "roles"];
   const roles = useQuery({ queryKey: key, queryFn: ({ signal }) => api.iam.roles.list(accountId, signal) });
   const caller = useQuery({ queryKey: ["organizations", accountId, "sts", "caller"], queryFn: ({ signal }) => api.iam.roles.caller(accountId, signal), enabled: roles.data?.enabled });
@@ -24,6 +26,7 @@ export function IamRoles({ accountId, policies }: { accountId: string; policies:
   const [credentialsOpen, setCredentialsOpen] = useState(false);
   const [copyDone, setCopyDone] = useState(false);
   const [inputError, setInputError] = useState("");
+  const [switching, setSwitching] = useState(false);
   const sessions = useQuery({ queryKey: ["organizations", accountId, "iam", "roles", roleId, "sessions"],
     queryFn: ({ signal }) => api.iam.roles.sessions(accountId, roleId, signal), enabled: !!roleId && !!roles.data?.enabled });
   const refresh = () => Promise.all([
@@ -53,7 +56,7 @@ export function IamRoles({ accountId, policies }: { accountId: string; policies:
   const policyOptions = policies.map((item) => ({ value: item.id, label: item.name }));
   return <section className="card bg-base-100 border border-base-300 p-5"><SpaceBetween size="m">
     <div><h2 className="text-lg font-semibold">IAMロール</h2>
-      <p>信頼するアカウントとロールのポリシーを設定し、期限付きのAPI認証情報を発行します。条件付き信頼とサービスからの引き受けは現在利用できません。</p></div>
+      <p>信頼するアカウントとロールのポリシーを設定し、期限付きのAPI認証情報を発行するか、コンソールをロールに切り替えます。条件付き信頼とサービスからの引き受けは現在利用できません。</p></div>
     {caller.data ? <p>現在のプリンシパル: <code>{caller.data.arn}</code></p> : null}
     {roles.data && !roles.data.enabled ? <p>APIの更新が完了するまで、ロールの操作は停止しています。</p> : null}
     {roles.isError ? <FormError message={getApiErrorMessage(roles.error)} /> : null}
@@ -80,7 +83,13 @@ export function IamRoles({ accountId, policies }: { accountId: string; policies:
       <FormField label="セッション名"><Input value={sessionName} onChange={({ detail }) => setSessionName(detail.value)} /></FormField>
       <FormField label="有効時間（分）"><Input type="number" value={sessionMinutes} onChange={({ detail }) => setSessionMinutes(detail.value)} /></FormField></SpaceBetween>
     <FormField label="セッションポリシー（任意）" description="指定すると、ロールの許可をこのポリシーでも制限します。"><Textarea rows={4} value={sessionPolicy} onChange={({ detail }) => setSessionPolicy(detail.value)} /></FormField>
-    <div><Button disabled={!roles.data?.enabled || !targetArn.trim() || !sessionName.trim() || !Number.isInteger(Number(sessionMinutes)) || Number(sessionMinutes) < 15 || Number(sessionMinutes) > 720 || assume.isPending} onClick={() => { setInputError(""); assume.mutate(); }}>一時認証情報を発行</Button></div>
+    <SpaceBetween direction="horizontal" size="xs"><Button disabled={!roles.data?.enabled || !targetArn.trim() || !sessionName.trim() || !Number.isInteger(Number(sessionMinutes)) || Number(sessionMinutes) < 15 || Number(sessionMinutes) > 720 || assume.isPending} onClick={() => { setInputError(""); assume.mutate(); }}>一時認証情報を発行</Button>
+      <Button variant="primary" loading={switching} disabled={!roles.data?.enabled || !roles.data?.browser_switch_enabled || !targetArn.trim() || !sessionName.trim() || !Number.isInteger(Number(sessionMinutes)) || Number(sessionMinutes) < 15 || Number(sessionMinutes) > 720} onClick={() => {
+        let policy: Record<string, unknown> | undefined;
+        try { policy = sessionPolicy.trim() ? parseJson(sessionPolicy) : undefined; } catch { setInputError("有効なセッションポリシーJSONを入力してください。"); return; }
+        setSwitching(true);
+        void switchRole({ role_arn: targetArn.trim(), session_name: sessionName.trim(), duration_seconds: Number(sessionMinutes) * 60, ...(policy ? { session_policy: policy } : {}) }).catch(() => undefined).finally(() => setSwitching(false));
+      }}>コンソールをロールに切り替え</Button></SpaceBetween>
     {create.isError ? <FormError message={getApiErrorMessage(create.error)} /> : null}{attach.isError ? <FormError message={getApiErrorMessage(attach.error)} /> : null}
     {remove.isError ? <FormError message={getApiErrorMessage(remove.error)} /> : null}
     {assume.isError ? <FormError message={getApiErrorMessage(assume.error)} /> : null}{inputError ? <FormError message={inputError} /> : null}
