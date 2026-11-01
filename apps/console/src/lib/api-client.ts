@@ -276,6 +276,22 @@ export class HeteroCloudApiClient {
       this.request<Organization>("/organizations/join", {
         method: "POST", body: { invitation_code: invitationCode },
       }),
+    describeCloudOrganization: (accountId: string, signal?: AbortSignal) =>
+      this.request<import("./api-types").CloudOrganization>(organizationPath(accountId, "organization"), { signal }),
+    tree: (accountId: string, signal?: AbortSignal) =>
+      this.request<import("./api-types").CloudOrganizationTree>(organizationPath(accountId, "organization/tree"), { signal }),
+    createUnit: (accountId: string, input: { name: string; parent_id: string }) =>
+      this.request<void>(organizationPath(accountId, "organization/units"), { method: "POST", body: input }),
+    createMemberAccount: (accountId: string, input: { name: string; slug: string; parent_id: string }) =>
+      this.request<Organization>(organizationPath(accountId, "organization/accounts"), { method: "POST", body: input }),
+    moveMemberAccount: (accountId: string, memberId: string, parentId: string) =>
+      this.request<void>(organizationPath(accountId, `organization/accounts/${encodeURIComponent(memberId)}/parent`), { method: "PUT", body: { parent_id: parentId } }),
+    serviceControlPolicies: (accountId: string, signal?: AbortSignal) =>
+      this.request<import("./api-types").CloudServiceControlPolicies>(organizationPath(accountId, "organization/policies"), { signal }),
+    createServiceControlPolicy: (accountId: string, input: { name: string; document: Record<string, unknown> }) =>
+      this.request<import("./api-types").CloudServiceControlPolicy>(organizationPath(accountId, "organization/policies"), { method: "POST", body: input }),
+    changeServiceControlPolicyAttachment: (accountId: string, policyId: string, targetType: "unit" | "account", targetId: string, attach: boolean) =>
+      this.request<void>(organizationPath(accountId, `organization/policies/${encodeURIComponent(policyId)}/targets/${targetType}/${encodeURIComponent(targetId)}`), { method: attach ? "PUT" : "DELETE" }),
     quotas: (organizationId: string, signal?: AbortSignal) =>
       this.request<OrganizationQuotaOverview>(organizationPath(organizationId, "quotas"), { signal }),
     unassignedQuotaResources: (organizationId: string, signal?: AbortSignal) =>
@@ -383,6 +399,18 @@ export class HeteroCloudApiClient {
   };
 
   readonly iam = {
+    boundaries: {
+      list: (account: string, signal?: AbortSignal) => this.request<CollectionResponse<{ principal_id: string; policy_id: string }> & { enabled: boolean }>(organizationPath(account, "iam/permissions-boundaries"), { signal }),
+      put: (account: string, principal: string, policy: string) => this.request<void>(organizationPath(account, `iam/principals/${encodeURIComponent(principal)}/permissions-boundary`), { method: "PUT", body: { policy_id: policy } }),
+      delete: (account: string, principal: string) => this.request<void>(organizationPath(account, `iam/principals/${encodeURIComponent(principal)}/permissions-boundary`), { method: "DELETE" }),
+    },
+    groups: {
+      list: (account: string, signal?: AbortSignal) => this.request<CollectionResponse<import("./api-types").IamGroup> & { enabled: boolean }>(organizationPath(account, "iam/groups"), { signal }),
+      create: (account: string, name: string) => this.request<{ id: string }>(organizationPath(account, "iam/groups"), { method: "POST", body: { name } }),
+      delete: (account: string, group: string) => this.request<void>(organizationPath(account, `iam/groups/${encodeURIComponent(group)}`), { method: "DELETE" }),
+      member: (account: string, group: string, user: string, add: boolean) => this.request<void>(organizationPath(account, `iam/groups/${encodeURIComponent(group)}/users/${encodeURIComponent(user)}`), { method: add ? "PUT" : "DELETE" }),
+      policy: (account: string, group: string, policy: string, add: boolean) => this.request<void>(organizationPath(account, `iam/groups/${encodeURIComponent(group)}/policies/${encodeURIComponent(policy)}`), { method: add ? "PUT" : "DELETE" }),
+    },
     principals: {
       setEnabled: (organizationId:string,principalId:string,enabled:boolean)=>this.request<void>(organizationPath(organizationId,`iam/principals/${encodeURIComponent(principalId)}`),{method:"PATCH",body:{enabled}}),
       list: (organizationId: string, signal?: AbortSignal) =>

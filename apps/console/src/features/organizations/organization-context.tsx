@@ -73,8 +73,8 @@ export function OrganizationProvider({ children }: { children?: ReactNode }) {
     return (
       <div className="auth-page">
         <ErrorState
-          title="所属組織がありません"
-          description="このアカウントには利用可能な組織メンバーシップがありません。管理者へ確認してください。"
+          title="利用可能なアカウントがありません"
+          description="アカウント管理者へ確認してください。"
         />
       </div>
     );

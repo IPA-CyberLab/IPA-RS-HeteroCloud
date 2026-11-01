@@ -74,7 +74,8 @@ LiveKit API secrets, or TURN shared secrets.
 
 ## IAM
 
-Policy documents use a deliberately small initial language:
+Identity policies use HeteroCloud action names and resource identifiers. The
+existing JSON format is retained for clients:
 
 ```json
 {
@@ -98,16 +99,29 @@ action against that exact instance resource. The management API verifies the
 browser session and origin, then proxies a WebSocket using a 60-second,
 instance-scoped provider JWT. Kubernetes credentials never reach the browser.
 
-Only exact matches and terminal-prefix wildcards are accepted. Unknown fields,
-middle wildcards, unknown policy versions, empty statements, and oversized
-documents are rejected. Organization owners are a database membership role;
-all other principals require an applicable policy.
+The supported AWS identity-policy JSON subset accepts `Version`, `Statement`,
+`Sid`, `Effect`, `Action`/`NotAction`, and `Resource`/`NotResource`, including
+single values and arrays. `*` and `?` are supported throughout patterns;
+action matching is case insensitive and resource matching is case sensitive.
+Conditions, principals, resource policies, and unsupported fields are rejected
+rather than ignored. AWS ARN and AWS service API compatibility are not implied;
+the currently evaluated resources remain HeteroCloud identifiers.
 
-The Lean kernel consumes the three security facts emitted by matching:
+Identity policies attached directly or through groups are combined. Account
+administrators receive an implicit administrator allow, while an explicit deny
+still overrides that allow. The management organization has a root, optional
+OUs, and account members. SCPs limit member accounts at every ancestor level;
+they do not grant permissions and do not restrict the management account. The
+optional permissions boundary intersects with identity-based permissions. The
+deployment activation procedure and current scope are documented in
+[AWS-style accounts and IAM](aws-account-iam.md).
+
+The existing Lean kernel consumes the three security facts emitted by matching:
 `sameOrganization`, `applicableAllow`, and `applicableDeny`. It proves
 cross-organization denial, explicit-deny precedence, default denial, and that
 an allow implies every guard. The SHA-256 digest of that source is recorded
-with admitted policies and audit decisions.
+with admitted policies and audit decisions. It does not prove the group lookup,
+wildcard matcher, AWS JSON parser, or SCP hierarchy implementation.
 
 ## Availability
 

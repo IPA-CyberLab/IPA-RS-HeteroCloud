@@ -319,6 +319,36 @@ export interface Organization {
   created_at: string;
 }
 
+export interface CloudOrganization {
+  id: string;
+  name: string;
+  management_account_id: string;
+  management_account_number: string;
+  root_id: string;
+  current_account_id: string;
+  current_account_number: string;
+}
+
+export interface CloudOrganizationTree {
+  organization: CloudOrganization;
+  units: { id: string; parent_id: string | null; name: string; created_at: string }[];
+  accounts: { id: string; account_number: string; name: string; slug: string; parent_id: string; is_management_account: boolean; created_at: string }[];
+}
+
+export interface CloudServiceControlPolicy {
+  id: string;
+  name: string;
+  document: PolicyDocument;
+  is_managed: boolean;
+  created_at: string;
+}
+
+export interface CloudServiceControlPolicies {
+  enabled: boolean;
+  policies: CloudServiceControlPolicy[];
+  attachments: { target_type: "unit" | "account"; target_id: string; policy_id: string }[];
+}
+
 export interface Project {
   id: string;
   organization_id: string;
@@ -352,8 +382,11 @@ export type PolicyEffect = "Allow" | "Deny";
 
 export interface PolicyStatement {
   effect: PolicyEffect;
+  sid?: string;
   actions: string[];
+  not_actions?: string[];
   resources: string[];
+  not_resources?: string[];
 }
 
 export interface PolicyDocument {
@@ -371,9 +404,17 @@ export interface IamPolicy {
   updated_at: string;
 }
 
+export interface IamGroup {
+  id: string;
+  name: string;
+  created_at: string;
+  members: string[];
+  policies: string[];
+}
+
 export interface CreatePolicyRequest {
   name: string;
-  document: PolicyDocument;
+  document: PolicyDocument | Record<string, unknown>;
 }
 
 export interface CreateBindingRequest {

@@ -14,6 +14,8 @@ import { PageLoading } from "@/components/shared/page-loading";
 import { useActiveOrganization } from "@/features/organizations/organization-context";
 import { api, getApiErrorMessage } from "@/lib/api-client";
 import { iamPoliciesQueryOptions, iamPrincipalsQueryOptions } from "@/lib/queries";
+import { IamGroups } from "@/features/iam/groups";
+import { IamBoundaries } from "@/features/iam/permissions-boundaries";
 
 export function IamBindingsPage() {
   const { activeOrganization } = useActiveOrganization();
@@ -51,9 +53,11 @@ export function IamBindingsPage() {
   return (
     <SpaceBetween size="l">
       <PageHeader
-        title="IAMバインディング"
-        description={`${activeOrganization.organization_name} のプリンシパルへポリシーを割り当てます。`}
+        title="IAMグループと権限"
+        description={`${activeOrganization.organization_name} のユーザーやサービスアカウントにポリシーを割り当てます。`}
       />
+      <IamGroups accountId={organizationId} principals={principals.data.items} policies={policies.data.items} />
+      <IamBoundaries accountId={organizationId} principals={principals.data.items} policies={policies.data.items} />
       <Container header={<Header variant="h2">割り当て済みポリシー</Header>}>
         <SpaceBetween size="m">
           {bindings.isError && <Alert type="error">{getApiErrorMessage(bindings.error)}</Alert>}

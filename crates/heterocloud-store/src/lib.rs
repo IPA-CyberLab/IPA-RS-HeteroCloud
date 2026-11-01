@@ -1,9 +1,16 @@
+mod cloud_organizations;
 mod flash_backups;
 mod flash_operations;
+mod iam_groups;
+pub use cloud_organizations::{
+    CloudAccount, CloudOrganization, CloudOrganizationTree, CloudOrganizationalUnit,
+    CloudScpAttachment, CloudServiceControlPolicy,
+};
 mod organizations;
 pub use flash_operations::{
     BackupPolicyInput, FlashBackupPolicy, FlashEvent, FlashRevision, rollback_spec,
 };
+pub use iam_groups::{IamGroup, IamPermissionsBoundary};
 pub use organizations::{OrganizationMemberQuota, UnassignedQuotaResource};
 mod flash_domains;
 mod workload_identity;
@@ -1562,10 +1569,12 @@ impl Store {
             return Ok(None);
         };
         let policies = sqlx::query_scalar::<_, Value>(
-            "SELECT p.document
-             FROM iam_bindings b
-             JOIN iam_policies p ON p.id = b.policy_id
-             WHERE b.organization_id = $1 AND b.principal_id = $2
+            "SELECT p.document FROM iam_policies p
+             WHERE p.organization_id = $1 AND (
+                EXISTS (SELECT 1 FROM iam_bindings b WHERE b.organization_id = $1 AND b.principal_id = $2 AND b.policy_id = p.id)
+                OR EXISTS (SELECT 1 FROM iam_group_members gm JOIN iam_group_policy_attachments gp
+                    ON gp.organization_id = gm.organization_id AND gp.group_id = gm.group_id
+                    WHERE gm.organization_id = $1 AND gm.principal_id = $2 AND gp.policy_id = p.id))
              ORDER BY p.id",
         )
         .bind(organization_id.0)
@@ -1579,6 +1588,9 @@ impl Store {
             principal_id: PrincipalId(membership.principal_id),
             role: membership.role,
             policies,
+            permissions_boundary: self
+                .permissions_boundary(organization_id, PrincipalId(membership.principal_id))
+                .await?,
         }))
     }
 
@@ -1982,10 +1994,12 @@ impl Store {
             return Ok(None);
         }
         let policies = sqlx::query_scalar::<_, Value>(
-            "SELECT p.document
-             FROM iam_bindings b
-             JOIN iam_policies p ON p.id = b.policy_id
-             WHERE b.organization_id = $1 AND b.principal_id = $2
+            "SELECT p.document FROM iam_policies p
+             WHERE p.organization_id = $1 AND (
+                EXISTS (SELECT 1 FROM iam_bindings b WHERE b.organization_id = $1 AND b.principal_id = $2 AND b.policy_id = p.id)
+                OR EXISTS (SELECT 1 FROM iam_group_members gm JOIN iam_group_policy_attachments gp
+                    ON gp.organization_id = gm.organization_id AND gp.group_id = gm.group_id
+                    WHERE gm.organization_id = $1 AND gm.principal_id = $2 AND gp.policy_id = p.id))
              ORDER BY p.id",
         )
         .bind(organization_id.0)
@@ -1999,6 +2013,9 @@ impl Store {
             principal_id,
             role: "service_account".into(),
             policies,
+            permissions_boundary: self
+                .permissions_boundary(organization_id, principal_id)
+                .await?,
         }))
     }
 
@@ -5003,6 +5020,7 @@ pub struct AuthorizationContext {
     pub principal_id: PrincipalId,
     pub role: String,
     pub policies: Vec<PolicyDocument>,
+    pub permissions_boundary: Option<PolicyDocument>,
 }
 
 #[derive(Clone, Debug)]

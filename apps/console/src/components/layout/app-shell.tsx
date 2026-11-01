@@ -133,7 +133,7 @@ export function AppShell() {
     type: "menu-dropdown",
     text: activeOrganization.organization_name,
     iconName: "folder",
-    ariaLabel: "操作対象の組織",
+    ariaLabel: "操作対象のアカウント",
     items: memberships.map((membership) => ({
       id: `organization:${membership.organization_id}`,
       text: membership.organization_name,

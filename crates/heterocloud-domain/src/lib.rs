@@ -134,8 +134,16 @@ pub enum PolicyEffect {
 #[serde(deny_unknown_fields)]
 pub struct PolicyStatement {
     pub effect: PolicyEffect,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sid: Option<String>,
+    #[serde(default)]
     pub actions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub not_actions: Vec<String>,
+    #[serde(default)]
     pub resources: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub not_resources: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -156,34 +164,115 @@ impl PolicyDocument {
             ));
         }
         for statement in &self.statements {
-            if statement.actions.is_empty()
+            if statement.actions.is_empty() == statement.not_actions.is_empty()
+                || statement.resources.is_empty() == statement.not_resources.is_empty()
                 || statement.actions.len() > 128
-                || statement.resources.is_empty()
+                || statement.not_actions.len() > 128
                 || statement.resources.len() > 128
+                || statement.not_resources.len() > 128
             {
                 return Err(DomainError::InvalidPolicy(
-                    "each statement requires 1..128 actions and resources".into(),
+                    "each statement requires exactly one of Action/NotAction and Resource/NotResource (1..128 values each)".into(),
                 ));
             }
-            for pattern in statement.actions.iter().chain(&statement.resources) {
+            for pattern in statement
+                .actions
+                .iter()
+                .chain(&statement.not_actions)
+                .chain(&statement.resources)
+                .chain(&statement.not_resources)
+            {
                 validate_pattern(pattern)?;
             }
         }
         Ok(())
     }
+
+    /// Accept the supported identity-policy subset of the AWS JSON grammar.
+    /// Unknown fields, including conditions and resource-policy principals,
+    /// are rejected instead of being silently ignored.
+    pub fn from_aws_json(value: Value) -> Result<Self, DomainError> {
+        let aws: AwsPolicy = serde_json::from_value(value).map_err(|error| {
+            DomainError::InvalidPolicy(format!("unsupported AWS policy: {error}"))
+        })?;
+        if let Some(version) = aws.version.as_deref()
+            && version != "2012-10-17"
+            && version != "2008-10-17"
+        {
+            return Err(DomainError::UnsupportedPolicyVersion(version.into()));
+        }
+        let document = Self {
+            version: POLICY_VERSION.into(),
+            statements: aws
+                .statements
+                .into_vec()
+                .into_iter()
+                .map(|statement| PolicyStatement {
+                    effect: statement.effect,
+                    sid: statement.sid,
+                    actions: statement.actions.map_or_else(Vec::new, OneOrMany::into_vec),
+                    not_actions: statement
+                        .not_actions
+                        .map_or_else(Vec::new, OneOrMany::into_vec),
+                    resources: statement
+                        .resources
+                        .map_or_else(Vec::new, OneOrMany::into_vec),
+                    not_resources: statement
+                        .not_resources
+                        .map_or_else(Vec::new, OneOrMany::into_vec),
+                })
+                .collect(),
+        };
+        document.validate()?;
+        Ok(document)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum OneOrMany<T> {
+    One(T),
+    Many(Vec<T>),
+}
+impl<T> OneOrMany<T> {
+    fn into_vec(self) -> Vec<T> {
+        match self {
+            Self::One(value) => vec![value],
+            Self::Many(values) => values,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AwsPolicy {
+    #[serde(rename = "Version")]
+    version: Option<String>,
+    #[serde(rename = "Statement")]
+    statements: OneOrMany<AwsPolicyStatement>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AwsPolicyStatement {
+    #[serde(rename = "Sid")]
+    sid: Option<String>,
+    #[serde(rename = "Effect")]
+    effect: PolicyEffect,
+    #[serde(rename = "Action")]
+    actions: Option<OneOrMany<String>>,
+    #[serde(rename = "NotAction")]
+    not_actions: Option<OneOrMany<String>>,
+    #[serde(rename = "Resource")]
+    resources: Option<OneOrMany<String>>,
+    #[serde(rename = "NotResource")]
+    not_resources: Option<OneOrMany<String>>,
 }
 
 fn validate_pattern(pattern: &str) -> Result<(), DomainError> {
     if pattern.is_empty() || pattern.len() > 512 || pattern.chars().any(char::is_whitespace) {
         return Err(DomainError::InvalidPolicy(
             "policy patterns must be 1..512 non-whitespace characters".into(),
-        ));
-    }
-    if let Some(index) = pattern.find('*')
-        && index + 1 != pattern.len()
-    {
-        return Err(DomainError::InvalidPolicy(
-            "wildcards are supported only as a terminal suffix".into(),
         ));
     }
     Ok(())
@@ -2026,16 +2115,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_middle_wildcards() {
+    fn supports_middle_wildcards() {
         let document = PolicyDocument {
             version: POLICY_VERSION.into(),
             statements: vec![PolicyStatement {
                 effect: PolicyEffect::Allow,
+                sid: None,
                 actions: vec!["project:*:read".into()],
+                not_actions: vec![],
                 resources: vec!["hc:org:*".into()],
+                not_resources: vec![],
             }],
         };
 
-        assert!(document.validate().is_err());
+        assert!(document.validate().is_ok());
     }
 }

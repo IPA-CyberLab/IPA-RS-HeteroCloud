@@ -1150,6 +1150,7 @@ version = "0.1.110"
 dependencies = [
  "heterocloud-domain",
  "serde",
+ "serde_json",
  "sha2 0.10.9",
  "thiserror",
 ]
@@ -1173,6 +1174,7 @@ version = "0.1.110"
 dependencies = [
  "chrono",
  "heterocloud-domain",
+ "heterocloud-iam",
  "serde",
  "serde_json",
  "sqlx",

@@ -68,14 +68,28 @@ pub fn authorize(
     for policy in policies {
         policy.validate()?;
         for statement in &policy.statements {
-            let action_matches = statement
-                .actions
-                .iter()
-                .any(|pattern| pattern_matches(pattern, request.action));
-            let resource_matches = statement
-                .resources
-                .iter()
-                .any(|pattern| pattern_matches(pattern, request.resource));
+            let action_matches = if statement.not_actions.is_empty() {
+                statement
+                    .actions
+                    .iter()
+                    .any(|pattern| action_pattern_matches(pattern, request.action))
+            } else {
+                !statement
+                    .not_actions
+                    .iter()
+                    .any(|pattern| action_pattern_matches(pattern, request.action))
+            };
+            let resource_matches = if statement.not_resources.is_empty() {
+                statement
+                    .resources
+                    .iter()
+                    .any(|pattern| pattern_matches(pattern, request.resource))
+            } else {
+                !statement
+                    .not_resources
+                    .iter()
+                    .any(|pattern| pattern_matches(pattern, request.resource))
+            };
             if !action_matches || !resource_matches {
                 continue;
             }
@@ -111,11 +125,113 @@ pub fn authorize(
     })
 }
 
-fn pattern_matches(pattern: &str, value: &str) -> bool {
-    match pattern.strip_suffix('*') {
-        Some(prefix) => value.starts_with(prefix),
-        None => pattern == value,
+/// An account administrator has an implicit administrator policy, but an
+/// explicit deny in an attached policy must still take precedence. This is
+/// different from an account root identity, which this service does not model.
+pub fn authorize_with_administrator(
+    request: &AuthorizationRequest<'_>,
+    policies: &[PolicyDocument],
+    administrator: bool,
+) -> Result<Evaluation, IamError> {
+    let mut evaluation = authorize(request, policies)?;
+    if administrator && evaluation.reason == "default_deny" {
+        evaluation.decision = Decision::Allow;
+        evaluation.applicable_allow = true;
+        evaluation.reason = "administrator_allow";
     }
+    Ok(evaluation)
+}
+
+/// SCPs do not grant permissions. Every level must allow the request and an
+/// explicit deny at any level takes precedence over identity permissions.
+pub fn enforce_service_control_policies(
+    request: &AuthorizationRequest<'_>,
+    identity: Evaluation,
+    levels: &[Vec<PolicyDocument>],
+) -> Result<Evaluation, IamError> {
+    if identity.decision == Decision::Deny {
+        return Ok(identity);
+    }
+    let mut no_allow = false;
+    for policies in levels {
+        let evaluation = authorize(request, policies)?;
+        if evaluation.applicable_deny {
+            return Ok(Evaluation {
+                decision: Decision::Deny,
+                applicable_allow: identity.applicable_allow,
+                applicable_deny: true,
+                reason: "scp_explicit_deny",
+            });
+        }
+        no_allow |= evaluation.decision == Decision::Deny;
+    }
+    if no_allow {
+        return Ok(Evaluation {
+            decision: Decision::Deny,
+            applicable_allow: identity.applicable_allow,
+            applicable_deny: false,
+            reason: "scp_no_allow",
+        });
+    }
+    Ok(identity)
+}
+
+/// A permissions boundary limits identity-based grants; it is not a grant by itself.
+pub fn enforce_permissions_boundary(
+    request: &AuthorizationRequest<'_>,
+    identity: Evaluation,
+    boundary: Option<&PolicyDocument>,
+) -> Result<Evaluation, IamError> {
+    let Some(boundary) = boundary else {
+        return Ok(identity);
+    };
+    if identity.decision == Decision::Deny {
+        return Ok(identity);
+    }
+    let evaluation = authorize(request, std::slice::from_ref(boundary))?;
+    if evaluation.decision == Decision::Deny {
+        return Ok(Evaluation {
+            decision: Decision::Deny,
+            applicable_allow: identity.applicable_allow,
+            applicable_deny: evaluation.applicable_deny,
+            reason: if evaluation.applicable_deny {
+                "permissions_boundary_explicit_deny"
+            } else {
+                "permissions_boundary_no_allow"
+            },
+        });
+    }
+    Ok(identity)
+}
+
+fn pattern_matches(pattern: &str, value: &str) -> bool {
+    let pattern: Vec<char> = pattern.chars().collect();
+    let value: Vec<char> = value.chars().collect();
+    let (mut p, mut v, mut star, mut retry) = (0, 0, None, 0);
+    while v < value.len() {
+        if p < pattern.len() && (pattern[p] == '?' || pattern[p] == value[v]) {
+            p += 1;
+            v += 1;
+        } else if p < pattern.len() && pattern[p] == '*' {
+            star = Some(p);
+            p += 1;
+            retry = v;
+        } else if let Some(index) = star {
+            retry += 1;
+            v = retry;
+            p = index + 1;
+        } else {
+            return false;
+        }
+    }
+    while p < pattern.len() && pattern[p] == '*' {
+        p += 1;
+    }
+    p == pattern.len()
+}
+
+fn action_pattern_matches(pattern: &str, value: &str) -> bool {
+    pattern_matches(&pattern.to_ascii_lowercase(), &value.to_ascii_lowercase())
 }
 
 #[derive(Debug, Error)]
@@ -130,15 +246,21 @@ mod tests {
         OrganizationId, POLICY_VERSION, PolicyDocument, PolicyEffect, PolicyStatement,
     };
 
-    use super::{AuthorizationRequest, Decision, authorize, decide};
+    use super::{
+        AuthorizationRequest, Decision, authorize, authorize_with_administrator, decide,
+        enforce_permissions_boundary, enforce_service_control_policies,
+    };
 
     fn policy(effect: PolicyEffect) -> PolicyDocument {
         PolicyDocument {
             version: POLICY_VERSION.into(),
             statements: vec![PolicyStatement {
                 effect,
+                sid: None,
                 actions: vec!["project:*".into()],
+                not_actions: vec![],
                 resources: vec!["hc:org:".into()],
+                not_resources: vec![],
             }],
         }
     }
@@ -184,6 +306,182 @@ mod tests {
     }
 
     #[test]
+    fn explicit_deny_overrides_administrator_policy() -> Result<(), Box<dyn std::error::Error>> {
+        let account = OrganizationId::new();
+        let request = AuthorizationRequest {
+            principal_organization_id: account,
+            resource_organization_id: account,
+            action: "project:read",
+            resource: "hc:org:example:project/demo",
+        };
+        let mut deny = policy(PolicyEffect::Deny);
+        deny.statements[0].resources = vec!["hc:org:*".into()];
+        let allowed = authorize_with_administrator(&request, &[], true)?;
+        assert_eq!(allowed.decision, Decision::Allow);
+        assert_eq!(allowed.reason, "administrator_allow");
+        let denied = authorize_with_administrator(&request, &[deny], true)?;
+        assert_eq!(denied.decision, Decision::Deny);
+        assert_eq!(denied.reason, "explicit_deny");
+        let other = AuthorizationRequest {
+            resource_organization_id: OrganizationId::new(),
+            ..request
+        };
+        assert_eq!(
+            authorize_with_administrator(&other, &[], true)?.decision,
+            Decision::Deny
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn scp_is_an_intersection_at_every_level_and_never_grants()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let account = OrganizationId::new();
+        let request = AuthorizationRequest {
+            principal_organization_id: account,
+            resource_organization_id: account,
+            action: "project:read",
+            resource: "hc:org:example:project/demo",
+        };
+        let full_access = PolicyDocument::from_aws_json(
+            serde_json::json!({"Statement":{"Effect":"Allow","Action":"*","Resource":"*"}}),
+        )?;
+        let deny = PolicyDocument::from_aws_json(
+            serde_json::json!({"Statement":{"Effect":"Deny","Action":"project:*","Resource":"*"}}),
+        )?;
+        let admin = authorize_with_administrator(&request, &[], true)?;
+        let levels = vec![
+            vec![full_access.clone()],
+            vec![full_access.clone(), deny],
+            vec![full_access.clone()],
+        ];
+        assert_eq!(
+            enforce_service_control_policies(&request, admin.clone(), &levels)?.reason,
+            "scp_explicit_deny"
+        );
+        assert_eq!(
+            enforce_service_control_policies(
+                &request,
+                admin.clone(),
+                &[vec![full_access.clone()], vec![]]
+            )?
+            .reason,
+            "scp_no_allow"
+        );
+        assert_eq!(
+            enforce_service_control_policies(
+                &request,
+                admin.clone(),
+                &[vec![], levels[1].clone()]
+            )?
+            .reason,
+            "scp_explicit_deny"
+        );
+        assert_eq!(
+            enforce_service_control_policies(&request, admin, &[])?.decision,
+            Decision::Allow
+        );
+        let no_identity_allow = authorize(&request, &[])?;
+        assert_eq!(
+            enforce_service_control_policies(&request, no_identity_allow, &[vec![full_access]])?
+                .decision,
+            Decision::Deny
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn permissions_boundary_caps_administrators_without_granting_access()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let account = OrganizationId::new();
+        let request = AuthorizationRequest {
+            principal_organization_id: account,
+            resource_organization_id: account,
+            action: "project:read",
+            resource: "hc:org:example:project/demo",
+        };
+        let allow = PolicyDocument::from_aws_json(
+            serde_json::json!({"Statement":{"Effect":"Allow","Action":"project:read","Resource":"*"}}),
+        )?;
+        let other = PolicyDocument::from_aws_json(
+            serde_json::json!({"Statement":{"Effect":"Allow","Action":"project:write","Resource":"*"}}),
+        )?;
+        let deny = PolicyDocument::from_aws_json(
+            serde_json::json!({"Statement":{"Effect":"Deny","Action":"project:read","Resource":"*"}}),
+        )?;
+        let admin = authorize_with_administrator(&request, &[], true)?;
+        assert_eq!(
+            enforce_permissions_boundary(&request, admin.clone(), Some(&allow))?.decision,
+            Decision::Allow
+        );
+        assert_eq!(
+            enforce_permissions_boundary(&request, admin.clone(), Some(&other))?.reason,
+            "permissions_boundary_no_allow"
+        );
+        assert_eq!(
+            enforce_permissions_boundary(&request, admin, Some(&deny))?.reason,
+            "permissions_boundary_explicit_deny"
+        );
+        assert_eq!(
+            enforce_permissions_boundary(&request, authorize(&request, &[])?, Some(&allow))?
+                .decision,
+            Decision::Deny
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn aws_identity_policy_supports_not_and_wildcard_semantics()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let policy = PolicyDocument::from_aws_json(serde_json::json!({
+            "Version": "2012-10-17",
+            "Statement": [
+                {"Effect": "Allow", "Action": "PROJECT:GET*", "Resource": "hc:org:*:project/te?t"},
+                {"Effect": "Deny", "NotAction": "project:GetSafe", "NotResource": "hc:org:*:project/test"}
+            ]
+        }))?;
+        let account = OrganizationId::new();
+        let request = AuthorizationRequest {
+            principal_organization_id: account,
+            resource_organization_id: account,
+            action: "project:GetThing",
+            resource: "hc:org:one:project/test",
+        };
+        assert_eq!(
+            authorize(&request, std::slice::from_ref(&policy))?.decision,
+            Decision::Allow
+        );
+        let denied = AuthorizationRequest {
+            resource: "hc:org:one:project/text",
+            ..request.clone()
+        };
+        assert_eq!(authorize(&denied, &[policy])?.reason, "explicit_deny");
+        Ok(())
+    }
+
+    #[test]
+    fn aws_unsupported_conditions_and_principals_are_rejected()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for extra in [
+            serde_json::json!({"Condition":{"StringEquals":{"aws:SourceIp":"127.0.0.1"}}}),
+            serde_json::json!({"Principal":"*"}),
+        ] {
+            let mut statement = serde_json::json!({"Effect":"Allow", "Action":"*", "Resource":"*"});
+            statement
+                .as_object_mut()
+                .ok_or("statement is not an object")?
+                .extend(extra.as_object().ok_or("extra is not an object")?.clone());
+            assert!(
+                PolicyDocument::from_aws_json(
+                    serde_json::json!({"Version":"2012-10-17", "Statement":statement})
+                )
+                .is_err()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn tenant_boundary_precedes_policy() -> Result<(), Box<dyn std::error::Error>> {
         let evaluation = authorize(
             &AuthorizationRequest {
@@ -196,8 +494,11 @@ mod tests {
                 version: POLICY_VERSION.into(),
                 statements: vec![PolicyStatement {
                     effect: PolicyEffect::Allow,
+                    sid: None,
                     actions: vec!["*".into()],
+                    not_actions: vec![],
                     resources: vec!["*".into()],
+                    not_resources: vec![],
                 }],
             }],
         )?;

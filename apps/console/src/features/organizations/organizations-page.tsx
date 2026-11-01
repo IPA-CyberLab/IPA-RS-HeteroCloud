@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui";
 import { Box } from "@/components/ui";
-import { Button, FormField, Input, Modal } from "@/components/ui";
+import { Button, FormField, Input, Modal, Select } from "@/components/ui";
 import { SpaceBetween } from "@/components/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { PageLoading } from "@/components/shared/page-loading";
 import { useSession } from "@/features/auth/session";
 import { useActiveOrganization } from "@/features/organizations/organization-context";
+import { ServiceControlPolicies } from "@/features/organizations/service-control-policies";
 import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { Organization } from "@/lib/api-types";
 import { organizationsQueryOptions } from "@/lib/queries";
@@ -20,13 +21,48 @@ import { formatDateTime } from "@/lib/utils";
 export function OrganizationsPage() {
   const organizations = useQuery(organizationsQueryOptions);
   const memberships = useSession().data?.memberships ?? [];
-  const { setActiveOrganizationId } = useActiveOrganization();
+  const { activeOrganization, setActiveOrganizationId } = useActiveOrganization();
+  const accountId = activeOrganization.organization_id;
+  const cloudOrganization = useQuery({
+    queryKey: ["cloud-organization", accountId],
+    queryFn: ({ signal }) => api.organizations.describeCloudOrganization(accountId, signal),
+  });
+  const tree = useQuery({
+    queryKey: ["cloud-organization", accountId, "tree"],
+    queryFn: ({ signal }) => api.organizations.tree(accountId, signal),
+    enabled: cloudOrganization.data?.management_account_id === accountId,
+  });
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [joinOpen, setJoinOpen] = useState(false);
   const [invitationCode, setInvitationCode] = useState("");
+  const [treeModal, setTreeModal] = useState<"account" | "unit" | null>(null);
+  const [treeName, setTreeName] = useState("");
+  const [treeSlug, setTreeSlug] = useState("");
+  const [parentId, setParentId] = useState("");
+  const refreshTree = () => queryClient.invalidateQueries({ queryKey: ["cloud-organization", accountId, "tree"] });
+  const createTreeEntry = useMutation({
+    mutationFn: async () => {
+      const parent = parentId || tree.data?.organization.root_id;
+      if (!parent) throw new Error("親を選択してください。");
+      if (treeModal === "account") {
+        await api.organizations.createMemberAccount(accountId, { name: treeName.trim(), slug: treeSlug, parent_id: parent });
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["auth", "session"] }),
+          queryClient.invalidateQueries({ queryKey: ["organizations"] }),
+        ]);
+      } else {
+        await api.organizations.createUnit(accountId, { name: treeName.trim(), parent_id: parent });
+      }
+    },
+    onSuccess: async () => { await refreshTree(); setTreeModal(null); setTreeName(""); setTreeSlug(""); setParentId(""); },
+  });
+  const moveAccount = useMutation({
+    mutationFn: ({ id, parent }: { id: string; parent: string }) => api.organizations.moveMemberAccount(accountId, id, parent),
+    onSuccess: refreshTree,
+  });
   const valid = name.trim().length > 0 && /^[a-z][a-z0-9-]{1,61}[a-z0-9]$/.test(slug);
   const refreshMemberships = async (organization: Organization) => {
     await Promise.all([
@@ -57,7 +93,7 @@ export function OrganizationsPage() {
     () => [
       {
         accessorKey: "name",
-        header: "組織",
+        header: "アカウント",
         cell: ({ row }) => (
           <SpaceBetween size="xxs">
             <Box fontWeight="bold">{row.original.name}</Box>
@@ -87,8 +123,13 @@ export function OrganizationsPage() {
       },
       {
         accessorKey: "id",
-        header: "組織ID",
+        header: "内部ID",
         cell: ({ getValue }) => <Box variant="code">{getValue<string>()}</Box>,
+      },
+      {
+        id: "switch",
+        header: "操作",
+        cell: ({ row }) => <Button disabled={row.original.id === accountId} onClick={() => setActiveOrganizationId(row.original.id)}>{row.original.id === accountId ? "選択中" : "切り替え"}</Button>,
       },
       {
         accessorKey: "created_at",
@@ -96,7 +137,7 @@ export function OrganizationsPage() {
         cell: ({ getValue }) => formatDateTime(getValue<string>()),
       },
     ],
-    [memberships],
+    [memberships, accountId, setActiveOrganizationId],
   );
 
   if (organizations.isPending) return <PageLoading label="組織を読み込んでいます" />;
@@ -112,28 +153,66 @@ export function OrganizationsPage() {
   return (
     <SpaceBetween size="l">
       <PageHeader
-        title="組織"
-        description="参加しているテナント境界とメンバーシップを確認します。"
+        title="アカウントと組織"
+        description="アカウントはサービスや上限の分離単位です。組織は管理アカウントとメンバーアカウントをまとめます。"
         actions={<SpaceBetween direction="horizontal" size="xs">
           <Button onClick={() => { joinOrganization.reset(); setJoinOpen(true); }}>招待コードで参加</Button>
           <Button variant="primary" iconName="add-plus" onClick={() => {
             createOrganization.reset();
             setOpen(true);
-          }}>組織を作成</Button>
+          }}>新しい組織を作成</Button>
         </SpaceBetween>}
       />
       <DataTable
         columns={columns}
         data={organizations.data.items}
         getRowId={(organization) => organization.id}
-        searchPlaceholder="組織名、組織ID、メンバーシップで検索"
-        emptyTitle="組織がありません"
-        emptyDescription="有効な招待コードで登録すると、参加先の組織が表示されます。"
+        searchPlaceholder="アカウント名、ID、メンバーシップで検索"
+        emptyTitle="アカウントがありません"
+        emptyDescription="有効な招待コードで参加すると、アカウントが表示されます。"
       />
+      {cloudOrganization.data ? <section className="card bg-base-100 border border-base-300 p-5">
+        <SpaceBetween size="m">
+          <div><h2 className="text-lg font-semibold">組織: {cloudOrganization.data.name}</h2>
+            <p>このアカウント: {cloudOrganization.data.current_account_number} / 管理アカウント: {cloudOrganization.data.management_account_number}</p></div>
+          {cloudOrganization.data.management_account_id !== accountId ? <p>組織全体の管理は管理アカウントから行います。</p> : <>
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button onClick={() => { createTreeEntry.reset(); setTreeModal("unit"); }}>OUを作成</Button>
+              <Button variant="primary" onClick={() => { createTreeEntry.reset(); setTreeModal("account"); }}>メンバーアカウントを作成</Button>
+            </SpaceBetween>
+            {tree.isError ? <FormError message={getApiErrorMessage(tree.error)} /> : null}
+            {tree.isPending ? <p>組織を読み込んでいます...</p> : null}
+            {tree.data ? <>
+              <div><h3 className="font-semibold">組織単位</h3>
+                <ul className="list-disc pl-5">{tree.data.units.map((unit) => <li key={unit.id}>{unit.name}{unit.parent_id ? `（親: ${tree.data?.units.find((parent) => parent.id === unit.parent_id)?.name ?? "-"}）` : "（ルート）"}</li>)}</ul>
+              </div>
+              <div className="overflow-x-auto"><table className="table"><thead><tr><th>アカウント</th><th>アカウントID</th><th>組織単位</th></tr></thead>
+                <tbody>{tree.data.accounts.map((account) => <tr key={account.id}><td>{account.name}{account.is_management_account ? "（管理）" : ""}</td><td>{account.account_number}</td><td>
+                  {account.is_management_account ? "Root" : <Select selectedOption={{ value: account.parent_id, label: tree.data?.units.find((unit) => unit.id === account.parent_id)?.name ?? "-" }}
+                    options={tree.data?.units.map((unit) => ({ value: unit.id, label: unit.parent_id ? unit.name : "Root" })) ?? []}
+                    onChange={({ detail }) => { if (detail.selectedOption.value) moveAccount.mutate({ id: account.id, parent: detail.selectedOption.value }); }} />}
+                </td></tr>)}</tbody></table></div>
+              {moveAccount.isError ? <FormError message={getApiErrorMessage(moveAccount.error)} /> : null}
+            </> : null}
+          </>}
+        </SpaceBetween>
+      </section> : cloudOrganization.isError ? <FormError message={getApiErrorMessage(cloudOrganization.error)} /> : null}
+      {tree.data && cloudOrganization.data?.management_account_id === accountId ? <ServiceControlPolicies accountId={accountId} tree={tree.data} /> : null}
+      <Modal visible={treeModal !== null} onDismiss={() => setTreeModal(null)} header={treeModal === "account" ? "メンバーアカウントを作成" : "組織単位を作成"}
+        footer={<Box float="right"><SpaceBetween direction="horizontal" size="xs"><Button onClick={() => setTreeModal(null)}>キャンセル</Button>
+          <Button variant="primary" loading={createTreeEntry.isPending} disabled={!treeName.trim() || (treeModal === "account" && !/^[a-z][a-z0-9-]{1,61}[a-z0-9]$/.test(treeSlug))} onClick={() => createTreeEntry.mutate()}>作成</Button></SpaceBetween></Box>}>
+        <SpaceBetween size="m">
+          <FormField label="名前"><Input value={treeName} onChange={({ detail }) => setTreeName(detail.value)} /></FormField>
+          {treeModal === "account" ? <FormField label="アカウントの識別子" description="英小文字・数字・ハイフン、3〜63文字。"><Input value={treeSlug} onChange={({ detail }) => setTreeSlug(detail.value)} /></FormField> : null}
+          <FormField label="親の組織単位"><Select selectedOption={{ value: parentId || tree.data?.organization.root_id, label: tree.data?.units.find((unit) => unit.id === (parentId || tree.data?.organization.root_id))?.name ?? "Root" }}
+            options={tree.data?.units.map((unit) => ({ value: unit.id, label: unit.parent_id ? unit.name : "Root" })) ?? []} onChange={({ detail }) => setParentId(detail.selectedOption.value ?? "")} /></FormField>
+          {createTreeEntry.isError ? <FormError message={getApiErrorMessage(createTreeEntry.error)} /> : null}
+        </SpaceBetween>
+      </Modal>
       <Modal
         visible={open}
         onDismiss={() => setOpen(false)}
-        header="組織を作成"
+        header="新しい組織を作成"
         footer={<Box float="right"><SpaceBetween direction="horizontal" size="xs">
           <Button onClick={() => setOpen(false)}>キャンセル</Button>
           <Button variant="primary" disabled={!valid} loading={createOrganization.isPending}
@@ -144,13 +223,13 @@ export function OrganizationsPage() {
       >
         <SpaceBetween size="m">
           {createOrganization.isError ? <FormError message={getApiErrorMessage(createOrganization.error)} /> : null}
-          <FormField label="組織名"><Input value={name} onChange={({ detail }) => setName(detail.value)} /></FormField>
-          <FormField label="組織の識別子" description="英小文字・数字・ハイフン、3〜63文字。">
+          <FormField label="組織と管理アカウントの名前"><Input value={name} onChange={({ detail }) => setName(detail.value)} /></FormField>
+          <FormField label="管理アカウントの識別子" description="英小文字・数字・ハイフン、3〜63文字。">
             <Input value={slug} onChange={({ detail }) => setSlug(detail.value)} />
           </FormField>
         </SpaceBetween>
       </Modal>
-      <Modal visible={joinOpen} onDismiss={() => setJoinOpen(false)} header="組織に参加"
+      <Modal visible={joinOpen} onDismiss={() => setJoinOpen(false)} header="アカウントに参加"
         footer={<Box float="right"><SpaceBetween direction="horizontal" size="xs">
           <Button onClick={() => setJoinOpen(false)}>キャンセル</Button>
           <Button variant="primary" disabled={!invitationCode.trim()} loading={joinOrganization.isPending}

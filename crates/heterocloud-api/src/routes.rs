@@ -33,7 +33,10 @@ use heterocloud_domain::{
     ResourceQuotaLimits, ServiceInstance, ServiceInstanceId, ServiceState, SyouyuQuotaLimits,
     SyouyuSpec, UserId, UserStatus, VpcSpec,
 };
-use heterocloud_iam::{AuthorizationRequest, Decision, authorize, semantics_digest};
+use heterocloud_iam::{
+    AuthorizationRequest, Decision, authorize_with_administrator, enforce_permissions_boundary,
+    enforce_service_control_policies, semantics_digest,
+};
 use heterocloud_store::{
     AuditEvent, AuthorizationContext, CliAccessTokenPrincipal, CliDeviceApprovalOutcome,
     CliDeviceExchangeOutcome, DeveloperCredentialMint, DeveloperCredentialMintOutcome,
@@ -161,6 +164,13 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         )
         .route("/organizations", get(list_organizations).post(create_organization))
         .route("/organizations/join", post(join_organization))
+        .route("/organizations/{organization_id}/organization", get(describe_cloud_organization))
+        .route("/organizations/{organization_id}/organization/tree", get(cloud_organization_tree))
+        .route("/organizations/{organization_id}/organization/units", post(create_cloud_organizational_unit))
+        .route("/organizations/{organization_id}/organization/accounts", post(create_cloud_member_account))
+        .route("/organizations/{organization_id}/organization/accounts/{account_id}/parent", axum::routing::put(move_cloud_member_account))
+        .route("/organizations/{organization_id}/organization/policies", get(list_service_control_policies).post(create_service_control_policy))
+        .route("/organizations/{organization_id}/organization/policies/{policy_id}/targets/{target_type}/{target_id}", axum::routing::put(attach_service_control_policy).delete(detach_service_control_policy))
         .route("/organizations/{organization_id}/quotas", get(organization_quotas))
         .route("/organizations/{organization_id}/quota-unassigned", get(unassigned_quota_resources))
         .route(
@@ -181,6 +191,12 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         )
         .route("/organizations/{organization_id}/iam/principals/{principal_id}", axum::routing::patch(set_service_account_enabled))
         .route("/organizations/{organization_id}/iam/bindings/{binding_id}", axum::routing::delete(delete_iam_binding))
+        .route("/organizations/{organization_id}/iam/groups", get(list_iam_groups).post(create_iam_group))
+        .route("/organizations/{organization_id}/iam/groups/{group_id}", axum::routing::delete(delete_iam_group))
+        .route("/organizations/{organization_id}/iam/groups/{group_id}/users/{principal_id}", axum::routing::put(change_iam_group_member).delete(change_iam_group_member))
+        .route("/organizations/{organization_id}/iam/groups/{group_id}/policies/{policy_id}", axum::routing::put(change_iam_group_policy).delete(change_iam_group_policy))
+        .route("/organizations/{organization_id}/iam/permissions-boundaries", get(list_permissions_boundaries))
+        .route("/organizations/{organization_id}/iam/principals/{principal_id}/permissions-boundary", axum::routing::put(put_permissions_boundary).delete(delete_permissions_boundary))
         .route(
             "/organizations/{organization_id}/iam/principals",
             get(list_principals).post(create_service_account),
@@ -1752,6 +1768,322 @@ async fn list_organizations(
     Ok(Json(json!({ "items": organizations })))
 }
 
+async fn describe_cloud_organization(
+    State(state): State<Arc<AppState>>,
+    Path(account_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account_id),
+        "organizations:DescribeOrganization",
+        &organization_resource(account_id, "organization/*"),
+    )
+    .await?;
+    let organization = state
+        .store
+        .cloud_organization_for_account(OrganizationId(account_id))
+        .await
+        .map_err(ApiError::from_store)?
+        .ok_or(ApiError::NotFound)?;
+    Ok(Json(json!(organization)))
+}
+
+async fn cloud_organization_tree(
+    State(state): State<Arc<AppState>>,
+    Path(account_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account_id),
+        "organizations:ListAccounts",
+        &organization_resource(account_id, "organization/*"),
+    )
+    .await?;
+    let tree = state
+        .store
+        .cloud_organization_tree(OrganizationId(account_id))
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(json!(tree)))
+}
+
+async fn list_service_control_policies(
+    State(state): State<Arc<AppState>>,
+    Path(account_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account_id),
+        "organizations:ListPolicies",
+        &organization_resource(account_id, "organization/*"),
+    )
+    .await?;
+    let (policies, attachments) = state
+        .store
+        .list_service_control_policies(OrganizationId(account_id))
+        .await
+        .map_err(ApiError::from_store)?;
+    let enabled = state
+        .store
+        .service_control_enabled()
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(
+        json!({ "enabled": enabled, "policies": policies, "attachments": attachments }),
+    ))
+}
+
+async fn require_service_control_enabled(state: &AppState) -> Result<(), ApiError> {
+    if !state
+        .store
+        .service_control_enabled()
+        .await
+        .map_err(ApiError::from_store)?
+    {
+        return Err(ApiError::ServiceControlUnavailable);
+    }
+    Ok(())
+}
+
+async fn create_service_control_policy(
+    State(state): State<Arc<AppState>>,
+    Path(account_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<CreatePolicy>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    validate_name(&request.name)?;
+    let policy_size = serde_json::to_string(&request.document)
+        .map_err(|_| ApiError::Internal)?
+        .chars()
+        .count();
+    if policy_size > 10_240 {
+        return Err(ApiError::BadRequest(
+            "Service control policies are limited to 10,240 characters.".into(),
+        ));
+    }
+    let document = parse_policy_document(request.document)?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account_id),
+        "organizations:CreatePolicy",
+        &organization_resource(account_id, "organization/*"),
+    )
+    .await?;
+    require_service_control_enabled(&state).await?;
+    let policy = state
+        .store
+        .create_service_control_policy(OrganizationId(account_id), &request.name, &document)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::CREATED, Json(policy)))
+}
+
+async fn modify_service_control_policy_attachment(
+    state: &AppState,
+    actor: &AuthenticatedActor,
+    account_id: Uuid,
+    policy_id: Uuid,
+    target_type: &str,
+    target_id: Uuid,
+    attach: bool,
+) -> Result<StatusCode, ApiError> {
+    authorize_actor(
+        state,
+        actor,
+        OrganizationId(account_id),
+        if attach {
+            "organizations:AttachPolicy"
+        } else {
+            "organizations:DetachPolicy"
+        },
+        &organization_resource(account_id, "organization/*"),
+    )
+    .await?;
+    require_service_control_enabled(state).await?;
+    state
+        .store
+        .change_service_control_attachment(
+            OrganizationId(account_id),
+            target_type,
+            target_id,
+            policy_id,
+            attach,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn attach_service_control_policy(
+    State(state): State<Arc<AppState>>,
+    Path((account_id, policy_id, target_type, target_id)): Path<(Uuid, Uuid, String, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    modify_service_control_policy_attachment(
+        &state,
+        &actor,
+        account_id,
+        policy_id,
+        &target_type,
+        target_id,
+        true,
+    )
+    .await
+}
+
+async fn detach_service_control_policy(
+    State(state): State<Arc<AppState>>,
+    Path((account_id, policy_id, target_type, target_id)): Path<(Uuid, Uuid, String, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    modify_service_control_policy_attachment(
+        &state,
+        &actor,
+        account_id,
+        policy_id,
+        &target_type,
+        target_id,
+        false,
+    )
+    .await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateOrganizationalUnit {
+    parent_id: Uuid,
+    name: String,
+}
+
+async fn create_cloud_organizational_unit(
+    State(state): State<Arc<AppState>>,
+    Path(account_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<CreateOrganizationalUnit>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    validate_name(&request.name)?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account_id),
+        "organizations:CreateOrganizationalUnit",
+        &organization_resource(account_id, "organization/*"),
+    )
+    .await?;
+    let unit = state
+        .store
+        .create_cloud_organizational_unit(
+            OrganizationId(account_id),
+            request.parent_id,
+            &request.name,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::CREATED, Json(unit)))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateCloudMemberAccount {
+    parent_id: Uuid,
+    name: String,
+    slug: String,
+}
+
+async fn create_cloud_member_account(
+    State(state): State<Arc<AppState>>,
+    Path(account_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<CreateCloudMemberAccount>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    validate_slug(&request.slug)?;
+    validate_name(&request.name)?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account_id),
+        "organizations:CreateAccount",
+        &organization_resource(account_id, "organization/*"),
+    )
+    .await?;
+    let user_id = match &actor {
+        AuthenticatedActor::User(session) => session.user.user.id,
+        AuthenticatedActor::CliToken(token) => token.user.user.id,
+        AuthenticatedActor::Workload(_) | AuthenticatedActor::ApiKey { .. } => {
+            return Err(ApiError::Forbidden);
+        }
+    };
+    let account = state
+        .store
+        .create_cloud_member_account(
+            OrganizationId(account_id),
+            request.parent_id,
+            user_id,
+            &request.slug,
+            &request.name,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::CREATED, Json(account)))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MoveCloudAccount {
+    parent_id: Uuid,
+}
+
+async fn move_cloud_member_account(
+    State(state): State<Arc<AppState>>,
+    Path((management_id, account_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<MoveCloudAccount>,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(management_id),
+        "organizations:MoveAccount",
+        &organization_resource(management_id, "organization/*"),
+    )
+    .await?;
+    state
+        .store
+        .move_cloud_member_account(
+            OrganizationId(management_id),
+            OrganizationId(account_id),
+            request.parent_id,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateOrganization {
@@ -1902,6 +2234,14 @@ async fn organization_quotas(
         .find(|member| member.user_id == user_id)
         .ok_or(ApiError::Forbidden)?;
     if matches!(context.role.as_str(), "owner" | "admin") {
+        authorize_actor(
+            &state,
+            &actor,
+            organization,
+            "identity:ListMemberQuotas",
+            &organization_resource(organization_id, "identity/member-quota/*"),
+        )
+        .await?;
         let tenant = state
             .store
             .list_resource_quota_tenants()
@@ -1914,6 +2254,15 @@ async fn organization_quotas(
             json!({ "organization": tenant, "member": own, "members": members }),
         ))
     } else {
+        authorize_actor_with_implicit_allow(
+            &state,
+            &actor,
+            organization,
+            "identity:GetOwnQuota",
+            &organization_resource(organization_id, &format!("identity/member-quota/{user_id}")),
+            true,
+        )
+        .await?;
         Ok(Json(
             json!({ "organization": null, "member": own, "members": [] }),
         ))
@@ -2095,6 +2444,233 @@ async fn create_project(
     Ok((StatusCode::CREATED, Json(project)))
 }
 
+async fn list_permissions_boundaries(
+    State(state): State<Arc<AppState>>,
+    Path(account): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account),
+        "iam:ListPermissionsBoundaries",
+        &organization_resource(account, "iam/principal/*"),
+    )
+    .await?;
+    let items = state
+        .store
+        .list_permissions_boundaries(OrganizationId(account))
+        .await
+        .map_err(ApiError::from_store)?;
+    let enabled = state
+        .store
+        .service_control_enabled()
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(json!({"items":items,"enabled":enabled})))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PutPermissionsBoundary {
+    policy_id: Uuid,
+}
+
+async fn change_permissions_boundary(
+    state: &AppState,
+    actor: &AuthenticatedActor,
+    account: Uuid,
+    principal: Uuid,
+    policy: Option<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    authorize_actor(
+        state,
+        actor,
+        OrganizationId(account),
+        if policy.is_some() {
+            "iam:PutPermissionsBoundary"
+        } else {
+            "iam:DeletePermissionsBoundary"
+        },
+        &organization_resource(account, &format!("iam/principal/{principal}")),
+    )
+    .await?;
+    require_service_control_enabled(state).await?;
+    state
+        .store
+        .set_permissions_boundary(OrganizationId(account), PrincipalId(principal), policy)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn put_permissions_boundary(
+    State(state): State<Arc<AppState>>,
+    Path((account, principal)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(input): Json<PutPermissionsBoundary>,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    change_permissions_boundary(&state, &actor, account, principal, Some(input.policy_id)).await
+}
+
+async fn delete_permissions_boundary(
+    State(state): State<Arc<AppState>>,
+    Path((account, principal)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    change_permissions_boundary(&state, &actor, account, principal, None).await
+}
+
+async fn list_iam_groups(
+    State(state): State<Arc<AppState>>,
+    Path(account): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account),
+        "iam:ListGroups",
+        &organization_resource(account, "iam/group/*"),
+    )
+    .await?;
+    let items = state
+        .store
+        .list_iam_groups(OrganizationId(account))
+        .await
+        .map_err(ApiError::from_store)?;
+    let enabled = state
+        .store
+        .service_control_enabled()
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(json!({ "items": items, "enabled": enabled })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateIamGroup {
+    name: String,
+}
+
+async fn create_iam_group(
+    State(state): State<Arc<AppState>>,
+    Path(account): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(input): Json<CreateIamGroup>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    validate_name(&input.name)?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account),
+        "iam:CreateGroup",
+        &organization_resource(account, "iam/group/*"),
+    )
+    .await?;
+    require_service_control_enabled(&state).await?;
+    let id = state
+        .store
+        .create_iam_group(OrganizationId(account), &input.name)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok((StatusCode::CREATED, Json(json!({"id":id}))))
+}
+
+async fn delete_iam_group(
+    State(state): State<Arc<AppState>>,
+    Path((account, group)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account),
+        "iam:DeleteGroup",
+        &organization_resource(account, &format!("iam/group/{group}")),
+    )
+    .await?;
+    require_service_control_enabled(&state).await?;
+    state
+        .store
+        .delete_iam_group(OrganizationId(account), group)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn change_iam_group_member(
+    State(state): State<Arc<AppState>>,
+    Path((account, group, principal)): Path<(Uuid, Uuid, Uuid)>,
+    method: axum::http::Method,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let add = method == axum::http::Method::PUT;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account),
+        if add {
+            "iam:AddUserToGroup"
+        } else {
+            "iam:RemoveUserFromGroup"
+        },
+        &organization_resource(account, &format!("iam/group/{group}")),
+    )
+    .await?;
+    require_service_control_enabled(&state).await?;
+    state
+        .store
+        .change_iam_group_member(OrganizationId(account), group, principal, add)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn change_iam_group_policy(
+    State(state): State<Arc<AppState>>,
+    Path((account, group, policy)): Path<(Uuid, Uuid, Uuid)>,
+    method: axum::http::Method,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let attach = method == axum::http::Method::PUT;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account),
+        if attach {
+            "iam:AttachGroupPolicy"
+        } else {
+            "iam:DetachGroupPolicy"
+        },
+        &organization_resource(account, &format!("iam/group/{group}")),
+    )
+    .await?;
+    require_service_control_enabled(&state).await?;
+    state
+        .store
+        .change_iam_group_policy(OrganizationId(account), group, policy, attach)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn list_principals(
     State(state): State<Arc<AppState>>,
     Path(organization_id): Path<Uuid>,
@@ -2177,7 +2753,21 @@ async fn list_policies(
 #[serde(deny_unknown_fields)]
 struct CreatePolicy {
     name: String,
-    document: PolicyDocument,
+    document: Value,
+}
+
+fn parse_policy_document(value: Value) -> Result<PolicyDocument, ApiError> {
+    let document = if value.get("Statement").is_some() {
+        PolicyDocument::from_aws_json(value)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?
+    } else {
+        serde_json::from_value::<PolicyDocument>(value)
+            .map_err(|error| ApiError::BadRequest(format!("Invalid policy: {error}")))?
+    };
+    document
+        .validate()
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(document)
 }
 
 async fn create_policy(
@@ -2189,10 +2779,7 @@ async fn create_policy(
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     validate_name(&request.name)?;
-    request
-        .document
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let document = parse_policy_document(request.document)?;
     authorize_actor(
         &state,
         &actor,
@@ -2206,7 +2793,7 @@ async fn create_policy(
         .create_policy(
             OrganizationId(organization_id),
             &request.name,
-            &request.document,
+            &document,
             &semantics_digest(),
         )
         .await
@@ -5630,6 +6217,43 @@ async fn authenticated_actor_mutation(
     Ok(actor)
 }
 
+async fn evaluate_account_permissions(
+    state: &AppState,
+    context: &AuthorizationContext,
+    organization_id: OrganizationId,
+    action: &str,
+    resource: &str,
+    implicit_allow: bool,
+) -> Result<heterocloud_iam::Evaluation, ApiError> {
+    let request = AuthorizationRequest {
+        principal_organization_id: organization_id,
+        resource_organization_id: organization_id,
+        action,
+        resource,
+    };
+    let mut identity = authorize_with_administrator(
+        &request,
+        &context.policies,
+        implicit_allow || matches!(context.role.as_str(), "owner" | "admin"),
+    )
+    .map_err(|_| ApiError::Internal)?;
+    if implicit_allow
+        && !matches!(context.role.as_str(), "owner" | "admin")
+        && identity.reason == "administrator_allow"
+    {
+        identity.reason = "self_service_allow";
+    }
+    let identity =
+        enforce_permissions_boundary(&request, identity, context.permissions_boundary.as_ref())
+            .map_err(|_| ApiError::Internal)?;
+    let levels = state
+        .store
+        .service_control_levels(organization_id)
+        .await
+        .map_err(ApiError::from_store)?;
+    enforce_service_control_policies(&request, identity, &levels).map_err(|_| ApiError::Internal)
+}
+
 async fn authorize_organization(
     state: &AppState,
     session: &SessionUser,
@@ -5643,21 +6267,10 @@ async fn authorize_organization(
         .await
         .map_err(ApiError::from_store)?
         .ok_or(ApiError::Forbidden)?;
-    let (decision, reason) = if matches!(context.role.as_str(), "owner" | "admin") {
-        (Decision::Allow, "organization_administrator")
-    } else {
-        let evaluation = authorize(
-            &AuthorizationRequest {
-                principal_organization_id: organization_id,
-                resource_organization_id: organization_id,
-                action,
-                resource,
-            },
-            &context.policies,
-        )
-        .map_err(|_| ApiError::Internal)?;
-        (evaluation.decision, evaluation.reason)
-    };
+    let evaluation =
+        evaluate_account_permissions(state, &context, organization_id, action, resource, false)
+            .await?;
+    let (decision, reason) = (evaluation.decision, evaluation.reason);
     let request_id = Uuid::now_v7().to_string();
     state
         .store
@@ -5690,6 +6303,18 @@ async fn authorize_actor(
     organization_id: OrganizationId,
     action: &str,
     resource: &str,
+) -> Result<AuthorizationContext, ApiError> {
+    authorize_actor_with_implicit_allow(state, actor, organization_id, action, resource, false)
+        .await
+}
+
+async fn authorize_actor_with_implicit_allow(
+    state: &AppState,
+    actor: &AuthenticatedActor,
+    organization_id: OrganizationId,
+    action: &str,
+    resource: &str,
+    implicit_allow: bool,
 ) -> Result<AuthorizationContext, ApiError> {
     let (context, user_id, metadata) = match actor {
         AuthenticatedActor::User(session) => {
@@ -5761,21 +6386,16 @@ async fn authorize_actor(
             )
         }
     };
-    let (decision, reason) = if matches!(context.role.as_str(), "owner" | "admin") {
-        (Decision::Allow, "organization_administrator")
-    } else {
-        let evaluation = authorize(
-            &AuthorizationRequest {
-                principal_organization_id: organization_id,
-                resource_organization_id: organization_id,
-                action,
-                resource,
-            },
-            &context.policies,
-        )
-        .map_err(|_| ApiError::Internal)?;
-        (evaluation.decision, evaluation.reason)
-    };
+    let evaluation = evaluate_account_permissions(
+        state,
+        &context,
+        organization_id,
+        action,
+        resource,
+        implicit_allow,
+    )
+    .await?;
+    let (decision, reason) = (evaluation.decision, evaluation.reason);
     let request_id = Uuid::now_v7().to_string();
     state
         .store

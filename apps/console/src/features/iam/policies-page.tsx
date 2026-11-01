@@ -8,6 +8,7 @@ import { Modal } from "@/components/ui";
 import { Select } from "@/components/ui";
 import { SpaceBetween } from "@/components/ui";
 import { TagInput } from "@/components/ui";
+import { Textarea } from "@/components/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo, useState } from "react";
@@ -39,6 +40,9 @@ export function IamPoliciesPage() {
   const [effect, setEffect] = useState<PolicyEffect>("Allow");
   const [actions, setActions] = useState("");
   const [resources, setResources] = useState("");
+  const [mode, setMode] = useState<"visual" | "json">("visual");
+  const [policyJson, setPolicyJson] = useState(JSON.stringify({ Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: ["flash:ListInstances"], Resource: "*" }] }, null, 2));
+  const [jsonError, setJsonError] = useState("");
   const createPolicy = useMutation({
     mutationFn: api.iam.policies.create.bind(api.iam.policies, organizationId),
     onSuccess: async () => {
@@ -86,11 +90,6 @@ export function IamPoliciesPage() {
         header: "ステートメント",
       },
       {
-        accessorKey: "semantics_digest",
-        header: "意味論digest",
-        cell: ({ getValue }) => <Box variant="code">{getValue<string>().slice(0, 12)}…</Box>,
-      },
-      {
         accessorKey: "updated_at",
         header: "更新日時",
         cell: ({ getValue }) => formatDateTime(getValue<string>()),
@@ -109,9 +108,20 @@ export function IamPoliciesPage() {
     );
   }
 
-  const valid = name.trim() && parseList(actions).length > 0 && parseList(resources).length > 0;
+  const valid = name.trim() && (mode === "json" ? policyJson.trim().length > 0 : parseList(actions).length > 0 && parseList(resources).length > 0);
   const submit = () => {
     if (!valid) return;
+    if (mode === "json") {
+      try {
+        const document: unknown = JSON.parse(policyJson);
+        if (typeof document !== "object" || document === null || Array.isArray(document)) throw new Error("JSONオブジェクトを指定してください。");
+        setJsonError("");
+        createPolicy.mutate({ name: name.trim(), document: document as Record<string, unknown> });
+      } catch {
+        setJsonError("有効なポリシーJSONを指定してください。");
+      }
+      return;
+    }
     createPolicy.mutate({
       name: name.trim(),
       document: {
@@ -125,7 +135,7 @@ export function IamPoliciesPage() {
     <SpaceBetween size="l">
       <PageHeader
         title="IAMポリシー"
-        description={`${activeOrganization.organization_name} のLean検証済み認可意味論へ入力するルールを管理します。`}
+        description={`${activeOrganization.organization_name} のアクションとリソースに対する権限を管理します。`}
         actions={
           <Button
             variant="primary"
@@ -165,8 +175,14 @@ export function IamPoliciesPage() {
       >
         <SpaceBetween size="l">
           <Box color="text-body-secondary">
-            default-denyと明示的拒否優先のポリシー文書を作成します。
+            デフォルトは拒否で、明示的な拒否が優先されます。
           </Box>
+          <SpaceBetween direction="horizontal" size="xs"><Button variant={mode === "visual" ? "primary" : "normal"} onClick={() => setMode("visual")}>ビジュアル</Button>
+            <Button variant={mode === "json" ? "primary" : "normal"} onClick={() => setMode("json")}>JSON</Button></SpaceBetween>
+          {mode === "json" ? <SpaceBetween size="m"><FormField label="ポリシー名"><Input value={name} onChange={({ detail }) => setName(detail.value.slice(0, 120))} /></FormField>
+            <FormField label="AWS形式のポリシーJSON" description="Action、NotAction、Resource、NotResourceを使用できます。ConditionとPrincipalは現在サポートしていません。">
+              <Textarea rows={14} value={policyJson} onChange={({ detail }) => setPolicyJson(detail.value)} />
+            </FormField><FormError message={jsonError || null} /></SpaceBetween> : <>
           <ColumnLayout columns={2}>
             <FormField label="ポリシー名">
               <Input
@@ -187,10 +203,11 @@ export function IamPoliciesPage() {
             <FormField label="アクション" description="許可または拒否する操作を追加してください。">
               <TagInput values={parseList(actions)} onChange={(items) => setActions(items.join("\n"))} ariaLabel="アクションを追加" placeholder="例: flow:ListInstances" />
             </FormField>
-            <FormField label="リソース" description="対象を追加してください。ワイルドカードは末尾のみ使用できます。">
+            <FormField label="リソース" description="対象を追加してください。* と ? を使用できます。">
               <TagInput values={parseList(resources)} onChange={(items) => setResources(items.join("\n"))} ariaLabel="リソースを追加" placeholder="例: hc:org:*:flow/*" />
             </FormField>
           </ColumnLayout>
+          </>}
           <FormError message={createPolicy.isError ? getApiErrorMessage(createPolicy.error) : null} />
         </SpaceBetween>
       </Modal>

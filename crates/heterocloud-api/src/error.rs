@@ -35,6 +35,8 @@ pub enum ApiError {
     RegistryProviderUnavailable,
     #[error("Secret Manager is unavailable")]
     SecretManagerUnavailable,
+    #[error("organization and IAM controls are not yet activated")]
+    ServiceControlUnavailable,
     #[error("too many requests")]
     TooManyRequests,
     #[error("authentication required")]
@@ -132,6 +134,11 @@ impl IntoResponse for ApiError {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "secret_manager_unavailable",
                 "Secret Manager is temporarily unavailable.",
+            ),
+            Self::ServiceControlUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "service_control_unavailable",
+                "Organization and IAM controls are pending activation after the API fleet upgrade.",
             ),
             Self::TooManyRequests => (
                 StatusCode::TOO_MANY_REQUESTS,
