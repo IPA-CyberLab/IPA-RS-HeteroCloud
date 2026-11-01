@@ -1490,11 +1490,13 @@ impl Store {
         let row = sqlx::query_as::<_, CliAccessTokenRow>(
             "UPDATE cli_access_tokens t
              SET last_used_at = now()
-             FROM users u, organization_memberships m
+             FROM users u, organization_memberships m, principals p
              WHERE t.prefix = $1 AND t.token_hash = $2
                AND t.revoked_at IS NULL AND t.expires_at > now()
                AND u.id = t.user_id AND u.status = 'active'
                AND m.user_id = t.user_id AND m.organization_id = t.organization_id
+               AND p.id = m.principal_id AND p.organization_id = m.organization_id
+               AND p.user_id = m.user_id AND p.enabled = true
              RETURNING t.id, t.user_id, t.organization_id, t.expires_at",
         )
         .bind(prefix)
@@ -1545,6 +1547,8 @@ impl Store {
                     o.slug AS organization_slug, o.name AS organization_name
              FROM organization_memberships m
              JOIN organizations o ON o.id = m.organization_id
+             JOIN principals p ON p.id = m.principal_id AND p.organization_id = m.organization_id
+                              AND p.user_id = m.user_id AND p.enabled = true
              WHERE m.user_id = $1
              ORDER BY o.name, o.id",
         )
@@ -1563,9 +1567,12 @@ impl Store {
         organization_id: OrganizationId,
     ) -> Result<Option<AuthorizationContext>, StoreError> {
         let membership = sqlx::query_as::<_, MembershipAuthRow>(
-            "SELECT principal_id, role
-             FROM organization_memberships
-             WHERE user_id = $1 AND organization_id = $2",
+            "SELECT m.principal_id, m.role
+             FROM organization_memberships m
+             JOIN principals p ON p.id = m.principal_id AND p.organization_id = m.organization_id
+                              AND p.user_id = m.user_id AND p.enabled = true
+             JOIN users u ON u.id = m.user_id AND u.status = 'active'
+             WHERE m.user_id = $1 AND m.organization_id = $2",
         )
         .bind(user_id.0)
         .bind(organization_id.0)
@@ -1608,6 +1615,8 @@ impl Store {
             "SELECT o.id, o.slug, o.name, o.created_at
              FROM organizations o
              JOIN organization_memberships m ON m.organization_id = o.id
+             JOIN principals p ON p.id = m.principal_id AND p.organization_id = m.organization_id
+                              AND p.user_id = m.user_id AND p.enabled = true
              WHERE m.user_id = $1
              ORDER BY o.name, o.id",
         )

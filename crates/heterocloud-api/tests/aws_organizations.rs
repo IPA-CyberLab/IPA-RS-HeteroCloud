@@ -956,6 +956,70 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
         .0,
         StatusCode::UNAUTHORIZED
     );
+    let management_principal = owner
+        .memberships
+        .first()
+        .ok_or("management membership")?
+        .principal_id;
+    let management_path = format!("/api/v1/organizations/{management}/projects");
+    let cli_hash = [9_u8; 32];
+    sqlx::query("INSERT INTO cli_access_tokens(id,user_id,organization_id,prefix,token_hash,expires_at) VALUES ($1,$2,$3,'0123456789abcdef',$4,now()+interval '1 hour')")
+        .bind(uuid::Uuid::now_v7()).bind(owner.user.id.0).bind(management.0).bind(cli_hash.as_slice())
+        .execute(store.pool()).await?;
+    assert!(
+        store
+            .authenticate_cli_access_token("0123456789abcdef", &cli_hash)
+            .await?
+            .is_some()
+    );
+    sqlx::query("UPDATE principals SET enabled=false WHERE id=$1")
+        .bind(management_principal.0)
+        .execute(store.pool())
+        .await?;
+    assert_eq!(
+        request(state.clone(), "GET", &management_path, None, None, None)
+            .await?
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert!(
+        store
+            .authenticate_cli_access_token("0123456789abcdef", &cli_hash)
+            .await?
+            .is_none()
+    );
+    let (_, session_without_disabled_membership) = request(
+        state.clone(),
+        "GET",
+        "/api/v1/auth/session",
+        None,
+        None,
+        None,
+    )
+    .await?;
+    assert!(
+        !session_without_disabled_membership["memberships"]
+            .as_array()
+            .ok_or("memberships")?
+            .iter()
+            .any(|item| item["organization_id"] == management.to_string())
+    );
+    sqlx::query("UPDATE principals SET enabled=true WHERE id=$1")
+        .bind(management_principal.0)
+        .execute(store.pool())
+        .await?;
+    assert_eq!(
+        request(state.clone(), "GET", &management_path, None, None, None)
+            .await?
+            .0,
+        StatusCode::OK
+    );
+    assert!(
+        store
+            .authenticate_cli_access_token("0123456789abcdef", &cli_hash)
+            .await?
+            .is_some()
+    );
     sqlx::query("UPDATE users SET status='suspended' WHERE id=$1")
         .bind(owner.user.id.0)
         .execute(store.pool())
