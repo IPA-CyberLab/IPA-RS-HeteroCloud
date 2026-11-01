@@ -3,6 +3,7 @@ import { BreadcrumbGroup } from "@/components/ui";
 import { Flashbar, type FlashbarProps } from "@/components/ui";
 import { SideNavigation } from "@/components/ui";
 import { TopNavigation, type TopNavigationProps } from "@/components/ui";
+import { Box, Button, FormField, Input, Modal, SpaceBetween } from "@/components/ui";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -66,11 +67,14 @@ function breadcrumbs(pathname: string, ownerConsole: boolean) {
 export function AppShell() {
   const [navigationOpen, setNavigationOpen] = useState(() => typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 1024px)").matches);
   const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [roleDialogOpen, setRoleDialogOpen] = useState(false);
+  const [targetAccount, setTargetAccount] = useState("");
+  const [targetRole, setTargetRole] = useState("");
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const session = useSession().data!;
-  const { activeOrganization, memberships, setActiveOrganizationId, activeRole, exitRole } =
+  const { activeOrganization, memberships, setActiveOrganizationId, activeRole, switchRole, exitRole } =
     useActiveOrganization();
 
   useEffect(() => {
@@ -141,12 +145,14 @@ export function AppShell() {
         membership.organization_id === activeOrganization.organization_id
           ? "status-positive"
           : undefined,
-    })), ...(activeRole ? [{ id: "exit-role", text: "元のアカウントに戻る", iconName: "exit-full-screen" }] : [])],
+    })), { id: "switch-role", text: "ロールを切り替える" },
+    ...(activeRole ? [{ id: "exit-role", text: "元のアカウントに戻る", iconName: "exit-full-screen" }] : [])],
     onItemClick: ({ detail }) => {
       if (detail.id.startsWith("organization:")) {
         setActiveOrganizationId(detail.id.slice("organization:".length));
       }
       if (detail.id === "exit-role") void exitRole().catch(() => undefined);
+      if (detail.id === "switch-role") setRoleDialogOpen(true);
     },
   };
 
@@ -215,6 +221,21 @@ export function AppShell() {
         toolsHide
         ariaLabels={layoutLabels}
       />
+      <Modal visible={roleDialogOpen} onDismiss={() => setRoleDialogOpen(false)} header="ロールを切り替える"
+        footer={<Box float="right"><SpaceBetween direction="horizontal" size="xs">
+          <Button onClick={() => setRoleDialogOpen(false)}>キャンセル</Button>
+          <Button variant="primary" disabled={!/^\d{12}$/.test(targetAccount.trim()) || !/^[A-Za-z0-9+=,.@_-]{1,64}$/.test(targetRole.trim())}
+            onClick={() => void switchRole({ role_arn: `arn:aws:iam::${targetAccount.trim()}:role/${targetRole.trim()}`,
+              session_name: "console-session", duration_seconds: 3600 }).then(() => navigate("/overview")).catch(() => undefined)}>
+            切り替え
+          </Button>
+        </SpaceBetween></Box>}>
+        <SpaceBetween size="l">
+          <Box color="text-body-secondary">信頼されている別アカウントのロールも指定できます。</Box>
+          <FormField label="切り替え先のアカウントID" description="12桁のアカウントID"><Input value={targetAccount} onChange={({ detail }) => setTargetAccount(detail.value)} /></FormField>
+          <FormField label="切り替え先のロール名"><Input value={targetRole} onChange={({ detail }) => setTargetRole(detail.value)} /></FormField>
+        </SpaceBetween>
+      </Modal>
     </div>
   );
 }

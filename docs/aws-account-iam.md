@@ -28,6 +28,8 @@ the browser to the role. Browser role sessions are bound to the existing browser
 session in the database; the role token is not exposed to JavaScript. A revoked,
 expired or disabled browser role fails closed until the user explicitly exits
 the role, rather than silently reverting to the original identity.
+The account menu accepts a destination account number and role name, including
+roles in accounts where the user has no direct membership or IAM list access.
 
 ## Deployment and activation
 

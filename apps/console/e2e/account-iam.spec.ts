@@ -159,3 +159,37 @@ test("IAMグループ、アクセス許可の境界とロールを設定する",
   await page.getByRole("button", { name: "元のアカウントに戻る" }).click();
   await expect(page.locator('summary[aria-label="操作対象のアカウント"]')).toContainText("Example");
 });
+
+test("IAM一覧の権限がなくても別アカウントのロールに切り替える", async ({ page }) => {
+  let activeRole: Record<string, unknown> | undefined;
+  let submittedPath = "";
+  let submittedArn = "";
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/auth/session")) return route.fulfill({ json: {
+      user: { id: "user", email: "test@example.test", display_name: "Test" },
+      memberships: [{ organization_id: "source", organization_name: "Source", organization_slug: "source", principal_id: "principal", role: "member" }],
+      csrf_token: "test", owner_console: false, ...(activeRole ? { active_role: activeRole } : {}),
+    } });
+    if (path.endsWith("/sts/assume-role") && route.request().method() === "POST") {
+      const body = route.request().postDataJSON();
+      submittedPath = path;
+      submittedArn = body.role_arn;
+      activeRole = { session_id: "session", organization_id: "target", account_number: "100000000001", account_name: "Target",
+        principal_id: "role", role_arn: body.role_arn, session_name: body.session_name,
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(), active: true };
+      return route.fulfill({ json: { switched: true } });
+    }
+    return route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "Not permitted" } } });
+  });
+  await page.goto("/overview");
+  await page.locator('summary[aria-label="操作対象のアカウント"]').click();
+  await page.getByRole("menuitem", { name: "ロールを切り替える" }).click();
+  const dialog = page.getByRole("dialog", { name: "ロールを切り替える" });
+  await dialog.getByLabel("切り替え先のアカウントID").fill("100000000001");
+  await dialog.getByLabel("切り替え先のロール名").fill("Reader");
+  await dialog.getByRole("button", { name: "切り替え", exact: true }).click();
+  await expect(page.locator('summary[aria-label="操作対象のアカウント"]')).toContainText("Target / Reader");
+  expect(submittedPath).toBe("/api/v1/organizations/source/sts/assume-role");
+  expect(submittedArn).toBe("arn:aws:iam::100000000001:role/Reader");
+});
