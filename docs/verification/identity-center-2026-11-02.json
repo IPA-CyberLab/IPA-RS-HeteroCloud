@@ -1,0 +1,48 @@
+{
+  "verified_at": "2026-11-02T12:35:10.447666+00:00",
+  "origin": "https://heterocloud.mizuame.app",
+  "source_commit": "554494b617a684de5fba329b3c4b11e9ab45e145",
+  "chart_commit": "5ebfba370091831b03dc8f78deadc4d153f50725",
+  "image_digest": "sha256:1346a90187cc39926c5df2b36ed9093528e8fe0e1b65f3ab8177a635ec1a729f",
+  "release": "v0.1.111",
+  "release_workflow_run": 41441798286,
+  "chart_workflow_run": 41445081524,
+  "release_artifacts_sha256_verified": [
+    "linux/x64",
+    "linux/arm64",
+    "macos/x64",
+    "macos/arm64",
+    "windows/x64",
+    "windows/arm64"
+  ],
+  "live_checks": [
+    "synthetic_account_permission_set_group_and_assignment",
+    "ordinary_assume_role_denied_for_managed_role",
+    "release_cli_device_code_login_and_private_role_session",
+    "chromium_browser_account_switch",
+    "browser_role_permissions_and_personal_quota",
+    "permission_set_change_updates_existing_session",
+    "account_scp_denies_and_restores_role_access",
+    "group_removal_and_assignment_revocation_invalidate_sessions",
+    "disposable_fixture_removed"
+  ],
+  "api_drain_rollout_test": {
+    "first_replica": {
+      "requests": 77,
+      "status_200": 77,
+      "slowest_seconds": 0.771
+    },
+    "second_replica": {
+      "requests": 83,
+      "status_200": 83,
+      "slowest_seconds": 0.36
+    },
+    "dns_withdrawal_observed_while_terminating_pod_served_requests": true
+  },
+  "replicas": {
+    "desired_per_component": 3,
+    "ready_per_component": 2,
+    "reason": "one scheduling node is offline"
+  },
+  "limits": "Tests used disposable accounts and real public API, CLI and Chromium; they did not verify AWS SigV4, SCIM, or Registry/Syouyu existing data-plane credential revocation."
+}
