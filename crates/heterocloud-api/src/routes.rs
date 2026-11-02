@@ -6796,7 +6796,7 @@ async fn authenticated_actor_mutation(
     Ok(actor)
 }
 
-async fn evaluate_account_permissions(
+pub(crate) async fn evaluate_account_permissions(
     state: &AppState,
     context: &AuthorizationContext,
     organization_id: OrganizationId,

@@ -198,6 +198,22 @@ impl Store {
         Ok(role)
     }
 
+    /// Whether this principal is an IAM role. Used to avoid persisting an
+    /// assumed role's ephemeral permissions as an unbounded background grant.
+    pub async fn is_iam_role_principal(
+        &self,
+        account: OrganizationId,
+        principal: PrincipalId,
+    ) -> Result<bool, StoreError> {
+        Ok(sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM iam_roles WHERE organization_id = $1 AND principal_id = $2)",
+        )
+        .bind(account.0)
+        .bind(principal.0)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
     pub async fn list_iam_roles(
         &self,
         account: OrganizationId,

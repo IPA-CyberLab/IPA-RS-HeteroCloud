@@ -1,12 +1,15 @@
 //! Continuous status, alert and backup-policy reconciliation. Every write is
 //! generation-fenced; a delayed observation cannot overwrite a newer user edit.
-use crate::{flash_provider::FlashProviderContext, routes::AppState};
+use crate::{
+    flash_provider::FlashProviderContext,
+    routes::{AppState, evaluate_account_permissions},
+};
 use chrono::Utc;
 use futures_util::{StreamExt, stream};
 use heterocloud_domain::{
     DeploymentPolicy, OrganizationId, PrincipalId, ServiceInstance, ServiceInstanceId, ServiceState,
 };
-use heterocloud_iam::{AuthorizationRequest, Decision, authorize};
+use heterocloud_iam::Decision;
 use heterocloud_store::{FlashBackupPolicy, rollback_spec};
 use reqwest::Method;
 use sha2::{Digest, Sha256};
@@ -31,6 +34,15 @@ pub async fn allowed(
     action: &str,
     resource: &str,
 ) -> bool {
+    // A stored principal does not retain an assumed role session's expiry or
+    // session policy. Never turn such a session into an unrestricted durable
+    // background grant. A future scheduler service role must be explicit.
+    if !matches!(
+        state.store.is_iam_role_principal(org, principal).await,
+        Ok(false)
+    ) {
+        return false;
+    }
     // Browser authentication normally checks these flags. Background actions
     // have no browser token, so validate the principal/user before resolving
     // the owner's membership-based permissions as well.
@@ -56,17 +68,9 @@ pub async fn allowed(
     let Ok(Some(context)) = context else {
         return false;
     };
-    matches!(context.role.as_str(), "owner" | "admin")
-        || authorize(
-            &AuthorizationRequest {
-                principal_organization_id: org,
-                resource_organization_id: org,
-                action,
-                resource,
-            },
-            &context.policies,
-        )
-        .is_ok_and(|e| e.decision == Decision::Allow)
+    evaluate_account_permissions(state, &context, org, action, resource, false)
+        .await
+        .is_ok_and(|evaluation| evaluation.decision == Decision::Allow)
 }
 
 pub fn spawn_reconciler(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {

@@ -198,6 +198,11 @@ pub(super) async fn put_policy(
         )
         .await?;
     }
+    if request.enabled && matches!(actor, AuthenticatedActor::RoleSession { .. }) {
+        return Err(ApiError::BadRequest(
+            "An assumed role session cannot create a persistent backup schedule. Use a user or dedicated service account.".into(),
+        ));
+    }
     flash_service(&state, org, id).await?;
     Ok(Json(
         state

@@ -196,6 +196,24 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
     assert_eq!(status, StatusCode::CREATED);
     let member_id = member["id"].as_str().ok_or("member id")?;
     let member_account = OrganizationId(uuid::Uuid::parse_str(member_id)?);
+    let membership = store
+        .session_user(owner.user.id)
+        .await?
+        .ok_or("session user")?
+        .memberships
+        .into_iter()
+        .find(|membership| membership.organization_id == member_account)
+        .ok_or("member principal")?;
+    assert!(
+        heterocloud_api::flash_operations::allowed(
+            &state,
+            membership.principal_id,
+            member_account,
+            "project:List",
+            "*"
+        )
+        .await
+    );
     let unsupported = request(state.clone(), "POST", &format!("{base}/organization/policies"), Some(json!({"name":"Unsupported", "document":{"Statement":{"Effect":"Deny", "Action":"*", "Resource":"*", "Condition":{"StringEquals":{"x":"y"}}}}})), Some(csrf.expose_secret()), None).await?;
     assert_eq!(unsupported.0, StatusCode::BAD_REQUEST);
     let oversized = request(state.clone(), "POST", &format!("{base}/organization/policies"),
@@ -225,6 +243,17 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
             .await?
             .0,
         StatusCode::FORBIDDEN
+    );
+    assert!(
+        !heterocloud_api::flash_operations::allowed(
+            &state,
+            membership.principal_id,
+            member_account,
+            "project:List",
+            "*"
+        )
+        .await,
+        "inherited SCP applies to an owner running background work"
     );
     assert_eq!(
         request(
@@ -269,6 +298,17 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
             .0,
         StatusCode::FORBIDDEN
     );
+    assert!(
+        !heterocloud_api::flash_operations::allowed(
+            &state,
+            robot.id,
+            member_account,
+            "project:List",
+            "*"
+        )
+        .await,
+        "inherited SCP applies to a background service account"
+    );
     assert_eq!(
         request(
             state.clone(),
@@ -288,14 +328,17 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
             .0,
         StatusCode::OK
     );
-    let membership = store
-        .session_user(owner.user.id)
-        .await?
-        .ok_or("session user")?
-        .memberships
-        .into_iter()
-        .find(|membership| membership.organization_id == member_account)
-        .ok_or("member principal")?;
+    assert!(
+        heterocloud_api::flash_operations::allowed(
+            &state,
+            robot.id,
+            member_account,
+            "project:List",
+            "*"
+        )
+        .await,
+        "moving an account removes the inherited deny"
+    );
     let deny = PolicyDocument::from_aws_json(
         json!({"Statement":{"Effect":"Deny", "Action":"project:List", "Resource":"*"}}),
     )?;
@@ -324,6 +367,17 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
             .await?
             .0,
         StatusCode::FORBIDDEN
+    );
+    assert!(
+        !heterocloud_api::flash_operations::allowed(
+            &state,
+            robot.id,
+            member_account,
+            "project:List",
+            "*"
+        )
+        .await,
+        "permissions boundaries apply to background work"
     );
     assert_eq!(
         request(
@@ -426,6 +480,17 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
     store
         .create_binding(member_account, membership.principal_id, deny.id)
         .await?;
+    assert!(
+        !heterocloud_api::flash_operations::allowed(
+            &state,
+            membership.principal_id,
+            member_account,
+            "project:List",
+            "*"
+        )
+        .await,
+        "an explicit identity deny overrides an owner"
+    );
     assert_eq!(
         request(state.clone(), "GET", &projects, None, None, None)
             .await?
@@ -504,6 +569,17 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
     let role_binding = store
         .create_binding(member_account, role_principal, role_policy.id)
         .await?;
+    assert!(
+        !heterocloud_api::flash_operations::allowed(
+            &state,
+            role_principal,
+            member_account,
+            "project:List",
+            "*"
+        )
+        .await,
+        "an assumed role session cannot become an unrestricted durable grant"
+    );
     let source_robot = store
         .create_service_account(management, "source-robot")
         .await?;
