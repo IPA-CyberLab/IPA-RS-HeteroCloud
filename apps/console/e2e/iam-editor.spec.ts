@@ -60,6 +60,16 @@ test("IAM policy actions and resources are added individually and saved", async 
   const resource = dialog.getByLabel("リソースを追加");
   await resource.fill("hc:org:*:flow/*");
   await resource.press("Enter");
+  await dialog.getByLabel("条件の開始日時（任意）").fill("2027-01-02T09:00");
+  await dialog.getByLabel("条件の終了日時（任意）").fill("2027-01-01T09:00");
+  await dialog.getByRole("button", { name: "作成", exact: true }).click();
+  await expect(dialog.getByText(/終了日時は開始日時より後/)).toBeVisible();
+  expect(submitted).toBeUndefined();
+  await dialog.getByLabel("条件の終了日時（任意）").fill("2027-01-03T09:00");
+  const [startUtc, endUtc] = await page.evaluate(() => [
+    new Date("2027-01-02T09:00").toISOString(),
+    new Date("2027-01-03T09:00").toISOString(),
+  ]);
   await dialog.getByRole("button", { name: "作成", exact: true }).click();
   await expect.poll(() => submitted?.name).toBe("FlowReadOnly");
   expect(submitted.document.statements).toEqual([
@@ -67,6 +77,10 @@ test("IAM policy actions and resources are added individually and saved", async 
       effect: "Allow",
       actions: ["flow:ListInstances"],
       resources: ["hc:org:*:flow/*"],
+      conditions: {
+        DateGreaterThanEquals: { "aws:CurrentTime": [startUtc] },
+        DateLessThan: { "aws:CurrentTime": [endUtc] },
+      },
     },
   ]);
   await expect(dialog).not.toBeVisible();
