@@ -36,6 +36,6 @@ The production rollout completed on 2026-11-02: the previously stuck event was
 acknowledged on attempt 1,064 while the service correctly remained `updating`.
 The subsequent organization-quota activation converged for all 12 existing
 Flash services and left no pending quota-refresh events. Both Flash and
-HeteroCloud maintained two ready serving replicas per component; the desired
+HeteroCloud had two ready replicas per component after rollout; the desired
 HeteroCloud replica count is three, with one pending while `uc-k8sp4` remains
 excluded. The affected image itself has not been recovered.
