@@ -1,0 +1,13 @@
+# 組織と IAM の対応範囲
+
+HeteroCloud は、組織・管理アカウント・メンバーアカウント・OU・SCP、IAM グループ、ロール、アクセス許可の境界、および Identity Center 形式の割り当てを提供します。管理コンソールと `heterocloud` CLI で操作します。AWS のサービスと API が完全に互換であることを意味しません。
+
+運用時に必要な違い:
+
+- AWS CLI / SDK の署名付き AWS API、SigV4、AWS STS API、AWS Identity Center の SSO API および SCIM は提供していません。HeteroCloud の API と CLI を使用してください。ワークロード認証も AWS の IMDS プロトコルではありません。
+- ポリシーは AWS 形式の `Action` / `NotAction`、`Resource` / `NotResource`、明示的な `Deny` などに対応しますが、すべての AWS アクション、リソース、条件キーや演算子は対応していません。現在の条件は対応する日時条件と `aws:CurrentTime` に限られ、未対応の条件は拒否されます。
+- Identity Center のセッションから別ロールへのチェーンは使用できません。利用者別上限と失効を保ったままチェーンを検証できるまで拒否します。
+- Flow の開発者資格情報は、その発行者に対する現在の IAM と SCP を確認します。Registry と Syouyu の既存データプレーン資格情報は、発行後に IAM や SCP を変更しても同じ即時評価を受けません。アクセスを止める場合は、その資格情報自体も取り消してください。一時ロールやワークロードから長期のデータプレーン資格情報を新規発行することはできません。
+- Identity Center のディレクトリは管理アカウントのメンバーを使用します。ユーザーやグループの外部同期は行いません。
+
+実装と運用上の制約については [Identity Center](identity-center.md) と [ワークロード ID](workload-identity.md) も参照してください。
