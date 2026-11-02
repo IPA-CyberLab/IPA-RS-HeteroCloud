@@ -109,6 +109,12 @@ pub struct ReconcileRequest {
     pub policy: Option<FlashProviderPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_user_id: Option<UserId>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub quota_only: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -194,6 +200,23 @@ mod tests {
             json["cloud_organization"]["account_ids"][0],
             "00000000-0000-0000-0000-000000000001"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn quota_only_flag_is_omitted_from_normal_provider_reconciliations()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut request = super::ReconcileRequest {
+            generation: 1,
+            name: "test".into(),
+            spec: json!({}),
+            policy: None,
+            quota_user_id: None,
+            quota_only: false,
+        };
+        assert!(serde_json::to_value(&request)?.get("quota_only").is_none());
+        request.quota_only = true;
+        assert_eq!(serde_json::to_value(request)?["quota_only"], true);
         Ok(())
     }
 

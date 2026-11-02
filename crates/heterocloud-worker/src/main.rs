@@ -395,6 +395,7 @@ async fn deliver(
                 spec,
                 policy,
                 quota_user_id,
+                quota_only: event.topic == "service-instance.flash-quota",
             })
             .send()
             .await?
@@ -467,6 +468,13 @@ async fn deliver(
         return Err(WorkerError::ProviderStatus(provider_status_code));
     }
     let operation: AcceptedOperation = response.json().await?;
+    if event.topic == "service-instance.flash-quota" {
+        // The provider has atomically persisted the quota policy. Its workload
+        // may still be provisioning or failed; a quota update must never mark
+        // the service ready or overwrite its independent lifecycle state.
+        info!(service_instance_id = %payload.service_instance_id, operation_id = %operation.operation_id, "Flash quota policy updated");
+        return Ok(());
+    }
     if provider_reconcile_failed(&operation.status) {
         if !store
             .mark_service_instance_error(
@@ -916,6 +924,142 @@ MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
             targets.target("unknown"),
             Err(WorkerError::UnsupportedProvider(provider)) if provider == "unknown"
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn quota_update_does_not_change_service_lifecycle()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use heterocloud_store::{BootstrapAdmin, Store};
+        use std::io::{BufRead, BufReader};
+        let Ok(database_url) = std::env::var("HETEROCLOUD_WORKER_TEST_DATABASE_URL") else {
+            return Ok(());
+        };
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let store = Store::connect(&database_url, 8).await?;
+        let db: String = sqlx::query_scalar("SELECT current_database()")
+            .fetch_one(store.pool())
+            .await?;
+        if !db.starts_with("heterocloud_test_") {
+            return Err("a disposable heterocloud_test_ database is required".into());
+        }
+        sqlx::raw_sql("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
+            .execute(store.pool())
+            .await?;
+        store.migrate().await?;
+        let admin = store
+            .bootstrap_admin(BootstrapAdmin {
+                email: "worker-quota@example.test",
+                display_name: "Owner",
+                password_hash: "test-only",
+                organization_slug: "worker-quota",
+                organization_name: "Worker quota",
+            })
+            .await?;
+        let membership = &admin.memberships[0];
+        let org = membership.organization_id;
+        let principal = membership.principal_id;
+        let project = store.create_project(org, "main", "Main").await?;
+        let service = store.create_service_instance(org, project.id, principal, "flash", "unready", json!({
+            "region":"heteronet-global", "image":"example.invalid/workload:v1", "replicas":1,
+            "cpu_millis":100, "memory_mib":128, "ephemeral_storage_gib":5, "ports":[],
+            "exposure":{"type":"internal", "traffic_mode":"forwarded"}, "env":{}, "command":[], "args":[], "metadata":{}
+        })).await?;
+        sqlx::query("UPDATE service_instances SET state='updating', status='{\"sentinel\":\"unchanged\"}'::jsonb WHERE id=$1")
+            .bind(service.id.0).execute(store.pool()).await?;
+        store.enable_organization_flash_weekly_quotas().await?;
+        let event = OutboxEvent {
+            id: PrincipalContextId::from_u128(42),
+            topic: "service-instance.flash-quota".into(),
+            aggregate_id: service.id.0,
+            attempts: 1,
+            payload: json!({"service_instance_id":service.id, "organization_id":org,
+                "project_id":project.id, "principal_id":principal, "provider":"flash", "generation":service.generation}),
+        };
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let server = std::thread::spawn(
+            move || -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {
+                let mut received = Vec::new();
+                for phase in ["provisioning", "error"] {
+                    let (stream, _) = listener.accept()?;
+                    stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+                    let mut reader = BufReader::new(stream);
+                    let mut size = 0;
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line)? == 0 {
+                            return Err("incomplete request".into());
+                        }
+                        if let Some((name, value)) = line.split_once(':')
+                            && name.eq_ignore_ascii_case("content-length")
+                        {
+                            size = value.trim().parse()?;
+                        }
+                        if line == "\r\n" {
+                            break;
+                        }
+                    }
+                    let mut body = vec![0; size];
+                    reader.read_exact(&mut body)?;
+                    received.push(serde_json::from_slice(&body)?);
+                    let response = serde_json::to_vec(
+                        &json!({"operation_id":PrincipalContextId::from_u128(17), "status":{"phase":phase}}),
+                    )?;
+                    write!(
+                        reader.get_mut(),
+                        "HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        response.len()
+                    )?;
+                    reader.get_mut().write_all(&response)?;
+                }
+                Ok(received)
+            },
+        );
+        let endpoint = Url::parse(&format!("http://{address}/"))?;
+        let target = |audience| -> Result<ProviderTarget, Box<dyn std::error::Error>> {
+            Ok(ProviderTarget {
+                endpoint: endpoint.clone(),
+                signer: ProviderSigner::from_ed25519_pem(
+                    "heterocloud",
+                    audience,
+                    "test-key",
+                    TEST_ED25519_PRIVATE_KEY,
+                )?,
+            })
+        };
+        let targets = ProviderTargets {
+            flow: target("heterocloud-flow")?,
+            flash: target("heterocloud-flash")?,
+            syouyu: target("heterocloud-syouyu")?,
+            vpc: None,
+        };
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()?;
+        for _ in 0..2 {
+            super::deliver(&store, &client, &targets, &event).await?;
+            let current = store
+                .service_instance(service.id)
+                .await?
+                .ok_or("service disappeared")?;
+            assert_eq!(current.state, heterocloud_domain::ServiceState::Updating);
+            assert_eq!(current.status, json!({"sentinel":"unchanged"}));
+        }
+        let received = server
+            .join()
+            .map_err(|_| "provider fixture panicked")?
+            .map_err(|e| e.to_string())?;
+        assert_eq!(received.len(), 2);
+        for request in received {
+            assert_eq!(request["quota_only"], true);
+            assert_eq!(
+                request["policy"]["cloud_organization"]["account_ids"],
+                json!([org])
+            );
+        }
         Ok(())
     }
 

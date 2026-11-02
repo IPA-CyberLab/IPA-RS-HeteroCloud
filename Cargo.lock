@@ -1197,6 +1197,7 @@ dependencies = [
  "secrecy",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror",
  "tokio",
  "tracing",
