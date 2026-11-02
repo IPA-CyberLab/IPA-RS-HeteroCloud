@@ -78,7 +78,12 @@ pub struct Cli {
     pub wait_timeout_seconds: u64,
 
     /// Permit a plain HTTP API endpoint. Intended only for a private lab.
-    #[arg(long, global = true, env = "HETEROCLOUD_ALLOW_INSECURE_HTTP")]
+    #[arg(
+        long,
+        global = true,
+        env = "HETEROCLOUD_ALLOW_INSECURE_HTTP",
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
     pub allow_insecure_http: bool,
 
     /// Output format for service commands.
