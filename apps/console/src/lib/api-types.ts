@@ -217,6 +217,18 @@ export interface OrganizationQuotaOverview {
   members: OrganizationMemberQuota[];
 }
 
+export interface IdentityCenterUser { id: string; email: string; display_name: string }
+export interface IdentityCenterGroup { id: string; name: string; users: string[]; created_at: string }
+export interface IdentityCenterPermissionSet {
+  id: string; name: string; document: Record<string, unknown>; session_duration_seconds: number;
+  created_at: string; updated_at: string;
+}
+export interface IdentityCenterAssignment {
+  id: string; permission_set_id: string; permission_set_name: string; account_id: string;
+  account_number: string; account_name: string; role_principal_id: string; role_arn: string;
+  subject_type: "user" | "group"; subject_id: string; session_duration_seconds: number; created_at: string;
+}
+
 export interface UnassignedQuotaResource {
   id: string;
   name: string;
@@ -446,6 +458,7 @@ export interface IamRole {
   arn: string;
   trust_policy: Record<string, unknown>;
   max_session_seconds: number;
+  managed_by_identity_center?: boolean;
   created_at: string;
 }
 

@@ -53,7 +53,9 @@ impl Store {
     ) -> Result<(), StoreError> {
         let result = sqlx::query(
             "UPDATE principals SET permissions_boundary_policy_id = $3, updated_at = now()
-            WHERE organization_id = $1 AND id = $2 AND ($3::uuid IS NULL OR EXISTS
+            WHERE organization_id = $1 AND id = $2
+              AND NOT EXISTS (SELECT 1 FROM identity_center_account_roles r WHERE r.account_id=$1 AND r.role_principal_id=$2)
+              AND ($3::uuid IS NULL OR EXISTS
                 (SELECT 1 FROM iam_policies WHERE organization_id = $1 AND id = $3))",
         )
         .bind(account.0)

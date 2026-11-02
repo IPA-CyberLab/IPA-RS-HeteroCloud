@@ -1,7 +1,18 @@
 #[path = "flash_backup_routes.rs"]
 mod backup_routes;
+#[path = "identity_center_routes.rs"]
+mod identity_center_routes;
 #[path = "flash_operation_routes.rs"]
 mod operation_routes;
+use identity_center_routes::{
+    add_identity_center_group_user, create_identity_center_assignment,
+    create_identity_center_group, create_identity_center_permission_set,
+    delete_identity_center_group, delete_identity_center_permission_set, identity_center_users,
+    list_identity_center_assignments, list_identity_center_groups,
+    list_identity_center_permission_sets, my_identity_center_assignments,
+    remove_identity_center_group_user, revoke_identity_center_assignment,
+    start_identity_center_session, update_identity_center_permission_set,
+};
 use std::{
     collections::{BTreeSet, HashMap},
     convert::Infallible,
@@ -207,6 +218,16 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route("/organizations/{organization_id}/iam/roles/{principal_id}/sessions/{session_id}", axum::routing::delete(revoke_iam_role_session))
         .route("/organizations/{organization_id}/sts/assume-role", post(assume_iam_role))
         .route("/organizations/{organization_id}/sts/caller-identity", get(iam_caller_identity))
+        .route("/organizations/{organization_id}/identity-center/users", get(identity_center_users))
+        .route("/organizations/{organization_id}/identity-center/groups", get(list_identity_center_groups).post(create_identity_center_group))
+        .route("/organizations/{organization_id}/identity-center/groups/{group_id}", axum::routing::delete(delete_identity_center_group))
+        .route("/organizations/{organization_id}/identity-center/groups/{group_id}/users/{user_id}", axum::routing::put(add_identity_center_group_user).delete(remove_identity_center_group_user))
+        .route("/organizations/{organization_id}/identity-center/permission-sets", get(list_identity_center_permission_sets).post(create_identity_center_permission_set))
+        .route("/organizations/{organization_id}/identity-center/permission-sets/{permission_set_id}", axum::routing::put(update_identity_center_permission_set).delete(delete_identity_center_permission_set))
+        .route("/organizations/{organization_id}/identity-center/assignments", get(list_identity_center_assignments).post(create_identity_center_assignment))
+        .route("/organizations/{organization_id}/identity-center/assignments/{assignment_id}", axum::routing::delete(revoke_identity_center_assignment))
+        .route("/organizations/{organization_id}/identity-center/my-assignments", get(my_identity_center_assignments))
+        .route("/organizations/{organization_id}/identity-center/my-assignments/{assignment_id}/session", post(start_identity_center_session))
         .route(
             "/organizations/{organization_id}/iam/principals",
             get(list_principals).post(create_service_account),
@@ -2228,6 +2249,14 @@ async fn quota_human_context(
         AuthenticatedActor::CliToken(token) if token.organization_id == organization => {
             token.user.user.id
         }
+        AuthenticatedActor::RoleSession { session, .. }
+            if session.organization_id == organization.0 =>
+        {
+            session
+                .identity_center_user_id
+                .map(UserId)
+                .ok_or(ApiError::Forbidden)?
+        }
         _ => return Err(ApiError::Forbidden),
     };
     let context = state
@@ -2266,6 +2295,9 @@ async fn quota_user_for_actor(
         AuthenticatedActor::RoleSession { session: token, .. }
             if token.organization_id == organization.0 =>
         {
+            if let Some(user) = token.identity_center_user_id {
+                return Ok(Some(UserId(user)));
+            }
             state
                 .store
                 .principal_quota_user(organization, PrincipalId(token.principal_id))
@@ -2283,7 +2315,8 @@ async fn quota_administrator(
     action: &str,
 ) -> Result<AuthorizationContext, ApiError> {
     let (_, context) = quota_human_context(state, actor, organization).await?;
-    if !matches!(context.role.as_str(), "owner" | "admin") {
+    let identity_center = matches!(actor, AuthenticatedActor::RoleSession { session, .. } if session.identity_center_user_id.is_some());
+    if !identity_center && !matches!(context.role.as_str(), "owner" | "admin") {
         return Err(ApiError::Forbidden);
     }
     // Use the regular authorization path for its audit record.
@@ -2315,15 +2348,35 @@ async fn organization_quotas(
         .iter()
         .find(|member| member.user_id == user_id)
         .ok_or(ApiError::Forbidden)?;
-    if matches!(context.role.as_str(), "owner" | "admin") {
-        authorize_actor(
+    let identity_center = matches!(&actor, AuthenticatedActor::RoleSession { session, .. } if session.identity_center_user_id.is_some());
+    let is_admin = if identity_center {
+        match authorize_actor(
             &state,
             &actor,
             organization,
             "identity:ListMemberQuotas",
             &organization_resource(organization_id, "identity/member-quota/*"),
         )
-        .await?;
+        .await
+        {
+            Ok(_) => true,
+            Err(ApiError::Forbidden) => false,
+            Err(error) => return Err(error),
+        }
+    } else {
+        matches!(context.role.as_str(), "owner" | "admin")
+    };
+    if is_admin {
+        if !identity_center {
+            authorize_actor(
+                &state,
+                &actor,
+                organization,
+                "identity:ListMemberQuotas",
+                &organization_resource(organization_id, "identity/member-quota/*"),
+            )
+            .await?;
+        }
         let tenant = state
             .store
             .list_resource_quota_tenants()
@@ -2830,6 +2883,12 @@ async fn assume_iam_role(
     Json(input): Json<AssumeIamRole>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    // Chaining must retain the assigned user's quota and revocation lineage.
+    // Until delegated sessions carry that lineage, deny the operation.
+    if matches!(&actor, AuthenticatedActor::RoleSession { session, .. } if session.identity_center_user_id.is_some())
+    {
+        return Err(ApiError::Forbidden);
+    }
     require_roles_enabled(&state).await?;
     let browser_switch = if input.switch_console {
         if !state
@@ -2904,6 +2963,17 @@ async fn assume_iam_role(
         .await
         .map_err(ApiError::from_store)?
         .ok_or(ApiError::NotFound)?;
+    if state
+        .store
+        .is_identity_center_role(
+            OrganizationId(role.organization_id),
+            PrincipalId(role.principal_id),
+        )
+        .await
+        .map_err(ApiError::from_store)?
+    {
+        return Err(ApiError::Forbidden);
+    }
     let trust = validate_role_trust(&role.trust_policy)?;
     let trusted = trust
         .permits(&source_number, &source_arn)
@@ -6416,7 +6486,7 @@ enum AuthenticatedActor {
     Workload(heterocloud_store::WorkloadTokenPrincipal),
     CliToken(CliAccessTokenPrincipal),
     RoleSession {
-        session: heterocloud_store::IamRoleSession,
+        session: Box<heterocloud_store::IamRoleSession>,
         browser: Option<AuthenticatedSession>,
     },
     ApiKey {
@@ -6904,7 +6974,7 @@ async fn authenticated_actor(
                 .map_err(ApiError::from_store)?
                 .ok_or(ApiError::Unauthorized)?;
             return Ok(AuthenticatedActor::RoleSession {
-                session,
+                session: Box::new(session),
                 browser: None,
             });
         }
@@ -6944,7 +7014,7 @@ async fn authenticated_actor(
             .map_err(ApiError::from_store)?
             .ok_or(ApiError::BrowserRoleSessionExpired)?;
         return Ok(AuthenticatedActor::RoleSession {
-            session,
+            session: Box::new(session),
             browser: Some(browser),
         });
     }
@@ -7109,7 +7179,10 @@ async fn authorize_actor_with_implicit_allow(
                 .ok_or(ApiError::Forbidden)?;
             (
                 context,
-                browser.as_ref().map(|browser| browser.user.user.id),
+                browser
+                    .as_ref()
+                    .map(|browser| browser.user.user.id)
+                    .or(session.identity_center_user_id.map(UserId)),
                 json!({"actor":"role_session","session_id":session.id,"source_arn":session.source_arn}),
             )
         }

@@ -61,6 +61,16 @@ software. `HETEROCLOUD_NO_UPDATE_CHECK=1` disables these checks for automation;
    retry once. If it still fails, report the blocker; do not report setup
    complete before status succeeds.
 
+When the user explicitly needs an assigned Identity Center role, list it with
+`heterocloud iam identity-center my-assignments` from the management account,
+then use `heterocloud iam identity-center start-session <assignment-id>
+--output-file <new-private-path>`. The command reports the target account and
+expiry without printing the token. For target operations, set
+`HETEROCLOUD_API_KEY_FILE` to that file and `HETEROCLOUD_ORGANIZATION_ID` to
+the reported target account; keep the supplied endpoint. This short-lived role
+token follows device login and is not an API key or a substitute for login. Do
+not print or share the file, and remove it after use. Role chaining is unsupported.
+
 Do not request or generate an API key for interactive login. Do not repeat the
 verification code, access token, or credential-file contents in chat, shell
 history, or logs. Never put the code into a URL; the user enters it on the

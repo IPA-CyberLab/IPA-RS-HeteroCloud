@@ -67,12 +67,12 @@ export function IamRoles({ accountId, policies }: { accountId: string; policies:
       <Button disabled={!roles.data?.enabled || !name.trim() || !/^\d{12}$/.test(trustedAccount) || !Number.isInteger(Number(maxHours)) || Number(maxHours) < 1 || Number(maxHours) > 12 || create.isPending} onClick={() => create.mutate()}>ロールを作成</Button>
     </SpaceBetween>
     <div className="overflow-x-auto"><table className="table"><thead><tr><th>ロール</th><th>ARN</th><th>操作</th></tr></thead><tbody>
-      {roles.data?.items.map((role) => <tr key={role.principal_id}><td>{role.name}</td><td><code>{role.arn}</code></td><td><SpaceBetween direction="horizontal" size="xs"><Button disabled={!roles.data?.enabled} onClick={() => { update.reset(); setTrustText(JSON.stringify(role.trust_policy, null, 2)); setEditing(role); }}>信頼を編集</Button><Button disabled={!roles.data?.enabled || remove.isPending} onClick={() => remove.mutate(role.principal_id)}>削除</Button></SpaceBetween></td></tr>)}
+      {roles.data?.items.map((role) => <tr key={role.principal_id}><td>{role.name}{role.managed_by_identity_center ? " · Identity Center 管理" : ""}</td><td><code>{role.arn}</code></td><td><SpaceBetween direction="horizontal" size="xs"><Button disabled={!roles.data?.enabled || role.managed_by_identity_center} onClick={() => { update.reset(); setTrustText(JSON.stringify(role.trust_policy, null, 2)); setEditing(role); }}>信頼を編集</Button><Button disabled={!roles.data?.enabled || role.managed_by_identity_center || remove.isPending} onClick={() => remove.mutate(role.principal_id)}>削除</Button></SpaceBetween></td></tr>)}
     </tbody></table></div>
     <SpaceBetween direction="horizontal" size="xs">
       <Select ariaLabel="ポリシーを付与するロール" options={roleOptions} selectedOption={roleOptions.find((item) => item.value === roleId) ?? null} onChange={({ detail }) => setRoleId(detail.selectedOption.value ?? "")} />
       <Select ariaLabel="ロールに付与するポリシー" options={policyOptions} selectedOption={policyOptions.find((item) => item.value === policyId) ?? null} onChange={({ detail }) => setPolicyId(detail.selectedOption.value ?? "")} />
-      <Button disabled={!roles.data?.enabled || !roleId || !policyId || attach.isPending} onClick={() => attach.mutate()}>ロールにポリシーを付与</Button>
+      <Button disabled={!roles.data?.enabled || !roleId || !policyId || attach.isPending || roles.data.items.find((role) => role.principal_id === roleId)?.managed_by_identity_center} onClick={() => attach.mutate()}>ロールにポリシーを付与</Button>
     </SpaceBetween>
     {roleId ? <div><h3 className="font-semibold">選択したロールのセッション</h3>
       {sessions.data?.items.map((session) => <div key={session.id}>{session.session_name} / {session.source_arn} / 有効期限: {session.expires_at}{" "}

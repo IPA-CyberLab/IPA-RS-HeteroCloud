@@ -106,8 +106,9 @@ impl Store {
              WHERE organization_id = $1 AND quota_user_id IS NULL AND state <> 'deleting'
                AND provider IN ('flow', 'flash', 'syouyu')
              UNION ALL
-             SELECT id, name, 'service_account' AS provider FROM principals
-             WHERE organization_id = $1 AND quota_user_id IS NULL AND kind = 'service_account' AND enabled
+             SELECT p.id, p.name, 'service_account' AS provider FROM principals p
+             WHERE p.organization_id = $1 AND p.quota_user_id IS NULL AND p.kind = 'service_account' AND p.enabled
+               AND NOT EXISTS (SELECT 1 FROM identity_center_account_roles r WHERE r.account_id=p.organization_id AND r.role_principal_id=p.id)
              ORDER BY provider, name, id",
         ).bind(organization_id.0).fetch_all(&self.pool).await?)
     }
@@ -127,7 +128,7 @@ impl Store {
             return Err(StoreError::NotFound);
         }
         let changed = if service_account {
-            sqlx::query("UPDATE principals SET quota_user_id = $3, updated_at = now() WHERE id = $1 AND organization_id = $2 AND kind = 'service_account' AND quota_user_id IS NULL AND enabled")
+            sqlx::query("UPDATE principals SET quota_user_id = $3, updated_at = now() WHERE id = $1 AND organization_id = $2 AND kind = 'service_account' AND quota_user_id IS NULL AND enabled AND NOT EXISTS (SELECT 1 FROM identity_center_account_roles r WHERE r.account_id=$2 AND r.role_principal_id=$1)")
                 .bind(resource_id).bind(organization_id.0).bind(user_id.0).execute(&mut *transaction).await?
         } else {
             sqlx::query("UPDATE service_instances SET quota_user_id = $3 WHERE id = $1 AND organization_id = $2 AND quota_user_id IS NULL AND state <> 'deleting' AND provider IN ('flow', 'flash', 'syouyu')")
@@ -309,7 +310,7 @@ impl Store {
         let effective = if let Some(limits) = limits {
             validate_resource_quota(limits)?;
             let unassigned: bool = sqlx::query_scalar(
-                "SELECT EXISTS (SELECT 1 FROM service_instances WHERE organization_id = $1 AND quota_user_id IS NULL AND state <> 'deleting' AND provider IN ('flow', 'flash', 'syouyu')) OR EXISTS (SELECT 1 FROM principals WHERE organization_id = $1 AND quota_user_id IS NULL AND kind = 'service_account' AND enabled)",
+                "SELECT EXISTS (SELECT 1 FROM service_instances WHERE organization_id = $1 AND quota_user_id IS NULL AND state <> 'deleting' AND provider IN ('flow', 'flash', 'syouyu')) OR EXISTS (SELECT 1 FROM principals p WHERE p.organization_id = $1 AND p.quota_user_id IS NULL AND p.kind = 'service_account' AND p.enabled AND NOT EXISTS (SELECT 1 FROM identity_center_account_roles r WHERE r.account_id=p.organization_id AND r.role_principal_id=p.id))",
             ).bind(organization_id.0).fetch_one(&mut *transaction).await?;
             if unassigned {
                 return Err(StoreError::RequestRejected("assign existing services and service accounts to a member before setting personal limits".into()));

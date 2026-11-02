@@ -25,6 +25,7 @@ interface OrganizationContextValue {
   setActiveOrganizationId: (organizationId: string) => void;
   activeRole?: Session["active_role"];
   switchRole: (input: { role_arn: string; session_name: string; duration_seconds: number; session_policy?: Record<string, unknown> }) => Promise<void>;
+  switchIdentityCenter: (managementAccountId: string, assignmentId: string) => Promise<void>;
   exitRole: () => Promise<void>;
 }
 
@@ -83,6 +84,8 @@ export function OrganizationProvider({ children }: { children?: ReactNode }) {
   };
   const switchRole = (input: { role_arn: string; session_name: string; duration_seconds: number; session_policy?: Record<string, unknown> }) =>
     transition(() => api.iam.roles.switchConsole(activeOrganization.organization_id, input));
+  const switchIdentityCenter = (managementAccountId: string, assignmentId: string) =>
+    transition(() => api.identityCenter.switchConsole(managementAccountId, assignmentId));
   const exitRole = () => transition(() => api.auth.exitRole());
 
   useEffect(() => {
@@ -130,6 +133,7 @@ export function OrganizationProvider({ children }: { children?: ReactNode }) {
             setActiveOrganizationId: setSelectedId,
             activeRole,
             switchRole,
+            switchIdentityCenter,
             exitRole,
           }
         : null,

@@ -3,6 +3,7 @@ mod flash_backups;
 mod flash_operations;
 mod iam_groups;
 mod iam_roles;
+mod identity_center;
 pub use cloud_organizations::{
     CloudAccount, CloudOrganization, CloudOrganizationTree, CloudOrganizationalUnit,
     CloudScpAttachment, CloudServiceControlPolicy,
@@ -14,6 +15,10 @@ pub use flash_operations::{
 pub use iam_groups::{IamGroup, IamPermissionsBoundary};
 pub use iam_roles::{
     BrowserRoleSession, IamRole, IamRoleSession, IamRoleSessionInfo, NewIamRoleSession,
+};
+pub use identity_center::{
+    IdentityCenterAssignment, IdentityCenterGroup, IdentityCenterPermissionSet,
+    IdentityCenterSession, IdentityCenterUser,
 };
 pub use organizations::{OrganizationMemberQuota, UnassignedQuotaResource};
 mod flash_domains;
@@ -2259,7 +2264,8 @@ impl Store {
              SELECT $1, $2, p.id, i.id
              FROM principals p, iam_policies i
              WHERE p.id = $3 AND p.organization_id = $2
-               AND i.id = $4 AND i.organization_id = $2",
+               AND i.id = $4 AND i.organization_id = $2
+               AND NOT EXISTS (SELECT 1 FROM identity_center_account_roles r WHERE r.account_id=$2 AND r.role_principal_id=p.id)",
         )
         .bind(id)
         .bind(organization_id.0)

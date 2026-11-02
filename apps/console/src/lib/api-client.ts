@@ -18,6 +18,10 @@ import type {
   FlashCostManagement,
   FlashQuotaLimits,
   FlashGpuType,
+  IdentityCenterAssignment,
+  IdentityCenterGroup,
+  IdentityCenterPermissionSet,
+  IdentityCenterUser,
   FlashService,
   FlashContainerList,
   IamPolicy,
@@ -397,6 +401,23 @@ export class HeteroCloudApiClient {
         method: "POST",
         body: input,
       }),
+  };
+
+  readonly identityCenter = {
+    users: (account: string, signal?: AbortSignal) => this.request<CollectionResponse<IdentityCenterUser>>(organizationPath(account, "identity-center/users"), { signal }),
+    groups: (account: string, signal?: AbortSignal) => this.request<CollectionResponse<IdentityCenterGroup>>(organizationPath(account, "identity-center/groups"), { signal }),
+    createGroup: (account: string, name: string) => this.request<IdentityCenterGroup>(organizationPath(account, "identity-center/groups"), { method: "POST", body: { name } }),
+    deleteGroup: (account: string, group: string) => this.request<void>(organizationPath(account, `identity-center/groups/${encodeURIComponent(group)}`), { method: "DELETE" }),
+    groupUser: (account: string, group: string, user: string, add: boolean) => this.request<void>(organizationPath(account, `identity-center/groups/${encodeURIComponent(group)}/users/${encodeURIComponent(user)}`), { method: add ? "PUT" : "DELETE" }),
+    permissionSets: (account: string, signal?: AbortSignal) => this.request<CollectionResponse<IdentityCenterPermissionSet>>(organizationPath(account, "identity-center/permission-sets"), { signal }),
+    createPermissionSet: (account: string, body: { name: string; document: Record<string, unknown>; session_duration_seconds: number }) => this.request<IdentityCenterPermissionSet>(organizationPath(account, "identity-center/permission-sets"), { method: "POST", body }),
+    updatePermissionSet: (account: string, id: string, body: { document: Record<string, unknown>; session_duration_seconds: number }) => this.request<IdentityCenterPermissionSet>(organizationPath(account, `identity-center/permission-sets/${encodeURIComponent(id)}`), { method: "PUT", body }),
+    deletePermissionSet: (account: string, id: string) => this.request<void>(organizationPath(account, `identity-center/permission-sets/${encodeURIComponent(id)}`), { method: "DELETE" }),
+    assignments: (account: string, signal?: AbortSignal) => this.request<CollectionResponse<IdentityCenterAssignment>>(organizationPath(account, "identity-center/assignments"), { signal }),
+    myAssignments: (account: string, signal?: AbortSignal) => this.request<CollectionResponse<IdentityCenterAssignment>>(organizationPath(account, "identity-center/my-assignments"), { signal }),
+    assign: (account: string, body: { permission_set_id: string; account_id: string; subject_type: "user" | "group"; subject_id: string }) => this.request<IdentityCenterAssignment>(organizationPath(account, "identity-center/assignments"), { method: "POST", body }),
+    revoke: (account: string, id: string) => this.request<void>(organizationPath(account, `identity-center/assignments/${encodeURIComponent(id)}`), { method: "DELETE" }),
+    switchConsole: (account: string, id: string) => this.request<{ switched: true }>(organizationPath(account, `identity-center/my-assignments/${encodeURIComponent(id)}/session`), { method: "POST", body: { switch_console: true } }),
   };
 
   readonly iam = {

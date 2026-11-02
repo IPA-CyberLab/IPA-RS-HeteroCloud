@@ -14,6 +14,7 @@ pub struct IamRole {
     pub arn: String,
     pub trust_policy: Value,
     pub max_session_seconds: i32,
+    pub managed_by_identity_center: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -28,6 +29,7 @@ pub struct IamRoleSession {
     pub session_name: String,
     pub expires_at: DateTime<Utc>,
     pub session_policy: Option<PolicyDocument>,
+    pub identity_center_user_id: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
@@ -64,6 +66,7 @@ struct RoleSessionRow {
     session_name: String,
     expires_at: DateTime<Utc>,
     session_policy: Option<Value>,
+    identity_center_user_id: Option<Uuid>,
 }
 
 pub struct NewIamRoleSession<'a> {
@@ -82,7 +85,8 @@ pub struct NewIamRoleSession<'a> {
 
 const ROLE_SELECT: &str = "SELECT r.principal_id, r.organization_id, r.name,
     ('arn:aws:iam::' || a.account_number::text || ':role/' || r.name) AS arn,
-    r.trust_policy, r.max_session_seconds, r.created_at
+    r.trust_policy, r.max_session_seconds, r.created_at,
+    EXISTS(SELECT 1 FROM identity_center_account_roles ic WHERE ic.account_id=r.organization_id AND ic.role_principal_id=r.principal_id) AS managed_by_identity_center
     FROM iam_roles r JOIN organizations a ON a.id = r.organization_id";
 
 impl Store {
@@ -101,7 +105,7 @@ impl Store {
         Ok(sqlx::query_as::<_, BrowserRoleSession>("SELECT rs.id AS session_id, rs.organization_id,
             a.account_number::text AS account_number, a.name AS account_name, rs.role_principal_id AS principal_id,
             ('arn:aws:iam::' || a.account_number::text || ':role/' || r.name) AS role_arn,
-            rs.session_name, rs.expires_at, (rs.revoked_at IS NULL AND rs.expires_at > now() AND p.enabled) AS active
+            rs.session_name, rs.expires_at, (rs.revoked_at IS NULL AND rs.expires_at > now() AND p.enabled AND identity_center_session_is_active(rs.id)) AS active
             FROM sessions s JOIN iam_role_sessions rs ON rs.id = s.active_role_session_id
             JOIN iam_roles r ON r.principal_id = rs.role_principal_id AND r.organization_id = rs.organization_id
             JOIN principals p ON p.id = r.principal_id AND p.organization_id = r.organization_id
@@ -214,6 +218,15 @@ impl Store {
         .await?)
     }
 
+    pub async fn is_identity_center_role(
+        &self,
+        account: OrganizationId,
+        principal: PrincipalId,
+    ) -> Result<bool, StoreError> {
+        Ok(sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM identity_center_account_roles WHERE account_id=$1 AND role_principal_id=$2)")
+            .bind(account.0).bind(principal.0).fetch_one(&self.pool).await?)
+    }
+
     pub async fn list_iam_roles(
         &self,
         account: OrganizationId,
@@ -249,7 +262,7 @@ impl Store {
         principal: PrincipalId,
         trust: &Value,
     ) -> Result<(), StoreError> {
-        let changed = sqlx::query("UPDATE iam_roles SET trust_policy = $3, updated_at = now() WHERE organization_id = $1 AND principal_id = $2")
+        let changed = sqlx::query("UPDATE iam_roles SET trust_policy = $3, updated_at = now() WHERE organization_id = $1 AND principal_id = $2 AND NOT EXISTS (SELECT 1 FROM identity_center_account_roles WHERE account_id=$1 AND role_principal_id=$2)")
             .bind(account.0).bind(principal.0).bind(trust).execute(&self.pool).await?;
         if changed.rows_affected() != 1 {
             return Err(StoreError::NotFound);
@@ -267,6 +280,10 @@ impl Store {
             .bind(account.0).bind(role.0).fetch_optional(&mut *tx).await?;
         if present.is_none() {
             return Err(StoreError::NotFound);
+        }
+        if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM identity_center_account_roles WHERE account_id=$1 AND role_principal_id=$2)")
+            .bind(account.0).bind(role.0).fetch_one(&mut *tx).await? {
+            return Err(StoreError::RequestRejected("Identity Center roles are managed by their permission sets.".into()));
         }
         let in_use = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM iam_bindings WHERE organization_id = $1 AND principal_id = $2) OR
             EXISTS(SELECT 1 FROM iam_role_sessions WHERE organization_id = $1 AND role_principal_id = $2 AND revoked_at IS NULL AND expires_at > now()) OR
@@ -356,9 +373,9 @@ impl Store {
         token_hash: &[u8; 32],
     ) -> Result<Option<IamRoleSession>, StoreError> {
         let row = sqlx::query_as::<_, RoleSessionRow>("SELECT s.id, s.organization_id, s.role_principal_id AS principal_id,
-            s.source_organization_id, s.source_principal_id, s.source_arn, s.session_name, s.expires_at, s.session_policy
+            s.source_organization_id, s.source_principal_id, s.source_arn, s.session_name, s.expires_at, s.session_policy, s.identity_center_user_id
             FROM iam_role_sessions s JOIN principals p ON p.id=s.role_principal_id AND p.organization_id=s.organization_id
-            WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at > now() AND p.enabled")
+            WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at > now() AND p.enabled AND identity_center_session_is_active(s.id)")
             .bind(token_hash.as_slice()).fetch_optional(&self.pool).await?;
         row.map(|row| {
             Ok(IamRoleSession {
@@ -371,6 +388,7 @@ impl Store {
                 session_name: row.session_name,
                 expires_at: row.expires_at,
                 session_policy: row.session_policy.map(serde_json::from_value).transpose()?,
+                identity_center_user_id: row.identity_center_user_id,
             })
         })
         .transpose()
@@ -381,9 +399,9 @@ impl Store {
         session_id: Uuid,
     ) -> Result<Option<IamRoleSession>, StoreError> {
         let row = sqlx::query_as::<_, RoleSessionRow>("SELECT s.id, s.organization_id, s.role_principal_id AS principal_id,
-            s.source_organization_id, s.source_principal_id, s.source_arn, s.session_name, s.expires_at, s.session_policy
+            s.source_organization_id, s.source_principal_id, s.source_arn, s.session_name, s.expires_at, s.session_policy, s.identity_center_user_id
             FROM iam_role_sessions s JOIN principals p ON p.id=s.role_principal_id AND p.organization_id=s.organization_id
-            WHERE s.id=$1 AND s.revoked_at IS NULL AND s.expires_at > now() AND p.enabled")
+            WHERE s.id=$1 AND s.revoked_at IS NULL AND s.expires_at > now() AND p.enabled AND identity_center_session_is_active(s.id)")
             .bind(session_id).fetch_optional(&self.pool).await?;
         row.map(|row| {
             Ok(IamRoleSession {
@@ -396,6 +414,7 @@ impl Store {
                 session_name: row.session_name,
                 expires_at: row.expires_at,
                 session_policy: row.session_policy.map(serde_json::from_value).transpose()?,
+                identity_center_user_id: row.identity_center_user_id,
             })
         })
         .transpose()

@@ -29,6 +29,7 @@ const OrganizationQuotasPage = lazy(() =>
     default: module.OrganizationQuotasPage,
   })),
 );
+const IdentityCenterPage = lazy(() => import("@/features/identity-center/identity-center-page").then((module) => ({ default: module.IdentityCenterPage })));
 const ProjectsPage = lazy(() =>
   import("@/features/projects/projects-page").then((module) => ({
     default: module.ProjectsPage,
@@ -178,6 +179,7 @@ export function App() {
                 }
               />
               <Route path="/organizations/quotas" element={<LazyPage><OrganizationQuotasPage /></LazyPage>} />
+              <Route path="/identity-center" element={<LazyPage><IdentityCenterPage /></LazyPage>} />
               <Route
                 path="/projects"
                 element={

@@ -112,7 +112,7 @@ impl Store {
         Ok(())
     }
     pub async fn delete_binding(&self, org: OrganizationId, id: Uuid) -> Result<(), StoreError> {
-        let result = sqlx::query("DELETE FROM iam_bindings WHERE id=$1 AND organization_id=$2")
+        let result = sqlx::query("DELETE FROM iam_bindings b WHERE id=$1 AND organization_id=$2 AND NOT EXISTS (SELECT 1 FROM identity_center_account_roles r WHERE r.account_id=b.organization_id AND r.role_principal_id=b.principal_id)")
             .bind(id)
             .bind(org.0)
             .execute(&self.pool)

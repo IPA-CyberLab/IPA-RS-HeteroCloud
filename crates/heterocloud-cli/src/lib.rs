@@ -48,7 +48,7 @@ pub struct Cli {
     )]
     pub api_key: Option<String>,
 
-    /// Read the service-account API key from a mode 0600 or 0400 file.
+    /// Read a service-account key or short-lived role session from a mode 0600 or 0400 file.
     #[arg(
         long,
         global = true,
@@ -491,7 +491,7 @@ fn load_api_key(value: Option<String>, path: Option<&Path>) -> Result<String, Cl
         (None, None) => return Err(CliError::MissingApiKey),
         (Some(_), Some(_)) => return Err(CliError::InvalidApiKey),
     };
-    if !value.starts_with("hc_")
+    if !(value.starts_with("hc_") || (path.is_some() && value.starts_with("hcr_")))
         || value.len() > 4_096
         || value.chars().any(char::is_whitespace)
         || value.chars().any(char::is_control)
@@ -855,6 +855,25 @@ fn is_public_ipv4(address: Ipv4Addr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn role_session_tokens_are_only_accepted_from_private_files()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::Write;
+        let token = "hcr_example-short-lived-token";
+        assert!(load_api_key(Some(token.into()), None).is_err());
+        let mut file = tempfile::NamedTempFile::new()?;
+        file.write_all(token.as_bytes())?;
+        assert_eq!(load_api_key(None, Some(file.path()))?, token);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.as_file()
+                .set_permissions(fs::Permissions::from_mode(0o644))?;
+            assert!(load_api_key(None, Some(file.path())).is_err());
+        }
+        Ok(())
+    }
 
     #[test]
     fn normalizes_and_validates_domains() -> Result<(), Box<dyn std::error::Error>> {

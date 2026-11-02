@@ -36,6 +36,9 @@ struct Config {
     /// Enable cross-account Registry credential limits after the API rollout.
     #[arg(long)]
     enable_organization_registry_credentials: bool,
+    /// Enable Identity Center only after every serving API replica is upgraded.
+    #[arg(long)]
+    enable_identity_center: bool,
     #[arg(long, env = "HETEROCLOUD_DATABASE_URL_FILE")]
     database_url_file: PathBuf,
 
@@ -123,6 +126,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     let config = Config::parse();
     let database_url = read_secret(&config.database_url_file).await?;
+    if config.enable_identity_center {
+        let store = Store::connect(
+            database_url.expose_secret(),
+            config.database_max_connections,
+        )
+        .await?;
+        store.migrate().await?;
+        store.enable_identity_center().await?;
+        println!("identity_center_enabled=true");
+        return Ok(());
+    }
     if config.enable_organization_registry_credentials {
         let store = Store::connect(
             database_url.expose_secret(),

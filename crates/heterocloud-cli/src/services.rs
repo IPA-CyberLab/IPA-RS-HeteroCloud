@@ -217,6 +217,93 @@ pub enum IamCommand {
         #[command(subcommand)]
         command: IamApiKeyCommand,
     },
+    /// Manage organization-wide permission sets and account assignments.
+    IdentityCenter {
+        #[command(subcommand)]
+        command: IdentityCenterCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum IdentityCenterCommand {
+    Users,
+    Groups {
+        #[command(subcommand)]
+        command: IdentityCenterGroupCommand,
+    },
+    PermissionSets {
+        #[command(subcommand)]
+        command: IdentityCenterPermissionSetCommand,
+    },
+    Assignments {
+        #[command(subcommand)]
+        command: IdentityCenterAssignmentCommand,
+    },
+    /// List account assignments available to the current user.
+    MyAssignments,
+    /// Save a short-lived role token to a new private file.
+    StartSession {
+        id: Uuid,
+        #[arg(long)]
+        output_file: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum IdentityCenterGroupCommand {
+    List,
+    Create {
+        #[arg(long)]
+        name: String,
+    },
+    Delete {
+        id: Uuid,
+        #[arg(long)]
+        yes: bool,
+    },
+    AddUser {
+        group: Uuid,
+        user: Uuid,
+    },
+    RemoveUser {
+        group: Uuid,
+        user: Uuid,
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum IdentityCenterPermissionSetCommand {
+    List,
+    Create {
+        #[arg(short, long, default_value = "-")]
+        file: String,
+    },
+    Update {
+        id: Uuid,
+        #[arg(short, long, default_value = "-")]
+        file: String,
+    },
+    Delete {
+        id: Uuid,
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum IdentityCenterAssignmentCommand {
+    List,
+    Create {
+        #[arg(short, long, default_value = "-")]
+        file: String,
+    },
+    Delete {
+        id: Uuid,
+        #[arg(long)]
+        yes: bool,
+    },
 }
 #[derive(Debug, Subcommand)]
 pub enum IamAccountCommand {
@@ -280,6 +367,7 @@ pub enum IamApiKeyCommand {
 pub(crate) async fn execute_iam(args: IamArgs, settings: ApiSettings) -> Result<(), CliError> {
     let client = ApiClient::new(settings)?;
     let mut output_file = None;
+    let mut role_session_output = false;
     let (method, path, body) = match args.command {
         IamCommand::Whoami => (Method::GET, "api/v1/auth/identity".into(), None),
         IamCommand::ServiceAccounts { command } => match command {
@@ -355,6 +443,97 @@ pub(crate) async fn execute_iam(args: IamArgs, settings: ApiSettings) -> Result<
                 )
             }
         },
+        IamCommand::IdentityCenter { command } => match command {
+            IdentityCenterCommand::Users => (Method::GET, "identity-center/users".into(), None),
+            IdentityCenterCommand::MyAssignments => {
+                (Method::GET, "identity-center/my-assignments".into(), None)
+            }
+            IdentityCenterCommand::StartSession {
+                id,
+                output_file: file,
+            } => {
+                if file.exists() {
+                    return Err(CliError::InvalidManifest(
+                        "output file already exists".into(),
+                    ));
+                }
+                output_file = Some(file);
+                role_session_output = true;
+                (
+                    Method::POST,
+                    format!("identity-center/my-assignments/{id}/session"),
+                    Some(json!({"switch_console":false})),
+                )
+            }
+            IdentityCenterCommand::Groups { command } => match command {
+                IdentityCenterGroupCommand::List => {
+                    (Method::GET, "identity-center/groups".into(), None)
+                }
+                IdentityCenterGroupCommand::Create { name } => (
+                    Method::POST,
+                    "identity-center/groups".into(),
+                    Some(json!({"name":name})),
+                ),
+                IdentityCenterGroupCommand::Delete { id, yes } => {
+                    require_yes(yes)?;
+                    (Method::DELETE, format!("identity-center/groups/{id}"), None)
+                }
+                IdentityCenterGroupCommand::AddUser { group, user } => (
+                    Method::PUT,
+                    format!("identity-center/groups/{group}/users/{user}"),
+                    None,
+                ),
+                IdentityCenterGroupCommand::RemoveUser { group, user, yes } => {
+                    require_yes(yes)?;
+                    (
+                        Method::DELETE,
+                        format!("identity-center/groups/{group}/users/{user}"),
+                        None,
+                    )
+                }
+            },
+            IdentityCenterCommand::PermissionSets { command } => match command {
+                IdentityCenterPermissionSetCommand::List => {
+                    (Method::GET, "identity-center/permission-sets".into(), None)
+                }
+                IdentityCenterPermissionSetCommand::Create { file } => (
+                    Method::POST,
+                    "identity-center/permission-sets".into(),
+                    Some(read_manifest::<Value>(&file)?),
+                ),
+                IdentityCenterPermissionSetCommand::Update { id, file } => (
+                    Method::PUT,
+                    format!("identity-center/permission-sets/{id}"),
+                    Some(read_manifest::<Value>(&file)?),
+                ),
+                IdentityCenterPermissionSetCommand::Delete { id, yes } => {
+                    require_yes(yes)?;
+                    (
+                        Method::DELETE,
+                        format!("identity-center/permission-sets/{id}"),
+                        None,
+                    )
+                }
+            },
+            IdentityCenterCommand::Assignments { command } => match command {
+                IdentityCenterAssignmentCommand::List => {
+                    (Method::GET, "identity-center/assignments".into(), None)
+                }
+                IdentityCenterAssignmentCommand::Create { file } => (
+                    Method::POST,
+                    "identity-center/assignments".into(),
+                    Some(read_manifest::<Value>(&file)?),
+                ),
+                IdentityCenterAssignmentCommand::Delete { id, yes } => {
+                    require_yes(yes)?;
+                    (
+                        Method::DELETE,
+                        format!("identity-center/assignments/{id}"),
+                        None,
+                    )
+                }
+            },
+        },
     };
     let path = if path.starts_with("api/") {
         path
@@ -377,7 +556,21 @@ pub(crate) async fn execute_iam(args: IamArgs, settings: ApiSettings) -> Result<
                 path: path.display().to_string(),
                 source,
             })?;
-        file.write_all(serde_json::to_string_pretty(&value)?.as_bytes())
+        let contents = if role_session_output {
+            let token = value
+                .get("access_token")
+                .and_then(Value::as_str)
+                .filter(|token| {
+                    token.starts_with("hcr_")
+                        && token.len() <= 256
+                        && !token.chars().any(char::is_whitespace)
+                })
+                .ok_or_else(|| CliError::InvalidManifest("invalid role session response".into()))?;
+            token.to_owned()
+        } else {
+            serde_json::to_string_pretty(&value)?
+        };
+        file.write_all(contents.as_bytes())
             .map_err(|source| CliError::InputFile {
                 path: path.display().to_string(),
                 source,
@@ -393,7 +586,14 @@ pub(crate) async fn execute_iam(args: IamArgs, settings: ApiSettings) -> Result<
                 path: path.display().to_string(),
                 source: e.error,
             })?;
-        println!("{{\"saved\":true}}");
+        if role_session_output {
+            println!(
+                "{}",
+                json!({"saved":true,"account_id":value["session"]["account_id"],"expires_at":value["session"]["expires_at"]})
+            );
+        } else {
+            println!("{{\"saved\":true}}");
+        }
     } else {
         println!("{}", serde_json::to_string_pretty(&value)?);
     }
