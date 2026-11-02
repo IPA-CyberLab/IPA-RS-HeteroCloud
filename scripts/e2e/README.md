@@ -125,3 +125,21 @@ short-lived cookie belongs to a disposable test user; it does not test the
 identity provider's interactive login. `remove` deletes this user and session.
 Keep the fixture and screenshots private; publish only reviewed reports without
 API keys, cookies, secret values or database URLs.
+
+For live organization and IAM checks, use a separate disposable fixture after
+both organization quota gates and IAM time conditions are enabled:
+
+```sh
+python3 scripts/e2e/vpc_fixture.py create --dsn-file "$PRIVATE_DIR/database-url" --fixture "$PRIVATE_DIR/iam-fixture.json"
+python3 scripts/e2e/vpc_fixture.py browser-session --dsn-file "$PRIVATE_DIR/database-url" --fixture "$PRIVATE_DIR/iam-fixture.json"
+node scripts/e2e/organization_iam_browser.mjs "$HETEROCLOUD_ENDPOINT" "$PRIVATE_DIR/iam-fixture.json" "$PRIVATE_DIR/iam-browser"
+python3 scripts/e2e/vpc_fixture.py remove --dsn-file "$PRIVATE_DIR/database-url" --fixture "$PRIVATE_DIR/iam-fixture.json"
+```
+
+This uses the actual API and desktop/mobile Chromium to inspect shared limits,
+create a time-conditioned IAM policy, and verify that a matching explicit deny
+overrides account administrator access while a nonmatching deny does not. The
+`iam-only` final argument skips the shared-quota page for staged deployments.
+It creates a disposable cookie in the database and does not test the identity
+provider's interactive login. Always remove the fixture on failure as well;
+keep the database URL, cookie and fixture private.
