@@ -541,6 +541,32 @@ impl Store {
         ).fetch_one(&self.pool).await?)
     }
 
+    pub async fn organization_registry_credentials_enabled(&self) -> Result<bool, StoreError> {
+        Ok(sqlx::query_scalar(
+            "SELECT organization_registry_credentials_enabled FROM cloud_security_activation WHERE singleton = true",
+        ).fetch_one(&self.pool).await?)
+    }
+
+    /// After every API replica is upgraded, serialize activation against all
+    /// in-flight allocation transactions so the limit has a clear boundary.
+    pub async fn enable_organization_registry_credentials(&self) -> Result<(), StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock(hashtextextended('heterocloud-quota-defaults', 0))",
+        )
+        .execute(&mut *transaction)
+        .await?;
+        let updated = sqlx::query("UPDATE cloud_security_activation SET organization_registry_credentials_enabled = true WHERE singleton = true")
+            .execute(&mut *transaction).await?;
+        if updated.rows_affected() != 1 {
+            return Err(StoreError::Invariant(
+                "missing cloud security activation row",
+            ));
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
+
     pub async fn iam_conditions_enabled(&self) -> Result<bool, StoreError> {
         Ok(sqlx::query_scalar(
             "SELECT iam_conditions_enabled FROM cloud_security_activation WHERE singleton = true",
@@ -1829,6 +1855,34 @@ impl Store {
                 "registry credential limit exceeded: limit is {}",
                 quota.registry.max_credentials
             )));
+        }
+        let enabled: bool = sqlx::query_scalar(
+            "SELECT organization_registry_credentials_enabled FROM cloud_security_activation WHERE singleton = true",
+        ).fetch_one(&mut *transaction).await?;
+        if enabled {
+            let (cloud_id, value) = sqlx::query_as::<_, (Uuid, Value)>(
+                "SELECT c.id, COALESCE(q.limits, d.limits)
+                 FROM cloud_organization_accounts a
+                 JOIN cloud_organizations c ON c.id = a.organization_id
+                 CROSS JOIN resource_quota_defaults d
+                 LEFT JOIN organization_resource_quotas q ON q.organization_id = c.management_account_id
+                 WHERE a.account_id = $1 AND d.singleton = true",
+            ).bind(organization_id.0).fetch_optional(&mut *transaction).await?
+                .ok_or(StoreError::NotFound)?;
+            let limit = parse_resource_quota(value)?.registry.max_credentials;
+            let organization_active: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM registry_credentials c
+                 JOIN cloud_organization_accounts a ON a.account_id = c.organization_id
+                 WHERE a.organization_id = $1 AND c.status IN ('provisioning', 'active')",
+            )
+            .bind(cloud_id)
+            .fetch_one(&mut *transaction)
+            .await?;
+            if organization_active >= i64::from(limit) {
+                return Err(StoreError::RequestRejected(format!(
+                    "cloud organization registry credential limit exceeded: limit is {limit}"
+                )));
+            }
         }
         let record = sqlx::query_as::<_, RegistryCredentialRecord>(
             "INSERT INTO registry_credentials

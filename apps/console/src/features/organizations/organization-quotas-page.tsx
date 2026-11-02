@@ -24,6 +24,7 @@ function SharedOrganizationLimits({ group }: { group: NonNullable<OrganizationQu
     ["Flash CPU (millicores)", limits.flash.max_total_cpu_millis], ["Flash メモリ (MiB)", limits.flash.max_total_memory_mib],
     ["Flash ディスク (GiB)", limits.flash.max_total_disk_gib], ["Syouyu バケット数", limits.syouyu.max_buckets],
     ["Syouyu 容量 (bytes)", limits.syouyu.max_total_bytes],
+    ["Registry 認証情報数", limits.registry.max_credentials],
   ];
   const weekly: [string, number][] = [
     ["Flash 週次 CPU (millicore-seconds)", limits.flash.max_weekly_cpu_millicore_seconds],
@@ -32,11 +33,11 @@ function SharedOrganizationLimits({ group }: { group: NonNullable<OrganizationQu
   ];
   return <Container header={<Header variant="h3" description={`管理アカウント ${group.management_account_number} の設定を、組織内の全アカウントで共有します。`}>組織全体の共有上限</Header>}>
     <SpaceBetween size="m">
-      <Box color="text-body-secondary">サービスの割当上限: {group.service_quotas_enabled ? "適用中" : "未適用"} · Flash 週次上限: {group.flash_weekly_quotas_enabled ? "適用中" : "未適用"}</Box>
+      <Box color="text-body-secondary">サービスの割当上限: {group.service_quotas_enabled ? "適用中" : "未適用"} · Flash 週次上限: {group.flash_weekly_quotas_enabled ? "適用中" : "未適用"} · Registry 認証情報数: {group.registry_credentials_enabled ? "適用中" : "未適用"}</Box>
       <ColumnLayout columns={3} variant="text-grid">
         {[...allocations, ...weekly].map(([label, value]) => <div key={label}><Box variant="awsui-key-label">{label}</Box><Box>{formatNumber(value)}</Box></div>)}
       </ColumnLayout>
-      <Box color="text-body-secondary">Flash Registry の容量と認証情報はアカウント単位の上限です。</Box>
+      <Box color="text-body-secondary">Flash Registry の保存容量はアカウント単位の上限です。</Box>
     </SpaceBetween>
   </Container>;
 }

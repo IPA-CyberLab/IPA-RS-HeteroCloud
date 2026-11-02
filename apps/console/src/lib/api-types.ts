@@ -211,6 +211,7 @@ export interface OrganizationQuotaOverview {
     effective_limits: ResourceQuotaLimits;
     service_quotas_enabled: boolean;
     flash_weekly_quotas_enabled: boolean;
+    registry_credentials_enabled?: boolean;
   } | null;
   member: OrganizationMemberQuota;
   members: OrganizationMemberQuota[];
@@ -227,6 +228,7 @@ export interface OwnerQuotaOverview {
   tenants: ResourceQuotaTenant[];
   organization_service_quotas_enabled?: boolean;
   organization_flash_weekly_quotas_enabled?: boolean;
+  organization_registry_credentials_enabled?: boolean;
 }
 
 export interface UserExternalIdentity {

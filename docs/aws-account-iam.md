@@ -100,6 +100,12 @@ understand time conditions. After verifying the actual running API and worker
 images and endpoints, the operator may enable that gate. Never roll back to a
 binary that cannot evaluate a policy condition after accepting one.
 
+Migration 0032 keeps `organization_registry_credentials_enabled` false until
+all API instances enforce the shared Registry credential reservation. After
+verifying every API and worker image and endpoint, run
+`heterocloud-worker --enable-organization-registry-credentials` in a worker
+container. Activation waits for in-flight quota reservations and is idempotent.
+
 Verify the deployment's actual image digests and readiness, rather than only
 the desired image, before activation. Once activated, do not roll back to a
 binary without this migration and enforcement: old binaries also cannot start

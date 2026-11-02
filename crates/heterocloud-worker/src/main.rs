@@ -33,6 +33,9 @@ struct Config {
     /// organization weekly meter. Intended for a cluster administrator job.
     #[arg(long)]
     enable_organization_flash_weekly_quotas: bool,
+    /// Enable cross-account Registry credential limits after the API rollout.
+    #[arg(long)]
+    enable_organization_registry_credentials: bool,
     #[arg(long, env = "HETEROCLOUD_DATABASE_URL_FILE")]
     database_url_file: PathBuf,
 
@@ -120,6 +123,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     let config = Config::parse();
     let database_url = read_secret(&config.database_url_file).await?;
+    if config.enable_organization_registry_credentials {
+        let store = Store::connect(
+            database_url.expose_secret(),
+            config.database_max_connections,
+        )
+        .await?;
+        store.migrate().await?;
+        store.enable_organization_registry_credentials().await?;
+        println!("organization_registry_credentials_enabled=true");
+        return Ok(());
+    }
     if config.enable_organization_flash_weekly_quotas {
         let store = Store::connect(
             database_url.expose_secret(),

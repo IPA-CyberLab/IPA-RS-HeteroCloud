@@ -55,4 +55,17 @@ describe("organization quotas", () => {
     await user.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(update).toHaveBeenCalledWith("org-1", "user-1", limits));
   });
+  it("shows whether the shared Registry credential limit is active", async () => {
+    organization.role = "admin";
+    vi.spyOn(api.organizations, "quotas").mockResolvedValue({
+      organization: tenant, member, members: [member],
+      cloud_organization: { id: "cloud-1", name: "Cloud", management_account_number: "123456789012",
+        effective_limits: limits, service_quotas_enabled: true, flash_weekly_quotas_enabled: true,
+        registry_credentials_enabled: true },
+    });
+    vi.spyOn(api.organizations, "unassignedQuotaResources").mockResolvedValue({ items: [] });
+    show();
+    expect(await screen.findByText(/Registry 認証情報数: 適用中/)).toBeInTheDocument();
+    expect(screen.getByText("Registry 認証情報数")).toBeInTheDocument();
+  });
 });

@@ -1,4 +1,4 @@
-use std::{env, error::Error};
+use std::{env, error::Error, time::Duration};
 
 use heterocloud_domain::{OrganizationId, ResourceQuotaLimits};
 use heterocloud_store::{BootstrapAdmin, Store, StoreError};
@@ -85,6 +85,7 @@ async fn organization_allocation_is_shared_across_accounts_and_serialized()
     limits.flash.max_memory_mib_per_vm = 128;
     limits.flash.max_total_memory_mib = 128;
     limits.syouyu.max_buckets = 1;
+    limits.registry.max_credentials = 1;
     store
         .set_organization_resource_quota(management, &limits)
         .await?;
@@ -102,6 +103,66 @@ async fn organization_allocation_is_shared_across_accounts_and_serialized()
         weekly_limits.flash.max_weekly_cpu_millicore_seconds,
         limits.flash.max_weekly_cpu_millicore_seconds
     );
+
+    assert!(!store.organization_registry_credentials_enabled().await?);
+    let first_reservation = store
+        .reserve_registry_credential(first.id, first_principal, "before-first")
+        .await?;
+    let second_reservation = store
+        .reserve_registry_credential(second.id, second_principal, "before-second")
+        .await?;
+    store
+        .cancel_registry_credential_reservation(first.id, first_reservation.id)
+        .await?;
+    store
+        .cancel_registry_credential_reservation(second.id, second_reservation.id)
+        .await?;
+    // Activation cannot race a reservation that started under the old gate.
+    let mut in_flight = store.pool().begin().await?;
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('heterocloud-quota-defaults', 0))",
+    )
+    .execute(&mut *in_flight)
+    .await?;
+    let activation_store = store.clone();
+    let mut activation = tokio::spawn(async move {
+        activation_store
+            .enable_organization_registry_credentials()
+            .await
+    });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), &mut activation)
+            .await
+            .is_err()
+    );
+    in_flight.commit().await?;
+    tokio::time::timeout(Duration::from_secs(5), activation).await???;
+    store.enable_organization_registry_credentials().await?;
+    assert!(store.organization_registry_credentials_enabled().await?);
+    let (one, two) = tokio::join!(
+        store.reserve_registry_credential(first.id, first_principal, "concurrent-first"),
+        store.reserve_registry_credential(second.id, second_principal, "concurrent-second"),
+    );
+    let (winner_account, winner_reservation, loser_account, loser_principal) = match (one, two) {
+        (Ok(record), Err(StoreError::RequestRejected(message))) => {
+            assert!(message.contains("cloud organization registry credential limit"));
+            (first.id, record, second.id, second_principal)
+        }
+        (Err(StoreError::RequestRejected(message)), Ok(record)) => {
+            assert!(message.contains("cloud organization registry credential limit"));
+            (second.id, record, first.id, first_principal)
+        }
+        other => return Err(format!("unexpected registry reservations: {other:?}").into()),
+    };
+    store
+        .cancel_registry_credential_reservation(winner_account, winner_reservation.id)
+        .await?;
+    let replacement = store
+        .reserve_registry_credential(loser_account, loser_principal, "after-release")
+        .await?;
+    store
+        .cancel_registry_credential_reservation(loser_account, replacement.id)
+        .await?;
     let enabled: bool = sqlx::query_scalar(
         "SELECT organization_service_quotas_enabled FROM cloud_security_activation WHERE singleton",
     )
@@ -295,6 +356,12 @@ async fn organization_allocation_is_shared_across_accounts_and_serialized()
         })
         .await?;
     let own = &independent.memberships[0];
+    let isolated_credential = store
+        .reserve_registry_credential(own.organization_id, own.principal_id, "independent")
+        .await?;
+    store
+        .cancel_registry_credential_reservation(own.organization_id, isolated_credential.id)
+        .await?;
     let project = store
         .create_project(OrganizationId(own.organization_id.0), "main", "Main")
         .await?;

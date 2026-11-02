@@ -640,11 +640,17 @@ async fn owner_quota_overview(
         .organization_flash_weekly_quotas_enabled()
         .await
         .map_err(ApiError::from_store)?;
+    let organization_registry_credentials_enabled = state
+        .store
+        .organization_registry_credentials_enabled()
+        .await
+        .map_err(ApiError::from_store)?;
     Ok(Json(json!({
         "defaults": defaults,
         "tenants": tenants,
         "organization_service_quotas_enabled": organization_service_quotas_enabled,
         "organization_flash_weekly_quotas_enabled": organization_flash_weekly_quotas_enabled,
+        "organization_registry_credentials_enabled": organization_registry_credentials_enabled,
     })))
 }
 
@@ -2347,12 +2353,18 @@ async fn organization_quotas(
             .organization_flash_weekly_quotas_enabled()
             .await
             .map_err(ApiError::from_store)?;
+        let registry_credentials_enabled = state
+            .store
+            .organization_registry_credentials_enabled()
+            .await
+            .map_err(ApiError::from_store)?;
         Ok(Json(
             json!({ "organization": tenant, "member": own, "members": members,
                 "cloud_organization": {"id":cloud_organization.id, "name":cloud_organization.name,
                     "management_account_number":cloud_organization.management_account_number,
                     "effective_limits":shared_limits, "service_quotas_enabled":service_quotas_enabled,
-                    "flash_weekly_quotas_enabled":weekly_quotas_enabled} }),
+                    "flash_weekly_quotas_enabled":weekly_quotas_enabled,
+                    "registry_credentials_enabled":registry_credentials_enabled} }),
         ))
     } else {
         authorize_actor_with_implicit_allow(

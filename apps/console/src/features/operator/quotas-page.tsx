@@ -887,9 +887,7 @@ export function OwnerQuotasPage() {
         組織別ハードリミット
       </Header>
       <Box color="text-body-secondary">
-        {quotas.data.organization_service_quotas_enabled
-          ? `Flow・Flash・Syouyuのサービス割当は組織内のアカウント合計で制限します。Flashの週次利用量は${quotas.data.organization_flash_weekly_quotas_enabled ? "組織全体でも制限します" : "現在アカウント単位です"}。Registryの容量はアカウント単位です。`
-          : "組織のサービス割当上限は有効化前です。現在の制限はアカウント単位です。"}
+        {`Flow・Flash・Syouyuのサービス割当は${quotas.data.organization_service_quotas_enabled ? "組織全体でも制限します" : "現在アカウント単位です"}。Flashの週次利用量は${quotas.data.organization_flash_weekly_quotas_enabled ? "組織全体でも制限します" : "現在アカウント単位です"}。Registryの認証情報数は${quotas.data.organization_registry_credentials_enabled ? "組織全体でも制限します" : "現在アカウント単位です"}。Registryの容量はアカウント単位です。`}
       </Box>
       <DataTable
         columns={columns}
