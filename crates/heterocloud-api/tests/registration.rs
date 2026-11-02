@@ -377,7 +377,10 @@ async fn registration_checks_invitation_before_hashing_and_consumes_it_once()
         .await?;
     let visible: Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await?)?;
-    assert_eq!(visible["cloud_organization"]["effective_limits"], serde_json::to_value(&quota)?);
+    assert_eq!(
+        visible["cloud_organization"]["effective_limits"],
+        serde_json::to_value(&quota)?
+    );
     let visible_members = visible["members"].as_array().ok_or("members")?;
     assert!(
         visible_members
