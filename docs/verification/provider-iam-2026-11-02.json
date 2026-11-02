@@ -1,0 +1,18 @@
+{
+  "observed_at": "2026-11-02T11:17:47Z",
+  "endpoint": "https://heterocloud.mizuame.app",
+  "cloud_release": "v0.1.110-platform.16",
+  "image_digest": "sha256:8d27f736bd182a5d5ebb36f59d18c0551e9b4bde49b590bbf8ebbb365c898e1b",
+  "real_api": true,
+  "external_identity_provider_tested": false,
+  "provider_data_plane_tested": false,
+  "checks": [
+    "assumed_role_allowed_operation",
+    "role_session_registry_and_syouyu_durable_credential_denied",
+    "browser_role_durable_credential_denied",
+    "existing_flow_developer_key_denied_after_scp_attachment_and_allowed_after_detachment",
+    "disposable_organizations_user_and_credentials_removed"
+  ],
+  "cleanup_verified": true,
+  "notes": "The Flow service was a database-only fixture. No provider workload or external data-plane connection was created."
+}
