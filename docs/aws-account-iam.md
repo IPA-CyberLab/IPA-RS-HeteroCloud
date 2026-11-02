@@ -36,6 +36,14 @@ the worker reconciles affected provider policies asynchronously; enforcement
 follows the normal Flash metering and reconciliation interval. Account and
 member weekly limits remain in force.
 
+Identity policies, permissions boundaries, SCPs, and role session policies
+support AWS date comparisons on the always-present `aws:CurrentTime` key:
+`DateEquals`, `DateNotEquals`, `DateLessThan`, `DateLessThanEquals`,
+`DateGreaterThan`, and `DateGreaterThanEquals`. Values may be RFC 3339 timestamps
+or whole Unix seconds. A request uses one captured timestamp throughout all
+layers. Other condition keys and operators are rejected; in particular client
+IP headers are not trusted as a source for `aws:SourceIp`.
+
 Registry storage and direct provider credential usage remain account-scoped.
 Do not assume those are organization-wide.
 
@@ -81,6 +89,11 @@ policy refresh for every Flash service; repeat it safely to retry a refresh.
 Confirm the refresh queue drains and each provider policy includes the correct
 account set before relying on the organization-wide weekly ceiling.
 
+Migration 0031 keeps `iam_conditions_enabled` false until all API instances
+understand time conditions. After verifying the actual running API and worker
+images and endpoints, the operator may enable that gate. Never roll back to a
+binary that cannot evaluate a policy condition after accepting one.
+
 Verify the deployment's actual image digests and readiness, rather than only
 the desired image, before activation. Once activated, do not roll back to a
 binary without this migration and enforcement: old binaries also cannot start
@@ -93,8 +106,8 @@ credentials have their own authorization and revocation mechanisms.
 This is not complete AWS Organizations or IAM compatibility. It does not yet
 implement IAM Identity Center and permission sets, account invitations between
 organizations, AWS root credentials, federated or service principals in role
-trust policies, general resource-based and cross-account policies, policy
-conditions, general AWS service ARNs, AWS SDK/CLI APIs, consolidated billing,
+trust policies, general resource-based and cross-account policies, condition
+operators or keys beyond the time subset above, general AWS service ARNs, AWS SDK/CLI APIs, consolidated billing,
 or direct enforcement on previously issued data-plane credentials. Unsupported
 policy fields are rejected. AWS resource and action names cannot be assumed to
 map to HeteroCloud resources. Provider-specific controls must remain in place.
@@ -106,4 +119,5 @@ HeteroCloud bearer token, not an AWS STS access-key/secret/session-token tuple.
 
 AWS describes the source semantics in its [Organizations concepts](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_getting-started_concepts.html),
 [SCP documentation](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps.html),
-and [IAM policy evaluation documentation](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html).
+[IAM policy evaluation documentation](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html),
+and [condition operator reference](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_condition_operators.html).

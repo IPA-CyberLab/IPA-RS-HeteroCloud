@@ -68,9 +68,17 @@ pub async fn allowed(
     let Ok(Some(context)) = context else {
         return false;
     };
-    evaluate_account_permissions(state, &context, org, action, resource, false)
-        .await
-        .is_ok_and(|evaluation| evaluation.decision == Decision::Allow)
+    evaluate_account_permissions(
+        state,
+        &context,
+        org,
+        action,
+        resource,
+        false,
+        chrono::Utc::now(),
+    )
+    .await
+    .is_ok_and(|evaluation| evaluation.decision == Decision::Allow)
 }
 
 pub fn spawn_reconciler(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {

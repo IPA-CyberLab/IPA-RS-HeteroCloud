@@ -403,6 +403,7 @@ export interface PolicyStatement {
   not_actions?: string[];
   resources: string[];
   not_resources?: string[];
+  conditions?: Record<string, Record<string, string[]>>;
 }
 
 export interface PolicyDocument {

@@ -160,6 +160,23 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
         Some(json!({"name":"Pending", "document":{"Statement":{"Effect":"Deny","Action":"*","Resource":"*"}}})),
         Some(csrf.expose_secret()), None).await?;
     assert_eq!(blocked_policy.0, StatusCode::SERVICE_UNAVAILABLE);
+    let conditional_policy = json!({"name":"TimeLimited", "document":{
+        "Statement":{"Effect":"Allow","Action":"project:List","Resource":"*",
+            "Condition":{"DateLessThan":{"aws:CurrentTime":"2100-01-01T00:00:00Z"}}}}});
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            &format!("{base}/iam/policies"),
+            Some(conditional_policy.clone()),
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::BAD_REQUEST,
+        "conditions cannot be accepted during a mixed rollout"
+    );
     let blocked_group = request(
         state.clone(),
         "POST",
@@ -173,6 +190,24 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
     sqlx::query("UPDATE cloud_security_activation SET scp_enabled = true WHERE singleton = true")
         .execute(store.pool())
         .await?;
+    sqlx::query(
+        "UPDATE cloud_security_activation SET iam_conditions_enabled = true WHERE singleton = true",
+    )
+    .execute(store.pool())
+    .await?;
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            &format!("{base}/iam/policies"),
+            Some(conditional_policy),
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::CREATED
+    );
     let (status, unit) = request(
         state.clone(),
         "POST",
@@ -213,6 +248,71 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
             "*"
         )
         .await
+    );
+    let dated_deny = json!({"name":"TimedDeny", "document":{"Statement":{
+        "Effect":"Deny", "Action":"project:List", "Resource":"*",
+        "Condition":{"DateLessThan":{"aws:CurrentTime":"2100-01-01T00:00:00Z"}}}}});
+    let (status, timed_policy) = request(
+        state.clone(),
+        "POST",
+        &format!("{base}/organization/policies"),
+        Some(dated_deny),
+        Some(csrf.expose_secret()),
+        None,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::CREATED);
+    let timed_id = timed_policy["id"].as_str().ok_or("timed policy id")?;
+    let timed_attachment =
+        format!("{base}/organization/policies/{timed_id}/targets/unit/{unit_id}");
+    assert_eq!(
+        request(
+            state.clone(),
+            "PUT",
+            &timed_attachment,
+            None,
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "GET",
+            &format!("/api/v1/organizations/{member_id}/projects"),
+            None,
+            None,
+            None
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert!(
+        !heterocloud_api::flash_operations::allowed(
+            &state,
+            membership.principal_id,
+            member_account,
+            "project:List",
+            "*"
+        )
+        .await
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "DELETE",
+            &timed_attachment,
+            None,
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
     );
     let unsupported = request(state.clone(), "POST", &format!("{base}/organization/policies"), Some(json!({"name":"Unsupported", "document":{"Statement":{"Effect":"Deny", "Action":"*", "Resource":"*", "Condition":{"StringEquals":{"x":"y"}}}}})), Some(csrf.expose_secret()), None).await?;
     assert_eq!(unsupported.0, StatusCode::BAD_REQUEST);
@@ -624,6 +724,55 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
     store
         .create_binding(management, source_robot.id, source_policy.id)
         .await?;
+    let timed_session = json!({"role_arn":role_arn,"session_name":"timed","session_policy":{
+        "Version":"2012-10-17", "Statement":{"Effect":"Allow","Action":"project:List","Resource":"*",
+        "Condition":{"DateLessThan":{"aws:CurrentTime":"2100-01-01T00:00:00Z"}}}}});
+    sqlx::query("UPDATE cloud_security_activation SET iam_conditions_enabled = false WHERE singleton = true")
+        .execute(store.pool()).await?;
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            &assume_path,
+            Some(timed_session.clone()),
+            None,
+            Some(source_key)
+        )
+        .await?
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    sqlx::query(
+        "UPDATE cloud_security_activation SET iam_conditions_enabled = true WHERE singleton = true",
+    )
+    .execute(store.pool())
+    .await?;
+    let (status, timed_credentials) = request(
+        state.clone(),
+        "POST",
+        &assume_path,
+        Some(timed_session),
+        None,
+        Some(source_key),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    let timed_session_id = timed_credentials["session_id"]
+        .as_str()
+        .ok_or("timed session")?;
+    assert_eq!(
+        request(
+            state.clone(),
+            "DELETE",
+            &format!("{roles}/{role_principal}/sessions/{timed_session_id}"),
+            None,
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
+    );
     let (status, credentials) = request(
         state.clone(),
         "POST",

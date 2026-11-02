@@ -22,6 +22,7 @@ import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { IamPolicy, PolicyEffect } from "@/lib/api-types";
 import { iamPoliciesQueryOptions } from "@/lib/queries";
 import { formatDateTime } from "@/lib/utils";
+import { policyTimeConditions } from "./policy-conditions";
 
 const parseList = (value: string) =>
   value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean);
@@ -40,6 +41,8 @@ export function IamPoliciesPage() {
   const [effect, setEffect] = useState<PolicyEffect>("Allow");
   const [actions, setActions] = useState("");
   const [resources, setResources] = useState("");
+  const [conditionStart, setConditionStart] = useState("");
+  const [conditionEnd, setConditionEnd] = useState("");
   const [mode, setMode] = useState<"visual" | "json">("visual");
   const [policyJson, setPolicyJson] = useState(JSON.stringify({ Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: ["flash:ListInstances"], Resource: "*" }] }, null, 2));
   const [jsonError, setJsonError] = useState("");
@@ -51,6 +54,8 @@ export function IamPoliciesPage() {
       setEffect("Allow");
       setActions("");
       setResources("");
+      setConditionStart("");
+      setConditionEnd("");
       await queryClient.invalidateQueries({
         queryKey: ["organizations", organizationId, "iam", "policies"],
       });
@@ -122,11 +127,19 @@ export function IamPoliciesPage() {
       }
       return;
     }
+    let conditions;
+    try {
+      conditions = policyTimeConditions(conditionStart, conditionEnd);
+      setJsonError("");
+    } catch (error) {
+      setJsonError(error instanceof Error ? error.message : "有効な日時を指定してください。");
+      return;
+    }
     createPolicy.mutate({
       name: name.trim(),
       document: {
         version: "2026-07-31",
-        statements: [{ effect, actions: parseList(actions), resources: parseList(resources) }],
+        statements: [{ effect, actions: parseList(actions), resources: parseList(resources), ...(conditions ? { conditions } : {}) }],
       },
     });
   };
@@ -180,7 +193,7 @@ export function IamPoliciesPage() {
           <SpaceBetween direction="horizontal" size="xs"><Button variant={mode === "visual" ? "primary" : "normal"} onClick={() => setMode("visual")}>ビジュアル</Button>
             <Button variant={mode === "json" ? "primary" : "normal"} onClick={() => setMode("json")}>JSON</Button></SpaceBetween>
           {mode === "json" ? <SpaceBetween size="m"><FormField label="ポリシー名"><Input value={name} onChange={({ detail }) => setName(detail.value.slice(0, 120))} /></FormField>
-            <FormField label="AWS形式のポリシーJSON" description="Action、NotAction、Resource、NotResourceを使用できます。ConditionとPrincipalは現在サポートしていません。">
+            <FormField label="AWS形式のポリシーJSON" description="Action、NotAction、Resource、NotResourceと、aws:CurrentTime の日付条件に対応しています。その他の条件とPrincipalは使用できません。">
               <Textarea rows={14} value={policyJson} onChange={({ detail }) => setPolicyJson(detail.value)} />
             </FormField><FormError message={jsonError || null} /></SpaceBetween> : <>
           <ColumnLayout columns={2}>
@@ -207,6 +220,15 @@ export function IamPoliciesPage() {
               <TagInput values={parseList(resources)} onChange={(items) => setResources(items.join("\n"))} ariaLabel="リソースを追加" placeholder="例: hc:org:*:flow/*" />
             </FormField>
           </ColumnLayout>
+          <ColumnLayout columns={2}>
+            <FormField label="条件の開始日時（任意）" description="指定した日時以降にこのステートメントを適用します。端末のタイムゾーンで入力します。">
+              <Input type="datetime-local" value={conditionStart} onChange={({ detail }) => setConditionStart(detail.value)} />
+            </FormField>
+            <FormField label="条件の終了日時（任意）" description="指定した日時より前にこのステートメントを適用します。">
+              <Input type="datetime-local" value={conditionEnd} onChange={({ detail }) => setConditionEnd(detail.value)} />
+            </FormField>
+          </ColumnLayout>
+          <FormError message={jsonError || null} />
           </>}
           <FormError message={createPolicy.isError ? getApiErrorMessage(createPolicy.error) : null} />
         </SpaceBetween>

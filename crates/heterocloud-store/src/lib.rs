@@ -541,6 +541,14 @@ impl Store {
         ).fetch_one(&self.pool).await?)
     }
 
+    pub async fn iam_conditions_enabled(&self) -> Result<bool, StoreError> {
+        Ok(sqlx::query_scalar(
+            "SELECT iam_conditions_enabled FROM cloud_security_activation WHERE singleton = true",
+        )
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
     /// Enable only after the provider CRD, all provider instances and all
     /// workers have been upgraded. The flag and refresh requests commit as a
     /// single transaction so an interrupted rollout can be retried safely.

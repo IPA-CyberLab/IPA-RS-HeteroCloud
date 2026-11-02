@@ -130,6 +130,9 @@ pub enum PolicyEffect {
     Deny,
 }
 
+pub type PolicyConditions = BTreeMap<String, BTreeMap<String, Vec<String>>>;
+type AwsPolicyConditions = BTreeMap<String, BTreeMap<String, Value>>;
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyStatement {
@@ -144,6 +147,10 @@ pub struct PolicyStatement {
     pub resources: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub not_resources: Vec<String>,
+    /// Supported AWS condition operators, context keys, and values. Unknown
+    /// operators and keys are rejected during policy validation.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub conditions: PolicyConditions,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -184,13 +191,14 @@ impl PolicyDocument {
             {
                 validate_pattern(pattern)?;
             }
+            validate_policy_conditions(&statement.conditions)?;
         }
         Ok(())
     }
 
     /// Accept the supported identity-policy subset of the AWS JSON grammar.
-    /// Unknown fields, including conditions and resource-policy principals,
-    /// are rejected instead of being silently ignored.
+    /// Unknown fields and unsupported conditions are rejected instead of
+    /// being silently ignored.
     pub fn from_aws_json(value: Value) -> Result<Self, DomainError> {
         let aws: AwsPolicy = serde_json::from_value(value).map_err(|error| {
             DomainError::InvalidPolicy(format!("unsupported AWS policy: {error}"))
@@ -207,21 +215,24 @@ impl PolicyDocument {
                 .statements
                 .into_vec()
                 .into_iter()
-                .map(|statement| PolicyStatement {
-                    effect: statement.effect,
-                    sid: statement.sid,
-                    actions: statement.actions.map_or_else(Vec::new, OneOrMany::into_vec),
-                    not_actions: statement
-                        .not_actions
-                        .map_or_else(Vec::new, OneOrMany::into_vec),
-                    resources: statement
-                        .resources
-                        .map_or_else(Vec::new, OneOrMany::into_vec),
-                    not_resources: statement
-                        .not_resources
-                        .map_or_else(Vec::new, OneOrMany::into_vec),
+                .map(|statement| {
+                    Ok(PolicyStatement {
+                        effect: statement.effect,
+                        sid: statement.sid,
+                        actions: statement.actions.map_or_else(Vec::new, OneOrMany::into_vec),
+                        not_actions: statement
+                            .not_actions
+                            .map_or_else(Vec::new, OneOrMany::into_vec),
+                        resources: statement
+                            .resources
+                            .map_or_else(Vec::new, OneOrMany::into_vec),
+                        not_resources: statement
+                            .not_resources
+                            .map_or_else(Vec::new, OneOrMany::into_vec),
+                        conditions: parse_aws_conditions(statement.conditions)?,
+                    })
                 })
-                .collect(),
+                .collect::<Result<_, DomainError>>()?,
         };
         document.validate()?;
         Ok(document)
@@ -267,6 +278,115 @@ struct AwsPolicyStatement {
     resources: Option<OneOrMany<String>>,
     #[serde(rename = "NotResource")]
     not_resources: Option<OneOrMany<String>>,
+    #[serde(
+        rename = "Condition",
+        default,
+        deserialize_with = "deserialize_aws_conditions"
+    )]
+    conditions: Option<AwsPolicyConditions>,
+}
+
+fn deserialize_aws_conditions<'de, D>(
+    deserializer: D,
+) -> Result<Option<AwsPolicyConditions>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    BTreeMap::deserialize(deserializer).map(Some)
+}
+
+fn parse_aws_conditions(
+    conditions: Option<AwsPolicyConditions>,
+) -> Result<PolicyConditions, DomainError> {
+    let Some(conditions) = conditions else {
+        return Ok(BTreeMap::new());
+    };
+    if conditions.is_empty() {
+        return Err(DomainError::InvalidPolicy(
+            "Condition cannot be empty".into(),
+        ));
+    }
+    conditions
+        .into_iter()
+        .map(|(operator, keys)| {
+            let keys = keys
+                .into_iter()
+                .map(|(key, values)| {
+                    let values = match values {
+                        Value::Array(values) => values,
+                        value => vec![value],
+                    };
+                    let values = values
+                        .into_iter()
+                        .map(|value| match value {
+                            Value::String(s) => Ok(s),
+                            Value::Number(n) if n.is_i64() || n.is_u64() => Ok(n.to_string()),
+                            _ => Err(DomainError::InvalidPolicy(
+                                "condition dates must be strings or whole Unix seconds".into(),
+                            )),
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok((key, values))
+                })
+                .collect::<Result<BTreeMap<_, _>, DomainError>>()?;
+            Ok((operator, keys))
+        })
+        .collect()
+}
+
+/// Parse the supported AWS date representation. Malformed or out-of-range
+/// dates are rejected at write time, not treated as a nonmatching condition.
+#[must_use]
+pub fn parse_iam_condition_date(value: &str) -> Option<DateTime<Utc>> {
+    if let Ok(seconds) = value.parse::<i64>() {
+        DateTime::from_timestamp(seconds, 0)
+    } else {
+        DateTime::parse_from_rfc3339(value)
+            .ok()
+            .map(|v| v.with_timezone(&Utc))
+    }
+}
+
+fn validate_policy_conditions(conditions: &PolicyConditions) -> Result<(), DomainError> {
+    if conditions.len() > 6 {
+        return Err(DomainError::InvalidPolicy(
+            "too many condition operators".into(),
+        ));
+    }
+    for (operator, keys) in conditions {
+        if !matches!(
+            operator.as_str(),
+            "DateEquals"
+                | "DateNotEquals"
+                | "DateLessThan"
+                | "DateLessThanEquals"
+                | "DateGreaterThan"
+                | "DateGreaterThanEquals"
+        ) {
+            return Err(DomainError::InvalidPolicy(format!(
+                "unsupported condition operator {operator}"
+            )));
+        }
+        if keys.len() != 1 {
+            return Err(DomainError::InvalidPolicy(
+                "date conditions require exactly aws:CurrentTime".into(),
+            ));
+        }
+        for (key, values) in keys {
+            if !key.eq_ignore_ascii_case("aws:CurrentTime")
+                || values.is_empty()
+                || values.len() > 128
+                || values
+                    .iter()
+                    .any(|v| v.len() > 64 || parse_iam_condition_date(v).is_none())
+            {
+                return Err(DomainError::InvalidPolicy(
+                    "unsupported condition key or invalid date values".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_pattern(pattern: &str) -> Result<(), DomainError> {
@@ -2125,6 +2245,7 @@ mod tests {
                 not_actions: vec![],
                 resources: vec!["hc:org:*".into()],
                 not_resources: vec![],
+                conditions: Default::default(),
             }],
         };
 

@@ -1,4 +1,5 @@
-use heterocloud_domain::{OrganizationId, PolicyDocument, PolicyEffect};
+use chrono::{DateTime, Utc};
+use heterocloud_domain::{OrganizationId, PolicyDocument, PolicyEffect, parse_iam_condition_date};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -27,6 +28,8 @@ pub struct AuthorizationRequest<'a> {
     pub resource_organization_id: OrganizationId,
     pub action: &'a str,
     pub resource: &'a str,
+    /// Captured once for the complete identity, boundary, SCP and session evaluation.
+    pub evaluated_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -93,7 +96,7 @@ pub fn authorize(
                     .iter()
                     .any(|pattern| pattern_matches(pattern, request.resource))
             };
-            if !action_matches || !resource_matches {
+            if !action_matches || !resource_matches || !conditions_match(statement, request) {
                 continue;
             }
             match statement.effect {
@@ -125,6 +128,31 @@ pub fn authorize(
         applicable_allow,
         applicable_deny,
         reason: "default_deny",
+    })
+}
+
+fn conditions_match(
+    statement: &heterocloud_domain::PolicyStatement,
+    request: &AuthorizationRequest<'_>,
+) -> bool {
+    statement.conditions.iter().all(|(operator, keys)| {
+        keys.values().all(|values| {
+            let matches = |value: &String| {
+                parse_iam_condition_date(value).is_some_and(|date| match operator.as_str() {
+                    "DateEquals" | "DateNotEquals" => request.evaluated_at == date,
+                    "DateLessThan" => request.evaluated_at < date,
+                    "DateLessThanEquals" => request.evaluated_at <= date,
+                    "DateGreaterThan" => request.evaluated_at > date,
+                    "DateGreaterThanEquals" => request.evaluated_at >= date,
+                    _ => false,
+                })
+            };
+            if operator == "DateNotEquals" {
+                values.iter().all(|value| !matches(value))
+            } else {
+                values.iter().any(matches)
+            }
+        })
     })
 }
 
@@ -268,7 +296,7 @@ mod tests {
 
     use super::{
         AuthorizationRequest, Decision, authorize, authorize_with_administrator, decide,
-        enforce_permissions_boundary, enforce_service_control_policies,
+        enforce_permissions_boundary, enforce_service_control_policies, enforce_session_policy,
     };
 
     fn policy(effect: PolicyEffect) -> PolicyDocument {
@@ -281,6 +309,7 @@ mod tests {
                 not_actions: vec![],
                 resources: vec!["hc:org:".into()],
                 not_resources: vec![],
+                conditions: Default::default(),
             }],
         }
     }
@@ -291,6 +320,7 @@ mod tests {
         let evaluation = authorize(
             &AuthorizationRequest {
                 principal_organization_id: organization_id,
+                evaluated_at: chrono::Utc::now(),
                 resource_organization_id: organization_id,
                 action: "project:read",
                 resource: "hc:org:example:project/demo",
@@ -313,6 +343,7 @@ mod tests {
         let evaluation = authorize(
             &AuthorizationRequest {
                 principal_organization_id: organization_id,
+                evaluated_at: chrono::Utc::now(),
                 resource_organization_id: organization_id,
                 action: "project:read",
                 resource: "hc:org:example:project/demo",
@@ -330,6 +361,7 @@ mod tests {
         let account = OrganizationId::new();
         let request = AuthorizationRequest {
             principal_organization_id: account,
+            evaluated_at: chrono::Utc::now(),
             resource_organization_id: account,
             action: "project:read",
             resource: "hc:org:example:project/demo",
@@ -359,6 +391,7 @@ mod tests {
         let account = OrganizationId::new();
         let request = AuthorizationRequest {
             principal_organization_id: account,
+            evaluated_at: chrono::Utc::now(),
             resource_organization_id: account,
             action: "project:read",
             resource: "hc:org:example:project/demo",
@@ -416,6 +449,7 @@ mod tests {
         let account = OrganizationId::new();
         let request = AuthorizationRequest {
             principal_organization_id: account,
+            evaluated_at: chrono::Utc::now(),
             resource_organization_id: account,
             action: "project:read",
             resource: "hc:org:example:project/demo",
@@ -463,6 +497,7 @@ mod tests {
         let account = OrganizationId::new();
         let request = AuthorizationRequest {
             principal_organization_id: account,
+            evaluated_at: chrono::Utc::now(),
             resource_organization_id: account,
             action: "project:GetThing",
             resource: "hc:org:one:project/test",
@@ -502,10 +537,118 @@ mod tests {
     }
 
     #[test]
+    fn aws_time_conditions_obey_boundaries_and_multiple_values()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let account = OrganizationId::new();
+        let at = chrono::DateTime::from_timestamp(1_700_000_000, 0).ok_or("invalid timestamp")?;
+        let request = AuthorizationRequest {
+            principal_organization_id: account,
+            resource_organization_id: account,
+            action: "project:read",
+            resource: "hc:org:example",
+            evaluated_at: at,
+        };
+        for (operator, value, expected) in [
+            (
+                "DateEquals",
+                serde_json::json!([1699999999, 1700000000]),
+                true,
+            ),
+            (
+                "DateNotEquals",
+                serde_json::json!([1699999999, 1700000000]),
+                false,
+            ),
+            (
+                "DateNotEquals",
+                serde_json::json!([1699999998, 1699999999]),
+                true,
+            ),
+            ("DateLessThan", serde_json::json!(1700000000), false),
+            ("DateLessThanEquals", serde_json::json!(1700000000), true),
+            ("DateGreaterThan", serde_json::json!(1700000000), false),
+            ("DateGreaterThanEquals", serde_json::json!(1700000000), true),
+            (
+                "DateEquals",
+                serde_json::json!("2023-11-14T22:13:20Z"),
+                true,
+            ),
+        ] {
+            let document = PolicyDocument::from_aws_json(serde_json::json!({
+                "Version":"2012-10-17", "Statement": {"Effect":"Allow", "Action":"*", "Resource":"*", "Condition":{operator:{"aws:CurrentTime":value}}}
+            }))?;
+            assert_eq!(
+                authorize(&request, &[document])?.decision == Decision::Allow,
+                expected,
+                "{operator}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn time_conditions_restrict_admin_boundaries_scp_and_session()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let account = OrganizationId::new();
+        let request = AuthorizationRequest {
+            principal_organization_id: account,
+            resource_organization_id: account,
+            action: "project:read",
+            resource: "hc:org:example",
+            evaluated_at: chrono::DateTime::from_timestamp(1_700_000_000, 0)
+                .ok_or("invalid timestamp")?,
+        };
+        let timed_deny = PolicyDocument::from_aws_json(serde_json::json!({
+            "Statement": {"Effect":"Deny", "Action":"*", "Resource":"*", "Condition":{"DateGreaterThanEquals":{"aws:CurrentTime":"2023-11-14T22:13:20Z"}}}
+        }))?;
+        assert_eq!(
+            authorize_with_administrator(&request, std::slice::from_ref(&timed_deny), true)?.reason,
+            "explicit_deny"
+        );
+        let admin = authorize_with_administrator(&request, &[], true)?;
+        assert_eq!(
+            enforce_permissions_boundary(&request, admin.clone(), Some(&timed_deny))?.reason,
+            "permissions_boundary_explicit_deny"
+        );
+        assert_eq!(
+            enforce_service_control_policies(&request, admin.clone(), &[vec![timed_deny.clone()]])?
+                .reason,
+            "scp_explicit_deny"
+        );
+        assert_eq!(
+            enforce_session_policy(&request, admin, Some(&timed_deny))?.reason,
+            "session_policy_explicit_deny"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_or_unimplemented_conditions_cannot_become_unconditional_grants() {
+        for condition in [
+            serde_json::json!(null),
+            serde_json::json!({}),
+            serde_json::json!({"DateEquals":{}}),
+            serde_json::json!({"DateEquals":{"aws:CurrentTime":[]}}),
+            serde_json::json!({"DateEquals":{"aws:CurrentTime":"not a date"}}),
+            serde_json::json!({"DateEquals":{"aws:CurrentTime":1.5}}),
+            serde_json::json!({"DateEquals":{"aws:SourceIp":"2026-01-01T00:00:00Z"}}),
+            serde_json::json!({"DateEqualsIfExists":{"aws:CurrentTime":"2026-01-01T00:00:00Z"}}),
+        ] {
+            assert!(
+                PolicyDocument::from_aws_json(serde_json::json!({
+                    "Statement":{"Effect":"Allow","Action":"*","Resource":"*","Condition":condition}
+                }))
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn tenant_boundary_precedes_policy() -> Result<(), Box<dyn std::error::Error>> {
         let evaluation = authorize(
             &AuthorizationRequest {
                 principal_organization_id: OrganizationId::new(),
+                evaluated_at: chrono::Utc::now(),
                 resource_organization_id: OrganizationId::new(),
                 action: "project:read",
                 resource: "hc:org:other:project/demo",
@@ -519,6 +662,7 @@ mod tests {
                     not_actions: vec![],
                     resources: vec!["*".into()],
                     not_resources: vec![],
+                    conditions: Default::default(),
                 }],
             }],
         )?;

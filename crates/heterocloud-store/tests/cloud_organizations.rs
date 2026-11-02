@@ -171,6 +171,7 @@ async fn migration_and_organization_controls_preserve_isolation() -> Result<(), 
 
     let request = AuthorizationRequest {
         principal_organization_id: account.id,
+        evaluated_at: chrono::Utc::now(),
         resource_organization_id: account.id,
         action: "flash:CreateService",
         resource: "hc:org:test:flash/*",

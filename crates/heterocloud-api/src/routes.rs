@@ -1935,6 +1935,7 @@ async fn create_service_control_policy(
         ));
     }
     let document = parse_policy_document(request.document)?;
+    require_policy_conditions_enabled(&state, &document).await?;
     authorize_actor(
         &state,
         &actor,
@@ -2847,6 +2848,9 @@ async fn assume_iam_role(
             parse_policy_document(value)
         })
         .transpose()?;
+    if let Some(document) = &session_policy {
+        require_policy_conditions_enabled(&state, document).await?;
+    }
     let source = OrganizationId(source_account);
     let context =
         authorize_actor(&state, &actor, source, "sts:AssumeRole", &input.role_arn).await?;
@@ -3287,6 +3291,27 @@ fn parse_policy_document(value: Value) -> Result<PolicyDocument, ApiError> {
     Ok(document)
 }
 
+async fn require_policy_conditions_enabled(
+    state: &AppState,
+    document: &PolicyDocument,
+) -> Result<(), ApiError> {
+    if document
+        .statements
+        .iter()
+        .any(|statement| !statement.conditions.is_empty())
+        && !state
+            .store
+            .iam_conditions_enabled()
+            .await
+            .map_err(ApiError::from_store)?
+    {
+        return Err(ApiError::BadRequest(
+            "IAM policy conditions are not enabled yet.".into(),
+        ));
+    }
+    Ok(())
+}
+
 async fn create_policy(
     State(state): State<Arc<AppState>>,
     Path(organization_id): Path<Uuid>,
@@ -3297,6 +3322,7 @@ async fn create_policy(
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     validate_name(&request.name)?;
     let document = parse_policy_document(request.document)?;
+    require_policy_conditions_enabled(&state, &document).await?;
     authorize_actor(
         &state,
         &actor,
@@ -6818,12 +6844,14 @@ pub(crate) async fn evaluate_account_permissions(
     action: &str,
     resource: &str,
     implicit_allow: bool,
+    evaluated_at: DateTime<Utc>,
 ) -> Result<heterocloud_iam::Evaluation, ApiError> {
     let request = AuthorizationRequest {
         principal_organization_id: organization_id,
         resource_organization_id: organization_id,
         action,
         resource,
+        evaluated_at,
     };
     let mut identity = authorize_with_administrator(
         &request,
@@ -6861,9 +6889,16 @@ async fn authorize_organization(
         .await
         .map_err(ApiError::from_store)?
         .ok_or(ApiError::Forbidden)?;
-    let evaluation =
-        evaluate_account_permissions(state, &context, organization_id, action, resource, false)
-            .await?;
+    let evaluation = evaluate_account_permissions(
+        state,
+        &context,
+        organization_id,
+        action,
+        resource,
+        false,
+        Utc::now(),
+    )
+    .await?;
     let (decision, reason) = (evaluation.decision, evaluation.reason);
     let request_id = Uuid::now_v7().to_string();
     state
@@ -6999,6 +7034,7 @@ async fn authorize_actor_with_implicit_allow(
             )
         }
     };
+    let evaluated_at = Utc::now();
     let evaluation = evaluate_account_permissions(
         state,
         &context,
@@ -7006,6 +7042,7 @@ async fn authorize_actor_with_implicit_allow(
         action,
         resource,
         implicit_allow,
+        evaluated_at,
     )
     .await?;
     let session_policy = match actor {
@@ -7018,6 +7055,7 @@ async fn authorize_actor_with_implicit_allow(
             resource_organization_id: organization_id,
             action,
             resource,
+            evaluated_at,
         },
         evaluation,
         session_policy,
