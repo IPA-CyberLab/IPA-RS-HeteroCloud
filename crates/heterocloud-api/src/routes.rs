@@ -5756,6 +5756,7 @@ async fn create_developer_access_credential(
     let (prefix, secret_hash) = authenticate_flow_developer_bearer(&headers)?;
     validate_flow_permissions(&request.permissions)?;
     let expires_in_seconds = validate_flow_access_ttl(Some(request.expires_in_seconds))?;
+    authorize_flow_developer_credential(&state, prefix, &secret_hash, &request.permissions).await?;
     let (issued_at, expires_at, issued_at_time, expires_at_time) =
         flow_access_window(expires_in_seconds)?;
     let context_id = Uuid::now_v7();
@@ -5816,6 +5817,7 @@ async fn list_developer_access_contexts(
 ) -> Result<impl IntoResponse, ApiError> {
     let (prefix, secret_hash) = authenticate_flow_developer_bearer(&headers)?;
     let limit = validate_list_limit(query.limit, MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE)?;
+    authorize_flow_developer_credential(&state, prefix, &secret_hash, &BTreeSet::new()).await?;
     let items = state
         .store
         .list_flow_access_contexts_for_developer_credential(prefix, &secret_hash, limit)
@@ -5834,6 +5836,7 @@ async fn revoke_developer_access_context(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
     let (prefix, secret_hash) = authenticate_flow_developer_bearer(&headers)?;
+    authorize_flow_developer_credential(&state, prefix, &secret_hash, &BTreeSet::new()).await?;
     state
         .store
         .revoke_flow_access_context_with_developer_credential(prefix, &secret_hash, context_id)
@@ -5841,6 +5844,84 @@ async fn revoke_developer_access_context(
         .map_err(ApiError::from_store)?
         .ok_or(ApiError::Unauthorized)?;
     Ok((StatusCode::NO_CONTENT, sensitive_response_headers()))
+}
+
+// Developer credentials are independent application credentials, but their
+// issuer's present account, IAM policies, boundaries, and SCPs still apply.
+// Re-evaluate at each use; the resulting Flow access context lasts at most
+// five minutes and has its own revocation mechanism.
+async fn authorize_flow_developer_credential(
+    state: &AppState,
+    prefix: &str,
+    secret_hash: &[u8; 32],
+    permissions: &BTreeSet<String>,
+) -> Result<(), ApiError> {
+    let issuer = state
+        .store
+        .flow_developer_credential_issuer(prefix, secret_hash)
+        .await
+        .map_err(ApiError::from_store)?
+        .ok_or(ApiError::Unauthorized)?;
+    // Historical role-issued secrets have no recoverable session policy or
+    // session lifetime, so they cannot be authorized safely.
+    if issuer.is_iam_role {
+        return Err(ApiError::Forbidden);
+    }
+    let organization_id = OrganizationId(issuer.organization_id);
+    let principal_id = PrincipalId(issuer.principal_id);
+    let context = if let Some(user_id) = issuer.user_id {
+        state
+            .store
+            .authorization_context(UserId(user_id), organization_id)
+            .await
+    } else {
+        state
+            .store
+            .authorization_context_for_principal(principal_id, organization_id)
+            .await
+    }
+    .map_err(ApiError::from_store)?
+    .filter(|context| context.principal_id == principal_id)
+    .ok_or(ApiError::Forbidden)?;
+    let resource = realtime_service_resource(issuer.organization_id, issuer.service_instance_id);
+    let mut actions = vec!["realtime:IssueAccessCredential"];
+    for permission in permissions {
+        actions.push(flow_permission_iam_action(permission).ok_or(ApiError::Internal)?);
+    }
+    let evaluated_at = Utc::now();
+    for action in actions {
+        let evaluation = evaluate_account_permissions(
+            state,
+            &context,
+            organization_id,
+            action,
+            &resource,
+            false,
+            evaluated_at,
+        )
+        .await?;
+        if evaluation.decision == Decision::Deny {
+            state
+                .store
+                .append_audit(&AuditEvent {
+                    organization_id: Some(organization_id),
+                    principal_id: Some(principal_id),
+                    user_id: issuer.user_id.map(UserId),
+                    request_id: &Uuid::now_v7().to_string(),
+                    source_ip: None,
+                    action,
+                    resource: &resource,
+                    decision: "deny",
+                    reason: evaluation.reason,
+                    metadata: json!({"semantics_digest":semantics_digest(),
+                        "authentication":{"actor":"flow_developer_credential", "credential_id":issuer.credential_id}}),
+                })
+                .await
+                .map_err(ApiError::from_store)?;
+            return Err(ApiError::Forbidden);
+        }
+    }
+    Ok(())
 }
 
 async fn get_realtime_service_metrics(

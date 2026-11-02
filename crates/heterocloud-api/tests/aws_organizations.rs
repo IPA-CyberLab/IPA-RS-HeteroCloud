@@ -857,6 +857,151 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
     let flow_credential_id = owner_flow_credential["id"]
         .as_str()
         .ok_or("flow credential id")?;
+    let flow_credential = owner_flow_credential["credential"]
+        .as_str()
+        .ok_or("flow credential")?;
+    let mint_path = "/api/v1/flow/v1/access-credentials";
+    let mint_body = json!({"principal_id":uuid::Uuid::now_v7(),
+        "permissions":["flow.room.join"], "expires_in_seconds":60});
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            mint_path,
+            Some(mint_body.clone()),
+            None,
+            Some(flow_credential)
+        )
+        .await?
+        .0,
+        StatusCode::CREATED
+    );
+    let (status, flow_scp) = request(
+        state.clone(),
+        "POST",
+        &format!("{base}/organization/policies"),
+        Some(json!({"name":"DenyFlowJoin", "document":{"Statement":{
+            "Effect":"Deny", "Action":"flow:RoomJoin", "Resource":"*"}}})),
+        Some(csrf.expose_secret()),
+        None,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::CREATED);
+    let flow_scp_id = flow_scp["id"].as_str().ok_or("flow SCP id")?;
+    let flow_scp_attachment =
+        format!("{base}/organization/policies/{flow_scp_id}/targets/account/{member_id}");
+    assert_eq!(
+        request(
+            state.clone(),
+            "PUT",
+            &flow_scp_attachment,
+            None,
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            mint_path,
+            Some(mint_body.clone()),
+            None,
+            Some(flow_credential)
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN,
+        "an SCP must apply to an existing developer credential"
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "DELETE",
+            &flow_scp_attachment,
+            None,
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            mint_path,
+            Some(mint_body.clone()),
+            None,
+            Some(flow_credential)
+        )
+        .await?
+        .0,
+        StatusCode::CREATED
+    );
+    sqlx::query("UPDATE principals SET enabled=false WHERE id=$1")
+        .bind(membership.principal_id.0)
+        .execute(store.pool())
+        .await?;
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            mint_path,
+            Some(mint_body.clone()),
+            None,
+            Some(flow_credential)
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN,
+        "a disabled issuer cannot continue using the credential"
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "GET",
+            mint_path,
+            None,
+            None,
+            Some(flow_credential)
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    sqlx::query("UPDATE principals SET enabled=true WHERE id=$1")
+        .bind(membership.principal_id.0)
+        .execute(store.pool())
+        .await?;
+    sqlx::query("UPDATE flow_developer_credentials SET created_by=$1 WHERE id=$2")
+        .bind(role_principal.0)
+        .bind(uuid::Uuid::parse_str(flow_credential_id)?)
+        .execute(store.pool())
+        .await?;
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            mint_path,
+            Some(mint_body),
+            None,
+            Some(flow_credential)
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN,
+        "historical role-issued developer credentials cannot outlive their session"
+    );
+    sqlx::query("UPDATE flow_developer_credentials SET created_by=$1 WHERE id=$2")
+        .bind(membership.principal_id.0)
+        .bind(uuid::Uuid::parse_str(flow_credential_id)?)
+        .execute(store.pool())
+        .await?;
     for token in [provider_role_token, workload_token] {
         for (path, body) in [
             (registry_path.clone(), json!({"name":"test"})),

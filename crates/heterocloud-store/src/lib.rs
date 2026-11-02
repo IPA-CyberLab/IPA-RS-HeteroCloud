@@ -2526,6 +2526,29 @@ impl Store {
         .map_err(StoreError::from)
     }
 
+    /// Resolve an active credential without exposing its secret or granting
+    /// access. The caller must evaluate the issuer's current IAM and SCPs.
+    pub async fn flow_developer_credential_issuer(
+        &self,
+        prefix: &str,
+        secret_hash: &[u8; 32],
+    ) -> Result<Option<FlowDeveloperCredentialIssuer>, StoreError> {
+        sqlx::query_as::<_, FlowDeveloperCredentialIssuer>(
+            "SELECT c.id AS credential_id, c.organization_id, c.service_instance_id,
+                    c.created_by AS principal_id, p.user_id,
+                    EXISTS(SELECT 1 FROM iam_roles r WHERE r.principal_id = p.id) AS is_iam_role
+             FROM flow_developer_credentials c
+             JOIN principals p ON p.id = c.created_by AND p.organization_id = c.organization_id
+             WHERE c.prefix = $1 AND c.secret_hash = $2
+               AND c.revoked_at IS NULL AND c.expires_at > now()",
+        )
+        .bind(prefix)
+        .bind(secret_hash.as_slice())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::from)
+    }
+
     pub async fn revoke_flow_developer_credential(
         &self,
         organization_id: OrganizationId,
@@ -5247,6 +5270,16 @@ pub struct FlowDeveloperCredentialRecord {
     pub last_used_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, sqlx::FromRow)]
+pub struct FlowDeveloperCredentialIssuer {
+    pub credential_id: Uuid,
+    pub organization_id: Uuid,
+    pub service_instance_id: Uuid,
+    pub principal_id: Uuid,
+    pub user_id: Option<Uuid>,
+    pub is_iam_role: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

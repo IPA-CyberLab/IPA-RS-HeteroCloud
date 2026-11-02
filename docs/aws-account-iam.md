@@ -109,6 +109,12 @@ credentials have their own authorization and revocation mechanisms.
 Role and workload sessions cannot issue Registry or Syouyu credentials, or
 issue or rotate Flow developer credentials: these credentials outlive the
 temporary session. This restriction does not revoke previously issued secrets.
+Flow developer credentials are checked against the issuer's current IAM policy,
+permissions boundary and inherited SCP whenever they are used. Credentials
+previously issued by an assumed role cannot be used because their original
+session policy and expiry cannot be reconstructed. A previously issued Flow
+access context remains usable for at most five minutes unless revoked; Registry
+and Syouyu data-plane requests still do not evaluate these policies directly.
 
 ## Current compatibility boundaries
 
