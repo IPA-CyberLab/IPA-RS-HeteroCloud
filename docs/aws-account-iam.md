@@ -106,6 +106,9 @@ binary without this migration and enforcement: old binaries also cannot start
 against the newer SQLx migration set. Roll forward to a compatible build. The
 activation applies to the management API; already issued provider/data-plane
 credentials have their own authorization and revocation mechanisms.
+Role and workload sessions cannot issue Registry or Syouyu credentials, or
+issue or rotate Flow developer credentials: these credentials outlive the
+temporary session. This restriction does not revoke previously issued secrets.
 
 ## Current compatibility boundaries
 

@@ -33,6 +33,7 @@ async fn request(
         .method(method)
         .uri(path)
         .header(header::ORIGIN, ORIGIN)
+        .header("idempotency-key", "01900000-0000-7000-8000-000000000001")
         .header(header::COOKIE, format!("hc_session={TOKEN}"));
     if let Some(token) = csrf {
         builder = builder.header("x-heterocloud-csrf", token);
@@ -747,6 +748,182 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
     store
         .create_binding(management, source_robot.id, source_policy.id)
         .await?;
+
+    // A temporary role or workload session must not mint an independent
+    // provider secret that survives the session's revocation or expiry.
+    let provider_policy = PolicyDocument::from_aws_json(json!({"Statement":{
+        "Effect":"Allow", "Action":["registry:CreateCredential", "syouyu:CreateCredential",
+            "realtime:IssueAccessCredential", "flow:RoomJoin"], "Resource":"*"}}))?;
+    let provider_policy = store
+        .create_policy(
+            member_account,
+            "ProviderCredentials",
+            &provider_policy,
+            &semantics_digest(),
+        )
+        .await?;
+    let role_provider_binding = store
+        .create_binding(member_account, role_principal, provider_policy.id)
+        .await?;
+    store
+        .create_binding(member_account, robot.id, provider_policy.id)
+        .await?;
+    let (status, provider_session) = request(
+        state.clone(),
+        "POST",
+        &assume_path,
+        Some(json!({"role_arn":role_arn,"session_name":"provider-credentials"})),
+        None,
+        Some(source_key),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    let provider_role_token = provider_session["access_token"]
+        .as_str()
+        .ok_or("provider role token")?;
+    let provider_session_id = provider_session["session_id"]
+        .as_str()
+        .ok_or("provider session id")?;
+
+    let credential_project = store
+        .create_project(member_account, "provider-tests", "Provider Tests")
+        .await?;
+    let flash = store
+        .create_service_instance(
+            member_account,
+            credential_project.id,
+            membership.principal_id,
+            "flash",
+            "workload-test",
+            json!({"region":"test", "image":"example/workspace:v1", "replicas":1,
+                "cpu_millis":100, "memory_mib":256, "ephemeral_storage_gib":1,
+                "ports":[], "exposure":{"type":"internal", "traffic_mode":"forwarded"},
+                "env":{}, "command":[], "args":[], "metadata":{}, "task_role":robot.id.0}),
+        )
+        .await?;
+    let workload_token = "hcw_test_provider_credential_session";
+    store
+        .mint_workload_token(
+            flash.id.0,
+            robot.id.0,
+            uuid::Uuid::now_v7(),
+            &token_hash(workload_token),
+            Utc::now() + chrono::Duration::minutes(15),
+        )
+        .await?;
+    let flow = store
+        .create_service_instance(
+            member_account,
+            credential_project.id,
+            membership.principal_id,
+            "flow",
+            "provider-test-flow",
+            json!({"region":"global", "max_participants":100, "max_rooms":100,
+            "rate_limit":{"requests_per_second":20,"burst":40}, "metadata":{}}),
+        )
+        .await?;
+    assert!(
+        store
+            .mark_service_instance_ready(
+                flow.id,
+                "flow",
+                flow.generation,
+                uuid::Uuid::now_v7(),
+                json!({"phase":"ready"}),
+            )
+            .await?
+    );
+    let registry_path = format!("/api/v1/organizations/{member_id}/registry/credentials");
+    let syouyu_path = format!(
+        "/api/v1/organizations/{member_id}/syouyu/buckets/{}/credentials",
+        uuid::Uuid::now_v7()
+    );
+    let flow_path = format!(
+        "/api/v1/organizations/{member_id}/realtime/services/{}/developer-credentials",
+        flow.id
+    );
+    let flow_credential_body =
+        json!({"name":"test", "permissions":["flow.room.join"], "expires_in_days":30});
+    let (status, owner_flow_credential) = request(
+        state.clone(),
+        "POST",
+        &flow_path,
+        Some(flow_credential_body.clone()),
+        Some(csrf.expose_secret()),
+        None,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::CREATED);
+    let flow_credential_id = owner_flow_credential["id"]
+        .as_str()
+        .ok_or("flow credential id")?;
+    for token in [provider_role_token, workload_token] {
+        for (path, body) in [
+            (registry_path.clone(), json!({"name":"test"})),
+            (
+                syouyu_path.clone(),
+                json!({"name":"test","permissions":["read"]}),
+            ),
+            (flow_path.clone(), flow_credential_body.clone()),
+            (
+                format!("{flow_path}/{flow_credential_id}/rotate"),
+                json!({}),
+            ),
+        ] {
+            let (status, response) =
+                request(state.clone(), "POST", &path, Some(body), None, Some(token)).await?;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {response}");
+            assert_eq!(
+                response["error"]["code"], "temporary_session_cannot_issue_durable_credential",
+                "{path}"
+            );
+        }
+    }
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            &registry_path,
+            Some(json!({"name":"test"})),
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "regular user still reaches the provider"
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "POST",
+            &syouyu_path,
+            Some(json!({"name":"test","permissions":["read"]})),
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NOT_FOUND,
+        "regular user still reaches the bucket lookup"
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "DELETE",
+            &format!("{roles}/{role_principal}/sessions/{provider_session_id}"),
+            None,
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    store
+        .delete_binding(member_account, role_provider_binding)
+        .await?;
+
     let timed_session = json!({"role_arn":role_arn,"session_name":"timed","session_policy":{
         "Version":"2012-10-17", "Statement":{"Effect":"Allow","Action":"project:List","Resource":"*",
         "Condition":{"DateLessThan":{"aws:CurrentTime":"2100-01-01T00:00:00Z"}}}}});

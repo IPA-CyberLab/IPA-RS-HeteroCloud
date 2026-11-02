@@ -15,6 +15,8 @@ pub enum ApiError {
     Conflict,
     #[error("access denied")]
     Forbidden,
+    #[error("temporary sessions cannot issue durable provider credentials")]
+    TemporaryCredentialCannotIssueDurable,
     #[error("internal server error")]
     Internal,
     #[error("identity provider is unavailable")]
@@ -86,6 +88,11 @@ impl IntoResponse for ApiError {
                 StatusCode::FORBIDDEN,
                 "forbidden",
                 "The authenticated principal is not authorized.",
+            ),
+            Self::TemporaryCredentialCannotIssueDurable => (
+                StatusCode::FORBIDDEN,
+                "temporary_session_cannot_issue_durable_credential",
+                "Role and workload sessions cannot issue or rotate credentials that outlive the session.",
             ),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,

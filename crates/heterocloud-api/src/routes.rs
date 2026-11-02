@@ -1075,6 +1075,7 @@ async fn create_registry_credential(
         &organization_resource(organization_id, "registry/credential/*"),
     )
     .await?;
+    require_durable_credential_issuer(&actor)?;
     let limits = state
         .store
         .effective_resource_quota(OrganizationId(organization_id))
@@ -5012,6 +5013,9 @@ async fn authorized_syouyu_provider(
         resource,
     )
     .await?;
+    if action == "syouyu:CreateCredential" {
+        require_durable_credential_issuer(actor)?;
+    }
     let instance = syouyu_bucket(state, organization_id, service_instance_id).await?;
     if instance.state != ServiceState::Ready {
         return Err(ApiError::SyouyuBucketNotReady);
@@ -5549,6 +5553,7 @@ async fn create_realtime_developer_credential(
         Some(&request.permissions),
     )
     .await?;
+    require_durable_credential_issuer(&actor)?;
     let (prefix, credential, credential_hash) = generate_flow_developer_credential()?;
     let permissions = request.permissions.into_iter().collect::<Vec<_>>();
     let created_at = Utc::now();
@@ -5648,6 +5653,7 @@ async fn rotate_realtime_developer_credential(
         &permissions,
     )
     .await?;
+    require_durable_credential_issuer(&actor)?;
     let (prefix, credential, credential_hash) = generate_flow_developer_credential()?;
     let rotation = state
         .store
@@ -6325,6 +6331,17 @@ enum AuthenticatedActor {
         principal_id: PrincipalId,
         api_key_id: Uuid,
     },
+}
+
+// These provider credentials are independent of the issuing session and can
+// otherwise remain usable after a role is revoked or a workload is stopped.
+fn require_durable_credential_issuer(actor: &AuthenticatedActor) -> Result<(), ApiError> {
+    match actor {
+        AuthenticatedActor::RoleSession { .. } | AuthenticatedActor::Workload(_) => {
+            Err(ApiError::TemporaryCredentialCannotIssueDurable)
+        }
+        _ => Ok(()),
+    }
 }
 
 #[derive(Deserialize)]
