@@ -27,9 +27,17 @@ Requests across accounts use one transaction lock; deleting services remain
 charged until provider deletion completes. Existing account and member limits
 continue to apply. While the gate is disabled, limits remain account-scoped.
 
-This gate does not aggregate Flash weekly CPU/memory/GPU runtime, Registry
-storage, or direct provider credential usage across accounts. Those limits remain
-account-scoped. Do not assume they are organization-wide.
+Migration 0030 provides a separate, initially disabled gate for Flash weekly
+CPU/memory/GPU usage across accounts. It requires an upgraded Flash provider and
+CRD as well as upgraded workers; it must not be enabled during a mixed-version
+rollout. Existing usage records, including those for deleted services, count
+toward the organization ceiling. After activation or an account/limit change,
+the worker reconciles affected provider policies asynchronously; enforcement
+follows the normal Flash metering and reconciliation interval. Account and
+member weekly limits remain in force.
+
+Registry storage and direct provider credential usage remain account-scoped.
+Do not assume those are organization-wide.
 
 IAM roles have a restricted AWS-style trust policy and short-lived HeteroCloud
 bearer sessions. Cross-account assumption requires both a source identity
@@ -64,6 +72,14 @@ After all API replicas have also been upgraded to migration 0029's service
 allocation enforcement, verify their actual images and endpoints and activate
 the separate `organization_service_quotas_enabled` gate. This gate must not be
 enabled during a mixed-version rollout.
+
+Only after the Flash provider CRD, every Flash API/controller replica, and every
+HeteroCloud worker have been verified on compatible images, a cluster operator
+may run `heterocloud-worker --enable-organization-flash-weekly-quotas` in a
+worker container. The command atomically sets the weekly gate and enqueues a
+policy refresh for every Flash service; repeat it safely to retry a refresh.
+Confirm the refresh queue drains and each provider policy includes the correct
+account set before relying on the organization-wide weekly ceiling.
 
 Verify the deployment's actual image digests and readiness, rather than only
 the desired image, before activation. Once activated, do not roll back to a

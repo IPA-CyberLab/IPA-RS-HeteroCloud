@@ -450,6 +450,10 @@ impl Store {
         .bind(principal_id.0)
         .execute(&mut *tx)
         .await?;
+        // Existing services must learn about this account before weekly usage
+        // can be counted across the whole organization.
+        self.enqueue_organization_flash_quotas_tx(&mut tx, management_account_id)
+            .await?;
         tx.commit().await?;
         Organization::try_from(row)
     }

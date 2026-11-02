@@ -8,10 +8,10 @@ use heterocloud_domain::{
     OrganizationId, PrincipalId, ProjectId, ServiceInstance, ServiceInstanceId, SyouyuSpec,
 };
 use heterocloud_provider::{
-    AcceptedOperation, FlashMemberWeeklyLimits, FlashProviderPolicy,
-    PRINCIPAL_CONTEXT_REVOCATION_GRACE_SECONDS, PRINCIPAL_CONTEXT_REVOKE_ACTION,
-    PrincipalContextId, PrincipalContextRevocationRequest, ProviderContext, ProviderSigner,
-    ReconcileRequest,
+    AcceptedOperation, FlashCloudOrganizationWeeklyLimits, FlashMemberWeeklyLimits,
+    FlashProviderPolicy, PRINCIPAL_CONTEXT_REVOCATION_GRACE_SECONDS,
+    PRINCIPAL_CONTEXT_REVOKE_ACTION, PrincipalContextId, PrincipalContextRevocationRequest,
+    ProviderContext, ProviderSigner, ReconcileRequest,
 };
 use heterocloud_store::{OutboxEvent, Store};
 use secrecy::{ExposeSecret, SecretString};
@@ -29,6 +29,10 @@ const MAX_PROVIDER_ERROR_MESSAGE_CHARS: usize = 1_024;
 #[derive(Debug, Parser)]
 #[command(version, about = "HeteroCloud provider outbox worker")]
 struct Config {
+    /// Reconcile all existing Flash policies while enabling the verified
+    /// organization weekly meter. Intended for a cluster administrator job.
+    #[arg(long)]
+    enable_organization_flash_weekly_quotas: bool,
     #[arg(long, env = "HETEROCLOUD_DATABASE_URL_FILE")]
     database_url_file: PathBuf,
 
@@ -116,6 +120,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     let config = Config::parse();
     let database_url = read_secret(&config.database_url_file).await?;
+    if config.enable_organization_flash_weekly_quotas {
+        let store = Store::connect(
+            database_url.expose_secret(),
+            config.database_max_connections,
+        )
+        .await?;
+        store.migrate().await?;
+        let refreshed = store.enable_organization_flash_weekly_quotas().await?;
+        println!("queued_flash_policy_refreshes={refreshed}");
+        return Ok(());
+    }
     let signing_key = read_secret_bytes(&config.signing_key_file).await?;
     let providers = ProviderTargets {
         flow: ProviderTarget {
@@ -358,6 +373,17 @@ async fn deliver(
                 max_weekly_memory_mib_seconds: quota.flash.max_weekly_memory_mib_seconds,
                 max_weekly_gpu_seconds: quota.flash.max_weekly_gpu_seconds,
                 member,
+                cloud_organization: store
+                    .cloud_flash_weekly_quota(payload.organization_id)
+                    .await?
+                    .map(|(account_ids, limits)| FlashCloudOrganizationWeeklyLimits {
+                        account_ids,
+                        max_weekly_cpu_millicore_seconds: limits
+                            .flash
+                            .max_weekly_cpu_millicore_seconds,
+                        max_weekly_memory_mib_seconds: limits.flash.max_weekly_memory_mib_seconds,
+                        max_weekly_gpu_seconds: limits.flash.max_weekly_gpu_seconds,
+                    }),
             })
         } else {
             None

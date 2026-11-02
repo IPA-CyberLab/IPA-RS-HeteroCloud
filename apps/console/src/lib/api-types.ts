@@ -218,6 +218,7 @@ export interface OwnerQuotaOverview {
   defaults: ResourceQuotaLimits;
   tenants: ResourceQuotaTenant[];
   organization_service_quotas_enabled?: boolean;
+  organization_flash_weekly_quotas_enabled?: boolean;
 }
 
 export interface UserExternalIdentity {

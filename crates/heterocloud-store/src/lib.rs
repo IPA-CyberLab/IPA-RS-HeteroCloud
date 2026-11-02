@@ -535,6 +535,65 @@ impl Store {
         .await?)
     }
 
+    pub async fn organization_flash_weekly_quotas_enabled(&self) -> Result<bool, StoreError> {
+        Ok(sqlx::query_scalar(
+            "SELECT organization_flash_weekly_quotas_enabled FROM cloud_security_activation WHERE singleton = true",
+        ).fetch_one(&self.pool).await?)
+    }
+
+    /// Enable only after the provider CRD, all provider instances and all
+    /// workers have been upgraded. The flag and refresh requests commit as a
+    /// single transaction so an interrupted rollout can be retried safely.
+    pub async fn enable_organization_flash_weekly_quotas(&self) -> Result<u64, StoreError> {
+        let mut transaction = self.pool.begin().await?;
+        let updated = sqlx::query("UPDATE cloud_security_activation SET organization_flash_weekly_quotas_enabled = true WHERE singleton = true")
+            .execute(&mut *transaction).await?;
+        if updated.rows_affected() != 1 {
+            return Err(StoreError::Invariant(
+                "missing cloud security activation row",
+            ));
+        }
+        let count = self
+            .enqueue_flash_quota_reconcile_tx(&mut transaction, None)
+            .await?;
+        transaction.commit().await?;
+        Ok(count)
+    }
+
+    /// Provider policy for metering across all accounts. Disabled until every
+    /// Flash API/controller understands the new policy and CRD fields.
+    pub async fn cloud_flash_weekly_quota(
+        &self,
+        account: OrganizationId,
+    ) -> Result<Option<(Vec<OrganizationId>, ResourceQuotaLimits)>, StoreError> {
+        let (cloud_id, enabled, value) = sqlx::query_as::<_, (Uuid, bool, Value)>(
+            "SELECT c.id, a.organization_flash_weekly_quotas_enabled, COALESCE(q.limits,d.limits)
+             FROM cloud_organization_accounts ca JOIN cloud_organizations c ON c.id=ca.organization_id
+             CROSS JOIN cloud_security_activation a CROSS JOIN resource_quota_defaults d
+             LEFT JOIN organization_resource_quotas q ON q.organization_id=c.management_account_id
+             WHERE ca.account_id=$1 AND a.singleton AND d.singleton",
+        )
+        .bind(account.0)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        if !enabled {
+            return Ok(None);
+        }
+        let accounts: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT account_id FROM cloud_organization_accounts WHERE organization_id=$1 ORDER BY account_id LIMIT 10001",
+        ).bind(cloud_id).fetch_all(&self.pool).await?;
+        if accounts.is_empty() || accounts.len() > 10_000 {
+            return Err(StoreError::Invariant(
+                "invalid cloud organization account count",
+            ));
+        }
+        Ok(Some((
+            accounts.into_iter().map(OrganizationId).collect(),
+            parse_resource_quota(value)?,
+        )))
+    }
+
     pub async fn effective_resource_quota(
         &self,
         organization_id: OrganizationId,
@@ -604,7 +663,7 @@ impl Store {
         .fetch_optional(&mut *transaction)
         .await?
         .ok_or(StoreError::NotFound)?;
-        self.enqueue_flash_quota_reconcile_tx(&mut transaction, Some(organization_id))
+        self.enqueue_organization_flash_quotas_tx(&mut transaction, organization_id)
             .await?;
         transaction.commit().await?;
         parse_resource_quota(stored)
@@ -630,7 +689,7 @@ impl Store {
             .execute(&mut *transaction)
             .await?;
         let limits = resource_quota_in_transaction(&mut transaction, organization_id).await?;
-        self.enqueue_flash_quota_reconcile_tx(&mut transaction, Some(organization_id))
+        self.enqueue_organization_flash_quotas_tx(&mut transaction, organization_id)
             .await?;
         transaction.commit().await?;
         Ok(limits)
@@ -646,6 +705,31 @@ impl Store {
             .await?;
         transaction.commit().await?;
         Ok(count)
+    }
+
+    async fn enqueue_organization_flash_quotas_tx(
+        &self,
+        transaction: &mut Transaction<'_, Postgres>,
+        account: OrganizationId,
+    ) -> Result<(), StoreError> {
+        let accounts: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT a.account_id FROM cloud_organization_accounts a
+             JOIN cloud_organizations c ON c.id=a.organization_id
+             WHERE c.management_account_id=$1 ORDER BY a.account_id",
+        )
+        .bind(account.0)
+        .fetch_all(&mut **transaction)
+        .await?;
+        if accounts.is_empty() {
+            self.enqueue_flash_quota_reconcile_tx(transaction, Some(account))
+                .await?;
+        } else {
+            for id in accounts {
+                self.enqueue_flash_quota_reconcile_tx(transaction, Some(OrganizationId(id)))
+                    .await?;
+            }
+        }
+        Ok(())
     }
 
     async fn enqueue_flash_quota_reconcile_tx(

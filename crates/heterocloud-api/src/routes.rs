@@ -635,10 +635,16 @@ async fn owner_quota_overview(
         .organization_service_quotas_enabled()
         .await
         .map_err(ApiError::from_store)?;
+    let organization_flash_weekly_quotas_enabled = state
+        .store
+        .organization_flash_weekly_quotas_enabled()
+        .await
+        .map_err(ApiError::from_store)?;
     Ok(Json(json!({
         "defaults": defaults,
         "tenants": tenants,
         "organization_service_quotas_enabled": organization_service_quotas_enabled,
+        "organization_flash_weekly_quotas_enabled": organization_flash_weekly_quotas_enabled,
     })))
 }
 

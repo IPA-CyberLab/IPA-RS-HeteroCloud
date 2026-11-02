@@ -88,6 +88,20 @@ async fn organization_allocation_is_shared_across_accounts_and_serialized()
     store
         .set_organization_resource_quota(management, &limits)
         .await?;
+    assert!(store.cloud_flash_weekly_quota(first.id).await?.is_none());
+    assert_eq!(store.enable_organization_flash_weekly_quotas().await?, 0);
+    let (accounts, weekly_limits) = store
+        .cloud_flash_weekly_quota(first.id)
+        .await?
+        .ok_or("weekly policy")?;
+    assert_eq!(accounts.len(), 3);
+    assert!(accounts.contains(&management));
+    assert!(accounts.contains(&first.id));
+    assert!(accounts.contains(&second.id));
+    assert_eq!(
+        weekly_limits.flash.max_weekly_cpu_millicore_seconds,
+        limits.flash.max_weekly_cpu_millicore_seconds
+    );
     let enabled: bool = sqlx::query_scalar(
         "SELECT organization_service_quotas_enabled FROM cloud_security_activation WHERE singleton",
     )
@@ -198,7 +212,7 @@ async fn organization_allocation_is_shared_across_accounts_and_serialized()
         "cpu_millis":100, "memory_mib":128, "ephemeral_storage_gib":5,
         "ports":[], "exposure":{"type":"internal", "traffic_mode":"forwarded"},
         "env":{}, "command":[], "args":[], "metadata":{}});
-    store
+    let first_flash = store
         .create_service_instance(
             first.id,
             first_project.id,
@@ -208,6 +222,44 @@ async fn organization_allocation_is_shared_across_accounts_and_serialized()
             flash.clone(),
         )
         .await?;
+    let count_events = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM outbox_events WHERE aggregate_id=$1 AND topic='service-instance.flash-quota'")
+            .bind(first_flash.id.0).fetch_one(store.pool()).await
+    };
+    let before_account = count_events().await?;
+    let third = store
+        .create_cloud_member_account(
+            management,
+            cloud.root_id,
+            owner.user.id,
+            "quota-third",
+            "Third",
+        )
+        .await?;
+    assert!(
+        count_events().await? > before_account,
+        "adding an account must refresh existing Flash policies"
+    );
+    let (accounts, _) = store
+        .cloud_flash_weekly_quota(first.id)
+        .await?
+        .ok_or("weekly policy")?;
+    assert!(accounts.contains(&third.id));
+    let before_limit = count_events().await?;
+    limits.flash.max_weekly_gpu_seconds = 0;
+    store
+        .set_organization_resource_quota(management, &limits)
+        .await?;
+    assert!(
+        count_events().await? > before_limit,
+        "changing the management ceiling must refresh member-account policies"
+    );
+    let before_retry = count_events().await?;
+    assert_eq!(store.enable_organization_flash_weekly_quotas().await?, 1);
+    assert!(
+        count_events().await? > before_retry,
+        "activation can safely requeue after an interrupted rollout"
+    );
     assert!(
         matches!(store.create_service_instance(second.id, second_project.id, second_principal, "flash", "second-flash", flash).await,
         Err(StoreError::RequestRejected(message)) if message.contains("cloud organization service quota"))

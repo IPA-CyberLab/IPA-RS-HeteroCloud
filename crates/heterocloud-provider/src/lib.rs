@@ -119,6 +119,17 @@ pub struct FlashProviderPolicy {
     pub max_weekly_gpu_seconds: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member: Option<FlashMemberWeeklyLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud_organization: Option<FlashCloudOrganizationWeeklyLimits>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlashCloudOrganizationWeeklyLimits {
+    pub account_ids: Vec<OrganizationId>,
+    pub max_weekly_cpu_millicore_seconds: u64,
+    pub max_weekly_memory_mib_seconds: u64,
+    pub max_weekly_gpu_seconds: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -156,6 +167,35 @@ mod tests {
         AcceptedOperation, PRINCIPAL_CONTEXT_REVOCATION_GRACE_SECONDS,
         PRINCIPAL_CONTEXT_REVOKE_ACTION, PrincipalContextRevocationRequest,
     };
+
+    #[test]
+    fn weekly_organization_policy_is_optional_during_provider_rollout()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut policy = super::FlashProviderPolicy {
+            max_weekly_cpu_millicore_seconds: 100,
+            max_weekly_memory_mib_seconds: 200,
+            max_weekly_gpu_seconds: 300,
+            member: None,
+            cloud_organization: None,
+        };
+        assert!(
+            serde_json::to_value(&policy)?
+                .get("cloud_organization")
+                .is_none()
+        );
+        policy.cloud_organization = Some(super::FlashCloudOrganizationWeeklyLimits {
+            account_ids: vec![heterocloud_domain::OrganizationId(Uuid::from_u128(1))],
+            max_weekly_cpu_millicore_seconds: 1000,
+            max_weekly_memory_mib_seconds: 2000,
+            max_weekly_gpu_seconds: 3000,
+        });
+        let json = serde_json::to_value(&policy)?;
+        assert_eq!(
+            json["cloud_organization"]["account_ids"][0],
+            "00000000-0000-0000-0000-000000000001"
+        );
+        Ok(())
+    }
 
     #[test]
     fn accepted_operation_requires_provider_status() -> Result<(), Box<dyn std::error::Error>> {
