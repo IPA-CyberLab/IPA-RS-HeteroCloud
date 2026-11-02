@@ -39,7 +39,7 @@ describe("CLI setup launcher", () => {
     );
     expect(prompt).toContain(".agents/skills/heterocloud-cli-setup/SKILL.md");
     expect(prompt).toContain(
-      "0930ca2bade6e1c7b08eea6fa6044fc126b792d2617260c0edc020e00e72e4ea",
+      "5ae2d662af2cedac464fafa27b5e642a23e100fed2f4485f8ec377a026673206",
     );
     expect(prompt).toContain("~/.claude/skills/heterocloud-cli-setup/SKILL.md");
     expect(prompt).toContain("CODEX_HOME");
