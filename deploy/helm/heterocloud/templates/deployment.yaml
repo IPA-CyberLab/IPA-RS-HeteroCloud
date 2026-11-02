@@ -30,7 +30,10 @@ spec:
       {{- end }}
       serviceAccountName: {{ include "heterocloud.fullname" . }}
       automountServiceAccountToken: false
-      terminationGracePeriodSeconds: 40
+      # The public Envoy backend resolves a headless Service whose DNS TTL can
+      # be 30 seconds. Keep serving until stale answers have expired, then
+      # leave the API's 30-second graceful shutdown time and a safety margin.
+      terminationGracePeriodSeconds: 75
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -143,6 +146,10 @@ spec:
             - name: https
               containerPort: 8443
               protocol: TCP
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "35"]
           readinessProbe:
             httpGet:
               path: /api/v1/health/ready

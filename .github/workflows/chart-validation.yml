@@ -1,0 +1,31 @@
+name: Chart validation
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - deploy/helm/heterocloud/**
+      - deploy/environments/heteronet/values.yaml
+      - .github/workflows/chart-validation.yml
+  pull_request:
+    paths:
+      - deploy/helm/heterocloud/**
+      - deploy/environments/heteronet/values.yaml
+      - .github/workflows/chart-validation.yml
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: azure/setup-helm@v5
+      - run: python3 -m pip install -r deploy/helm/heterocloud/tests/requirements.txt
+      - run: python3 -B -m unittest discover -s deploy/helm/heterocloud/tests -p 'test_*.py'
+      - run: helm lint deploy/helm/heterocloud -f deploy/environments/heteronet/values.yaml
+      - run: helm template heterocloud deploy/helm/heterocloud -f deploy/environments/heteronet/values.yaml >/tmp/heterocloud.yaml
