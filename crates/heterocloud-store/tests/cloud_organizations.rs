@@ -76,6 +76,18 @@ async fn migration_and_organization_controls_preserve_isolation() -> Result<(), 
     .execute(store.pool())
     .await?;
     assert!(!store.browser_roles_enabled().await?);
+    // The current store queries require the latest schema. Preserve the
+    // pre-organization fixtures above, then complete every later migration
+    // before checking that existing sessions and keys still work.
+    for path in paths.iter().filter(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".sql") && name >= "0029_")
+    }) {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(fs::read_to_string(path)?))
+            .execute(store.pool())
+            .await?;
+    }
     assert!(
         store
             .session_user_by_token_hash(&existing_session_hash)
