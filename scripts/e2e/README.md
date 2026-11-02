@@ -133,12 +133,16 @@ both organization quota gates and IAM time conditions are enabled:
 python3 scripts/e2e/vpc_fixture.py create --dsn-file "$PRIVATE_DIR/database-url" --fixture "$PRIVATE_DIR/iam-fixture.json"
 python3 scripts/e2e/vpc_fixture.py browser-session --dsn-file "$PRIVATE_DIR/database-url" --fixture "$PRIVATE_DIR/iam-fixture.json"
 node scripts/e2e/organization_iam_browser.mjs "$HETEROCLOUD_ENDPOINT" "$PRIVATE_DIR/iam-fixture.json" "$PRIVATE_DIR/iam-browser"
+python3 scripts/e2e/organization_iam_cleanup.py --dsn-file "$PRIVATE_DIR/database-url" --fixture "$PRIVATE_DIR/iam-fixture.json"
 python3 scripts/e2e/vpc_fixture.py remove --dsn-file "$PRIVATE_DIR/database-url" --fixture "$PRIVATE_DIR/iam-fixture.json"
 ```
 
 This uses the actual API and desktop/mobile Chromium to inspect shared limits,
 create a time-conditioned IAM policy, and verify that a matching explicit deny
-overrides account administrator access while a nonmatching deny does not. The
+overrides account administrator access while a nonmatching deny does not. It
+also creates an OU and member account, attaches an inherited conditional SCP,
+and verifies denial and recovery. The cleanup helper checks the fixture scope
+and refuses to remove the member account if it owns any services. The
 `iam-only` final argument skips the shared-quota page for staged deployments.
 It creates a disposable cookie in the database and does not test the identity
 provider's interactive login. Always remove the fixture on failure as well;

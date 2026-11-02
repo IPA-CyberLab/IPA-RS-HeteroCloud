@@ -99,6 +99,58 @@ try {
         } finally {
           if (bindingId) await context.request.delete(new URL(`iam/bindings/${bindingId}`, base).href, { headers });
         }
+
+        // Create/reuse only an explicitly named test member account and OU.
+        // Record the slug before creation so cleanup can find it even if the
+        // browser loses the response after the server commits the request.
+        if (!fixture.iam_child_slug) {
+          fixture.iam_child_slug = `vpc-e2e-child-${randomBytes(6).toString("hex")}`;
+          await writeFile(fixturePath, JSON.stringify(fixture), { mode: 0o600 });
+        }
+        if (!fixture.iam_child_slug.startsWith("vpc-e2e-child-")) throw new Error("invalid disposable child account");
+        const treeResponse = await context.request.get(new URL("organization/tree", base).href);
+        if (!treeResponse.ok()) throw new Error(`organization tree returned ${treeResponse.status()}`);
+        const tree = await treeResponse.json();
+        let child = tree.accounts.find((account) => account.slug === fixture.iam_child_slug);
+        let unitId;
+        if (child) {
+          if (fixture.iam_child_id && fixture.iam_child_id !== child.id) throw new Error("test account identity changed");
+          unitId = child.parent_id;
+        } else {
+          const unit = await context.request.post(new URL("organization/units", base).href,
+            { headers, data: { name: `IAM E2E ${randomBytes(4).toString("hex")}`, parent_id: tree.organization.root_id } });
+          if (unit.status() !== 201) throw new Error(`OU creation returned ${unit.status()}`);
+          unitId = (await unit.json()).id;
+          const account = await context.request.post(new URL("organization/accounts", base).href,
+            { headers, data: { name: "IAM E2E member", slug: fixture.iam_child_slug, parent_id: unitId } });
+          if (account.status() !== 201) throw new Error(`member account creation returned ${account.status()}`);
+          child = await account.json();
+          fixture.iam_child_id = child.id;
+          await writeFile(fixturePath, JSON.stringify(fixture), { mode: 0o600 });
+        }
+        const childProjects = new URL(`/api/v1/organizations/${child.id}/projects`, endpoint).href;
+        if ((await context.request.get(childProjects)).status() !== 200) throw new Error("test child account is not accessible");
+        const scp = await context.request.post(new URL("organization/policies", base).href, {
+          headers, data: { name: `e2e-scp-${randomBytes(6).toString("hex")}`,
+            document: { Version: "2012-10-17", Statement: { Effect: "Deny", Action: "project:List", Resource: "*",
+              Condition: { DateGreaterThan: { "aws:CurrentTime": "2000-01-01T00:00:00Z" } } } } },
+        });
+        if (scp.status() !== 201) throw new Error(`SCP creation returned ${scp.status()}`);
+        const scpId = (await scp.json()).id;
+        const attachment = new URL(`organization/policies/${scpId}/targets/unit/${unitId}`, base).href;
+        let attached = false;
+        try {
+          const result = await context.request.put(attachment, { headers });
+          if (result.status() !== 204) throw new Error(`SCP attachment returned ${result.status()}`);
+          attached = true;
+          if ((await context.request.get(childProjects)).status() !== 403) throw new Error("conditional SCP did not deny the child account");
+        } finally {
+          if (attached) {
+            const result = await context.request.delete(attachment, { headers });
+            if (result.status() !== 204) throw new Error(`SCP detachment returned ${result.status()}`);
+          }
+        }
+        if ((await context.request.get(childProjects)).status() !== 200) throw new Error("child access did not recover after SCP removal");
       } else if (mode === "iam-only") {
         await page.goto(new URL("/iam/policies", endpoint).href, { waitUntil: "domcontentloaded" });
         await expect(page.getByRole("heading", { name: "IAMポリシー", exact: true })).toBeVisible({ timeout: 15000 });
