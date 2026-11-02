@@ -1,0 +1,19 @@
+{
+  "observed_at": "2026-11-02T11:24:23Z",
+  "cloud_release": "v0.1.110-platform.17",
+  "image_digest": "sha256:f1fa2604777714325289ecf5ee8c743d0dda8f3a424415b2706ac0ee95d1ff16",
+  "release_workflow": "https://github.com/IPA-CyberLab/IPA-RS-HeteroCloud/actions/runs/41434545242",
+  "real_api_and_registry_provider": true,
+  "external_identity_provider_tested": false,
+  "checks": [
+    "organization_quota_activation_after_serving_replica_verification",
+    "two_accounts_share_the_registry_credential_limit",
+    "deleting_a_credential_releases_the_organization_limit",
+    "temporary_role_and_browser_role_cannot_issue_durable_provider_credentials",
+    "flow_developer_credential_obeys_current_scp",
+    "test_registry_projects_and_robots_removed",
+    "test_organizations_user_and_credentials_removed"
+  ],
+  "cleanup_verified": true,
+  "notes": "The Flow service was a database-only fixture. The Registry test used real, disposable projects and credentials; image push and pull were not tested."
+}
