@@ -31,3 +31,11 @@ untouched. A Kubernetes E2E creates a stopped service in an isolated namespace,
 verifies that an outdated resource-version patch is rejected, and deletes the
 test namespace. Organization weekly activation checks the actual pod images,
 provider CRD, outbox and every current provider policy before reporting success.
+
+The production rollout completed on 2026-11-02: the previously stuck event was
+acknowledged on attempt 1,064 while the service correctly remained `updating`.
+The subsequent organization-quota activation converged for all 12 existing
+Flash services and left no pending quota-refresh events. Both Flash and
+HeteroCloud maintained two ready serving replicas per component; the desired
+HeteroCloud replica count is three, with one pending while `uc-k8sp4` remains
+excluded. The affected image itself has not been recovered.
