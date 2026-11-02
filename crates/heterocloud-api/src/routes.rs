@@ -2325,8 +2325,33 @@ async fn organization_quotas(
             .into_iter()
             .find(|tenant| tenant.organization.id == organization)
             .ok_or(ApiError::NotFound)?;
+        let cloud_organization = state
+            .store
+            .cloud_organization_for_account(organization)
+            .await
+            .map_err(ApiError::from_store)?
+            .ok_or(ApiError::NotFound)?;
+        let shared_limits = state
+            .store
+            .effective_resource_quota(OrganizationId(cloud_organization.management_account_id))
+            .await
+            .map_err(ApiError::from_store)?;
+        let service_quotas_enabled = state
+            .store
+            .organization_service_quotas_enabled()
+            .await
+            .map_err(ApiError::from_store)?;
+        let weekly_quotas_enabled = state
+            .store
+            .organization_flash_weekly_quotas_enabled()
+            .await
+            .map_err(ApiError::from_store)?;
         Ok(Json(
-            json!({ "organization": tenant, "member": own, "members": members }),
+            json!({ "organization": tenant, "member": own, "members": members,
+                "cloud_organization": {"id":cloud_organization.id, "name":cloud_organization.name,
+                    "management_account_number":cloud_organization.management_account_number,
+                    "effective_limits":shared_limits, "service_quotas_enabled":service_quotas_enabled,
+                    "flash_weekly_quotas_enabled":weekly_quotas_enabled} }),
         ))
     } else {
         authorize_actor_with_implicit_allow(
@@ -2339,7 +2364,7 @@ async fn organization_quotas(
         )
         .await?;
         Ok(Json(
-            json!({ "organization": null, "member": own, "members": [] }),
+            json!({ "organization": null, "cloud_organization": null, "member": own, "members": [] }),
         ))
     }
 }

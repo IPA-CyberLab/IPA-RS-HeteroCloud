@@ -1,4 +1,4 @@
-import { Box, Button, Header, Modal, SpaceBetween } from "@/components/ui";
+import { Box, Button, ColumnLayout, Container, Header, Modal, SpaceBetween } from "@/components/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { ErrorState } from "@/components/shared/error-state";
@@ -9,10 +9,36 @@ import { QuotaEditor } from "@/features/operator/quotas-page";
 import { useActiveOrganization } from "@/features/organizations/organization-context";
 import { QuotaSummary } from "@/features/organizations/quota-summary";
 import { api, getApiErrorMessage } from "@/lib/api-client";
-import type { OrganizationMemberQuota, ResourceQuotaLimits, UnassignedQuotaResource } from "@/lib/api-types";
+import type { OrganizationMemberQuota, OrganizationQuotaOverview, ResourceQuotaLimits, UnassignedQuotaResource } from "@/lib/api-types";
+import { formatNumber } from "@/lib/utils";
 
 function roleLabel(role: OrganizationMemberQuota["role"]) {
   return role === "owner" ? "オーナー" : role === "admin" ? "管理者" : "メンバー";
+}
+
+function SharedOrganizationLimits({ group }: { group: NonNullable<OrganizationQuotaOverview["cloud_organization"]> }) {
+  const limits = group.effective_limits;
+  const allocations: [string, number][] = [
+    ["Flow サービス数", limits.flow.max_services], ["Flow 合計ルーム数", limits.flow.max_total_rooms],
+    ["Flash サービス数", limits.flash.max_services], ["Flash レプリカ数", limits.flash.max_total_replicas],
+    ["Flash CPU (millicores)", limits.flash.max_total_cpu_millis], ["Flash メモリ (MiB)", limits.flash.max_total_memory_mib],
+    ["Flash ディスク (GiB)", limits.flash.max_total_disk_gib], ["Syouyu バケット数", limits.syouyu.max_buckets],
+    ["Syouyu 容量 (bytes)", limits.syouyu.max_total_bytes],
+  ];
+  const weekly: [string, number][] = [
+    ["Flash 週次 CPU (millicore-seconds)", limits.flash.max_weekly_cpu_millicore_seconds],
+    ["Flash 週次メモリ (MiB-seconds)", limits.flash.max_weekly_memory_mib_seconds],
+    ["Flash 週次 GPU (秒)", limits.flash.max_weekly_gpu_seconds],
+  ];
+  return <Container header={<Header variant="h3" description={`管理アカウント ${group.management_account_number} の設定を、組織内の全アカウントで共有します。`}>組織全体の共有上限</Header>}>
+    <SpaceBetween size="m">
+      <Box color="text-body-secondary">サービスの割当上限: {group.service_quotas_enabled ? "適用中" : "未適用"} · Flash 週次上限: {group.flash_weekly_quotas_enabled ? "適用中" : "未適用"}</Box>
+      <ColumnLayout columns={3} variant="text-grid">
+        {[...allocations, ...weekly].map(([label, value]) => <div key={label}><Box variant="awsui-key-label">{label}</Box><Box>{formatNumber(value)}</Box></div>)}
+      </ColumnLayout>
+      <Box color="text-body-secondary">Flash Registry の容量と認証情報はアカウント単位の上限です。</Box>
+    </SpaceBetween>
+  </Container>;
 }
 
 function UnassignedResources({ organizationId, members }: { organizationId: string; members: OrganizationMemberQuota[] }) {
@@ -72,14 +98,15 @@ export function OrganizationQuotasPage() {
 
   if (quotas.isPending) return <PageLoading label="リソース上限を読み込んでいます" />;
   if (quotas.isError) return <ErrorState description="リソース上限を取得できませんでした。" onRetry={() => void quotas.refetch()} />;
-  const { member, members, organization } = quotas.data;
+  const { member, members, organization, cloud_organization: cloudOrganization } = quotas.data;
   return <SpaceBetween size="l">
     <PageHeader title="リソース上限" description={`${activeOrganization.organization_name} の適用中の上限です。個人の上限と組織全体の上限の両方が適用されます。`} />
     <Header variant="h2" description="上限は予約枠ではありません。組織全体の空きも必要です。">自分の上限</Header>
     <QuotaSummary limits={member.effective_limits} member />
     {organization ? <>
       <UnassignedResources organizationId={id} members={members} />
-      <details><summary className="cursor-pointer font-semibold">組織全体の上限を表示</summary>
+      {cloudOrganization ? <SharedOrganizationLimits group={cloudOrganization} /> : null}
+      <details><summary className="cursor-pointer font-semibold">このアカウントの上限を表示</summary>
         <QuotaSummary limits={organization.effective_limits} />
       </details>
       <Header variant="h2" counter={`(${members.length})`} description="各メンバーの上限は、組織の上限を超えられません。">メンバーの上限</Header>

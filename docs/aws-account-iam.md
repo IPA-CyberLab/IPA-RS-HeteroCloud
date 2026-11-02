@@ -36,6 +36,12 @@ the worker reconciles affected provider policies asynchronously; enforcement
 follows the normal Flash metering and reconciliation interval. Account and
 member weekly limits remain in force.
 
+An account administrator's quota page shows both the account's own limits and
+the shared organization allocation and weekly limits, with the enforcement
+state of each shared limit. Organization-wide Registry storage is not yet
+enforced; its account-specific limits are shown separately. Ordinary members
+see only their own allocation rather than other members' quota details.
+
 Identity policies, permissions boundaries, SCPs, and role session policies
 support AWS date comparisons on the always-present `aws:CurrentTime` key:
 `DateEquals`, `DateNotEquals`, `DateLessThan`, `DateLessThanEquals`,

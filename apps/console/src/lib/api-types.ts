@@ -204,6 +204,14 @@ export interface OrganizationMemberQuota {
 
 export interface OrganizationQuotaOverview {
   organization: ResourceQuotaTenant | null;
+  cloud_organization?: {
+    id: string;
+    name: string;
+    management_account_number: string;
+    effective_limits: ResourceQuotaLimits;
+    service_quotas_enabled: boolean;
+    flash_weekly_quotas_enabled: boolean;
+  } | null;
   member: OrganizationMemberQuota;
   members: OrganizationMemberQuota[];
 }

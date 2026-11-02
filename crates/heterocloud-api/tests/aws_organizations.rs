@@ -231,6 +231,29 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
     assert_eq!(status, StatusCode::CREATED);
     let member_id = member["id"].as_str().ok_or("member id")?;
     let member_account = OrganizationId(uuid::Uuid::parse_str(member_id)?);
+    let (quota_status, quota_view) = request(
+        state.clone(),
+        "GET",
+        &format!("/api/v1/organizations/{member_id}/quotas"),
+        None,
+        None,
+        None,
+    )
+    .await?;
+    assert_eq!(quota_status, StatusCode::OK);
+    assert_eq!(quota_view["cloud_organization"]["id"], org["id"]);
+    assert_eq!(
+        quota_view["cloud_organization"]["service_quotas_enabled"],
+        false
+    );
+    assert_eq!(
+        quota_view["cloud_organization"]["flash_weekly_quotas_enabled"],
+        false
+    );
+    assert_eq!(
+        quota_view["cloud_organization"]["effective_limits"],
+        serde_json::to_value(heterocloud_domain::ResourceQuotaLimits::default())?
+    );
     let membership = store
         .session_user(owner.user.id)
         .await?

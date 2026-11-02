@@ -34,7 +34,9 @@ test("組織を追加して切り替え、メンバーの上限を設定する",
       const orgId = path.split("/")[4];
       const item = organizations.find((org) => org.id === orgId)!;
       const member = { user_id: "user-1", principal_id: "principal-2", display_name: "User", email: "user@example.test", role: "owner", override_limits: null, effective_limits: limits, usage: {} };
-      return route.fulfill({ json: { organization: { organization: item, effective_limits: limits, override_limits: null, usage: {} }, member, members: [member] } });
+      return route.fulfill({ json: { organization: { organization: item, effective_limits: limits, override_limits: null, usage: {} },
+        cloud_organization: { id: "cloud-org", name: "Cloud org", management_account_number: "123456789012", effective_limits: limits, service_quotas_enabled: true, flash_weekly_quotas_enabled: false },
+        member, members: [member] } });
     }
     return route.fulfill({ status: 404, json: { error: { code: "unhandled", message: path } } });
   });
@@ -54,6 +56,8 @@ test("組織を追加して切り替え、メンバーの上限を設定する",
   await expect.poll(() => page.evaluate(() => localStorage.getItem("heterocloud.active-organization"))).toBe("org-2");
   await page.goto("/organizations/quotas");
   await expect(page.getByRole("heading", { name: "自分の上限" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "組織全体の共有上限" })).toBeVisible();
+  await expect(page.getByText("サービスの割当上限: 適用中 · Flash 週次上限: 未適用")).toBeVisible();
   await page.getByText(/User · user@example.test/).click();
   await page.getByRole("button", { name: "上限を変更" }).click();
   const editor = page.getByRole("dialog", { name: "User の上限を変更" });

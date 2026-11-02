@@ -321,6 +321,7 @@ async fn registration_checks_invitation_before_hashing_and_consumes_it_once()
     let visible: Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await?)?;
     assert!(visible["organization"].is_null());
+    assert!(visible["cloud_organization"].is_null());
     assert_eq!(visible["member"]["user_id"], json!(oidc_user.user.id));
     assert_eq!(visible["members"], json!([]));
     let quota = store.effective_resource_quota(org).await?;
@@ -376,6 +377,7 @@ async fn registration_checks_invitation_before_hashing_and_consumes_it_once()
         .await?;
     let visible: Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await?)?;
+    assert_eq!(visible["cloud_organization"]["effective_limits"], serde_json::to_value(&quota)?);
     let visible_members = visible["members"].as_array().ok_or("members")?;
     assert!(
         visible_members
