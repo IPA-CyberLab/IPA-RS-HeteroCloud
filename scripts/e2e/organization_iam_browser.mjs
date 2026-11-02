@@ -151,6 +151,44 @@ try {
           }
         }
         if ((await context.request.get(childProjects)).status() !== 200) throw new Error("child access did not recover after SCP removal");
+
+        // Assume a role across the test accounts and check a time-limited
+        // session policy against the real bearer-token authorization path.
+        const childBase = new URL(`/api/v1/organizations/${child.id}/`, endpoint);
+        const roleName = `e2e-role-${randomBytes(6).toString("hex")}`;
+        const createdRole = await context.request.post(new URL("iam/roles", childBase).href, {
+          headers, data: { name: roleName, trust_policy: { Version: "2012-10-17", Statement: [{ Effect: "Allow",
+            Action: "sts:AssumeRole", Principal: { AWS: `arn:aws:iam::${tree.organization.management_account_number}:root` } }] } },
+        });
+        if (createdRole.status() !== 201) throw new Error(`role creation returned ${createdRole.status()}`);
+        const role = await createdRole.json();
+        const rolePolicy = await context.request.post(new URL("iam/policies", childBase).href, {
+          headers, data: { name: `e2e-role-policy-${randomBytes(6).toString("hex")}`,
+            document: { Version: "2012-10-17", Statement: { Effect: "Allow", Action: "project:List", Resource: "*" } } },
+        });
+        if (rolePolicy.status() !== 201) throw new Error(`role policy creation returned ${rolePolicy.status()}`);
+        const roleBinding = await context.request.post(new URL("iam/bindings", childBase).href, {
+          headers, data: { principal_id: role.principal_id, policy_id: (await rolePolicy.json()).id },
+        });
+        if (roleBinding.status() !== 201) throw new Error(`role policy binding returned ${roleBinding.status()}`);
+        for (const [operator, expected] of [["DateLessThan", 200], ["DateGreaterThan", 403]]) {
+          const assumed = await context.request.post(new URL("sts/assume-role", base).href, {
+            headers, data: { role_arn: role.arn, session_name: `e2e-${operator}`, session_policy: {
+              Version: "2012-10-17", Statement: [
+                { Effect: "Allow", Action: "project:List", Resource: "*" },
+                { Effect: "Deny", Action: "project:List", Resource: "*", Condition: { [operator]: { "aws:CurrentTime": "2000-01-01T00:00:00Z" } } },
+              ] } },
+          });
+          if (!assumed.ok()) throw new Error(`role assumption returned ${assumed.status()}`);
+          const roleSession = await assumed.json();
+          try {
+            const authorized = await context.request.get(childProjects, { headers: { authorization: `Bearer ${roleSession.access_token}` } });
+            if (authorized.status() !== expected) throw new Error(`role session returned ${authorized.status()}, expected ${expected}`);
+          } finally {
+            const revoked = await context.request.delete(new URL(`iam/roles/${role.principal_id}/sessions/${roleSession.session_id}`, childBase).href, { headers });
+            if (revoked.status() !== 204) throw new Error(`role session revocation returned ${revoked.status()}`);
+          }
+        }
       } else if (mode === "iam-only") {
         await page.goto(new URL("/iam/policies", endpoint).href, { waitUntil: "domcontentloaded" });
         await expect(page.getByRole("heading", { name: "IAMポリシー", exact: true })).toBeVisible({ timeout: 15000 });

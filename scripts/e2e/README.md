@@ -141,7 +141,8 @@ This uses the actual API and desktop/mobile Chromium to inspect shared limits,
 create a time-conditioned IAM policy, and verify that a matching explicit deny
 overrides account administrator access while a nonmatching deny does not. It
 also creates an OU and member account, attaches an inherited conditional SCP,
-and verifies denial and recovery. The cleanup helper checks the fixture scope
+verifies denial and recovery, and tests cross-account role sessions with timed
+session policies. The cleanup helper checks the fixture scope
 and refuses to remove the member account if it owns any services. The
 `iam-only` final argument skips the shared-quota page for staged deployments.
 It creates a disposable cookie in the database and does not test the identity
