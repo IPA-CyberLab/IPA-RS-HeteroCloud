@@ -1,0 +1,34 @@
+{
+  "observed_at": "2026-11-02T06:21:03.064676+00:00",
+  "endpoint": "https://heterocloud.mizuame.app",
+  "cloud_release": "v0.1.110-platform.14",
+  "flash_release": "v0.1.56-org.3",
+  "real_api": true,
+  "external_identity_provider_tested": false,
+  "checks": [
+    "desktop_and_mobile_shared_quota_page",
+    "time_conditioned_policy_created_via_console",
+    "matching_and_nonmatching_explicit_deny",
+    "member_account_and_inherited_conditional_scp",
+    "scp_detachment_restores_access",
+    "cross_account_role_session_conditions_and_revocation",
+    "all_test_organizations_users_and_role_sessions_removed"
+  ],
+  "results": [
+    {
+      "browser": "desktop",
+      "mode": "full",
+      "real_api": true,
+      "external_identity_provider_tested": false,
+      "passed": true
+    },
+    {
+      "browser": "mobile",
+      "mode": "full",
+      "real_api": true,
+      "external_identity_provider_tested": false,
+      "passed": true
+    }
+  ],
+  "cleanup_verified": true
+}
