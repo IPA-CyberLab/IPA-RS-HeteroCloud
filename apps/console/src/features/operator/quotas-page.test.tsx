@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api-client";
 import type { ResourceQuotaLimits } from "@/lib/api-types";
 import { OwnerQuotasPage, normalizeResourceQuotaLimits } from "./quotas-page";
+import { groupOrganizationQuotas } from "./quota-groups";
 
 const limits: ResourceQuotaLimits = {
   flow: {
@@ -157,6 +158,39 @@ describe("OwnerQuotasPage", () => {
     vi.spyOn(api.owner.quotas, "clearOrganization").mockResolvedValue(
       structuredClone(limits),
     );
+  });
+
+  it("組織内のアカウントを集計し、不明な実使用量を不明のまま表示する", async () => {
+    const response = await api.owner.quotas.overview();
+    const first = response.tenants[0];
+    first.cloud_organization_id = "cloud-one";
+    first.cloud_organization_name = "Production";
+    first.management_account_id = first.organization.id;
+    const second = structuredClone(first);
+    second.organization.id = "second-account";
+    second.organization.name = "Second account";
+    second.usage.flow_services = 4;
+    second.usage.flow_max_rooms_per_service = 7;
+    second.usage.registry_storage_bytes = null;
+    response.tenants.push(second);
+    const groups = groupOrganizationQuotas(response.tenants);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].organization.name).toBe("Production");
+    expect(groups[0].accounts).toHaveLength(2);
+    expect(groups[0].usage.flow_services).toBe(6);
+    expect(groups[0].usage.flow_max_rooms_per_service).toBe(12);
+    expect(groups[0].usage.registry_storage_bytes).toBeNull();
+
+    vi.mocked(api.owner.quotas.overview).mockResolvedValue(response);
+    const user = userEvent.setup();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><OwnerQuotasPage /></QueryClientProvider>);
+    await user.click(await screen.findByRole("link", { name: "Productionの使用量と上限を表示" }));
+    await waitFor(() => {
+      expect(api.owner.quotas.members).toHaveBeenCalledWith(first.organization.id, expect.any(AbortSignal));
+      expect(api.owner.quotas.members).toHaveBeenCalledWith(second.organization.id, expect.any(AbortSignal));
+    });
+    expect(await screen.findByText("Second account · user-example")).toBeInTheDocument();
   });
 
   it("サービス全体と全アカウントの制限を表示して既定値を保存する", async () => {

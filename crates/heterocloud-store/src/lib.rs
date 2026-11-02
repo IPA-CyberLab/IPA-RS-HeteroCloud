@@ -527,6 +527,14 @@ impl Store {
         parse_resource_quota(limits)
     }
 
+    pub async fn organization_service_quotas_enabled(&self) -> Result<bool, StoreError> {
+        Ok(sqlx::query_scalar(
+            "SELECT organization_service_quotas_enabled FROM cloud_security_activation WHERE singleton = true",
+        )
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
     pub async fn effective_resource_quota(
         &self,
         organization_id: OrganizationId,
@@ -552,6 +560,14 @@ impl Store {
         validate_resource_quota(limits)?;
         let value = serde_json::to_value(limits)?;
         let mut transaction = self.pool.begin().await?;
+        // All allocation transactions take this lock in shared mode before
+        // the organization and account locks, preventing a default change
+        // from racing a cross-account admission decision.
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock(hashtextextended('heterocloud-quota-defaults', 0))",
+        )
+        .execute(&mut *transaction)
+        .await?;
         let stored = sqlx::query_scalar::<_, Value>(
             "UPDATE resource_quota_defaults
              SET limits = $1, updated_at = now()
@@ -686,9 +702,13 @@ impl Store {
     ) -> Result<Vec<ResourceQuotaTenant>, StoreError> {
         let defaults = self.resource_quota_defaults().await?;
         let rows = sqlx::query_as::<_, ResourceQuotaTenantRow>(
-            "SELECT o.id, o.slug, o.name, o.created_at, q.limits AS override_limits
+            "SELECT o.id, o.slug, o.name, o.created_at, q.limits AS override_limits,
+                    c.id AS cloud_organization_id, c.name AS cloud_organization_name,
+                    c.management_account_id
              FROM organizations o
              LEFT JOIN organization_resource_quotas q ON q.organization_id = o.id
+             JOIN cloud_organization_accounts a ON a.account_id = o.id
+             JOIN cloud_organizations c ON c.id = a.organization_id
              ORDER BY lower(o.name), o.id",
         )
         .fetch_all(&self.pool)
@@ -696,7 +716,7 @@ impl Store {
         let allocations = sqlx::query_as::<_, TenantServiceAllocationRow>(
             "SELECT organization_id, provider, spec
              FROM service_instances
-             WHERE provider IN ('flow', 'flash', 'syouyu') AND state <> 'deleting'",
+             WHERE provider IN ('flow', 'flash', 'syouyu')",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -774,6 +794,9 @@ impl Store {
                         name: row.name,
                         created_at: row.created_at,
                     },
+                    cloud_organization_id: row.cloud_organization_id,
+                    cloud_organization_name: row.cloud_organization_name,
+                    management_account_id: row.management_account_id,
                     override_limits,
                     effective_limits,
                     usage,
@@ -3078,6 +3101,15 @@ impl Store {
                 return Err(error);
             }
         };
+        organizations::validate_cloud_organization_allocation(
+            &mut transaction,
+            organization_id,
+            None,
+            provider,
+            &spec,
+            false,
+        )
+        .await?;
         if let Some(user_id) = quota_user_id {
             let organization_limits =
                 resource_quota_in_transaction(&mut transaction, organization_id).await?;
@@ -3317,12 +3349,21 @@ impl Store {
                 return Err(error);
             }
         };
+        let starting_flash = provider == "flash"
+            && existing.spec.get("stopped").and_then(Value::as_bool) == Some(true)
+            && spec.get("stopped").and_then(Value::as_bool) != Some(true);
+        organizations::validate_cloud_organization_allocation(
+            &mut transaction,
+            organization_id,
+            Some(id),
+            provider,
+            &spec,
+            !starting_flash,
+        )
+        .await?;
         if let Some(user_id) = quota_user_id {
             let organization_limits =
                 resource_quota_in_transaction(&mut transaction, organization_id).await?;
-            let starting_flash = provider == "flash"
-                && existing.spec.get("stopped").and_then(Value::as_bool) == Some(true)
-                && spec.get("stopped").and_then(Value::as_bool) != Some(true);
             organizations::validate_member_allocation(
                 &mut transaction,
                 organization_id,
@@ -3455,6 +3496,15 @@ impl Store {
                 Some(&existing.spec),
                 spec,
                 &quota,
+            )
+            .await?;
+            organizations::validate_cloud_organization_allocation(
+                &mut transaction,
+                organization_id,
+                Some(id),
+                "flash",
+                &spec,
+                false,
             )
             .await?;
             let quota_user_id = sqlx::query_scalar::<_, Option<Uuid>>(
@@ -3812,6 +3862,26 @@ async fn lock_tenant_allocations(
     transaction: &mut Transaction<'_, Postgres>,
     organization_id: OrganizationId,
 ) -> Result<(), StoreError> {
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('heterocloud-quota-defaults', 0))",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    // The account's organization membership is immutable after creation.
+    // Lock the organization before the account, so two accounts cannot each
+    // reserve the same remaining organization capacity concurrently.
+    let cloud_organization = sqlx::query_scalar::<_, Uuid>(
+        "SELECT organization_id FROM cloud_organization_accounts WHERE account_id = $1",
+    )
+    .bind(organization_id.0)
+    .fetch_optional(&mut **transaction)
+    .await?;
+    if let Some(cloud_organization) = cloud_organization {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text, 2))")
+            .bind(cloud_organization)
+            .execute(&mut **transaction)
+            .await?;
+    }
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text, 1))")
         .bind(organization_id.0)
         .execute(&mut **transaction)
@@ -5015,6 +5085,9 @@ impl ResourceQuotaUsage {
 #[derive(Clone, Debug, Serialize)]
 pub struct ResourceQuotaTenant {
     pub organization: Organization,
+    pub cloud_organization_id: Uuid,
+    pub cloud_organization_name: String,
+    pub management_account_id: Uuid,
     pub override_limits: Option<ResourceQuotaLimits>,
     pub effective_limits: ResourceQuotaLimits,
     pub usage: ResourceQuotaUsage,
@@ -5489,6 +5562,9 @@ struct ResourceQuotaTenantRow {
     name: String,
     created_at: DateTime<Utc>,
     override_limits: Option<Value>,
+    cloud_organization_id: Uuid,
+    cloud_organization_name: String,
+    management_account_id: Uuid,
 }
 
 #[derive(sqlx::FromRow)]

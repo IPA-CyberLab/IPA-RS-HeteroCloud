@@ -630,7 +630,16 @@ async fn owner_quota_overview(
         PrincipalId(owner.user.user.id.0),
     )
     .await;
-    Ok(Json(json!({ "defaults": defaults, "tenants": tenants })))
+    let organization_service_quotas_enabled = state
+        .store
+        .organization_service_quotas_enabled()
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(json!({
+        "defaults": defaults,
+        "tenants": tenants,
+        "organization_service_quotas_enabled": organization_service_quotas_enabled,
+    })))
 }
 
 async fn owner_organization_member_quotas(

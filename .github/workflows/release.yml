@@ -75,6 +75,8 @@ jobs:
           HETEROCLOUD_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
             cargo test --locked -p heterocloud-store --test cloud_organizations
           HETEROCLOUD_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+            cargo test --locked -p heterocloud-store --test cloud_organization_service_quotas
+          HETEROCLOUD_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
             cargo test --locked -p heterocloud-api --test aws_organizations
           HETEROCLOUD_FLOW_CREDENTIAL_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
             cargo test --locked -p heterocloud-api --test flow_developer_credentials

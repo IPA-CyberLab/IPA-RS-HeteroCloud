@@ -18,13 +18,13 @@ import { FormError } from "@/components/shared/form-error";
 import { PageHeader } from "@/components/shared/page-header";
 import { PageLoading } from "@/components/shared/page-loading";
 import { QuotaSummary } from "@/features/organizations/quota-summary";
+import { groupOrganizationQuotas, type OrganizationQuotaGroup } from "./quota-groups";
 import { api, getApiErrorMessage } from "@/lib/api-client";
 import type {
   FlashQuotaLimits,
   FlowQuotaLimits,
   OwnerAccount,
   ResourceQuotaLimits,
-  ResourceQuotaTenant,
   ResourceQuotaUsage,
   SyouyuQuotaLimits,
   UserLoginEvent,
@@ -548,13 +548,16 @@ export function OwnerQuotasPage() {
     queryFn: ({ signal }) => api.owner.accounts.list(signal),
   });
   const [defaults, setDefaults] = useState<ResourceQuotaLimits | null>(null);
-  const [editing, setEditing] = useState<ResourceQuotaTenant | null>(null);
+  const [editing, setEditing] = useState<OrganizationQuotaGroup | null>(null);
   const [tenantLimits, setTenantLimits] = useState<ResourceQuotaLimits | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<OwnerAccount | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const memberQuotas = useQuery({
     queryKey: ["owner", "resource-quotas", editing?.organization.id, "members"],
-    queryFn: ({ signal }) => api.owner.quotas.members(editing?.organization.id ?? "", signal),
+    queryFn: ({ signal }) => Promise.all((editing?.accounts ?? []).map(async (account) => ({
+      account,
+      members: (await api.owner.quotas.members(account.organization.id, signal)).items,
+    }))),
     enabled: editing !== null,
   });
   const accountLogins = useQuery({
@@ -680,16 +683,16 @@ export function OwnerQuotasPage() {
     [],
   );
 
-  const columns = useMemo<ColumnDef<ResourceQuotaTenant, unknown>[]>(
+  const columns = useMemo<ColumnDef<OrganizationQuotaGroup, unknown>[]>(
     () => [
       {
         id: "organization",
-        header: "テナント",
+        header: "組織",
         accessorFn: (tenant) => `${tenant.organization.name} ${tenant.organization.slug}`,
         cell: ({ row }) => (
           <SpaceBetween size="xxs">
             <Box fontWeight="bold">{row.original.organization.name}</Box>
-            <Box color="text-body-secondary">{row.original.organization.slug}</Box>
+            <Box color="text-body-secondary">{row.original.accounts.length} アカウント</Box>
           </SpaceBetween>
         ),
       },
@@ -820,6 +823,7 @@ export function OwnerQuotasPage() {
     defaults ?? quotas.data.defaults,
   );
   const tenants = quotas.data.tenants;
+  const organizationGroups = groupOrganizationQuotas(tenants);
   const registeredAccounts = accounts.data.items;
   const aggregate = tenants.reduce(
     (totals, tenant) => ({
@@ -839,7 +843,7 @@ export function OwnerQuotasPage() {
       syouyuBytes: 0,
     },
   );
-  const customLimitCount = tenants.filter((tenant) => tenant.override_limits).length;
+  const customLimitCount = organizationGroups.filter((group) => group.override_limits).length;
 
   return (
     <SpaceBetween size="l">
@@ -877,14 +881,19 @@ export function OwnerQuotasPage() {
       {clearTenant.isError ? <FormError message={getApiErrorMessage(clearTenant.error)} /> : null}
       <Header
         variant="h2"
-        counter={`(${formatNumber(tenants.length)})`}
-        description={`${formatNumber(customLimitCount)}件に個別上限を設定中です。個別設定を解除すると既定値へ戻ります。`}
+        counter={`(${formatNumber(organizationGroups.length)})`}
+        description={`${formatNumber(customLimitCount)}件に個別上限を設定中です。組織の管理アカウントに設定します。`}
       >
         組織別ハードリミット
       </Header>
+      <Box color="text-body-secondary">
+        {quotas.data.organization_service_quotas_enabled
+          ? "Flow・Flash・Syouyuのサービス割当は組織内のアカウント合計で制限します。RegistryとFlashの週次利用量は現在アカウント単位です。"
+          : "組織のサービス割当上限は有効化前です。現在の制限はアカウント単位です。"}
+      </Box>
       <DataTable
         columns={columns}
-        data={tenants}
+        data={organizationGroups}
         getRowId={(tenant) => tenant.organization.id}
         onRowClick={(tenant) => {
           setEditing(tenant);
@@ -935,13 +944,16 @@ export function OwnerQuotasPage() {
           <Header variant="h3" description="メンバーの上限変更は、その組織の管理者が行います。">メンバーと適用中の上限</Header>
           {memberQuotas.isPending ? <PageLoading label="メンバーを読み込んでいます" /> : memberQuotas.isError ?
             <ErrorState description="メンバーの上限を取得できませんでした。" onRetry={() => void memberQuotas.refetch()} /> :
-            memberQuotas.data.items.map((member) => <details key={member.user_id}>
-              <summary className="cursor-pointer font-semibold">{member.display_name} · {member.email} · {member.role === "owner" ? "オーナー" : member.role === "admin" ? "管理者" : "メンバー"}</summary>
-              <QuotaSummary limits={member.effective_limits} member />
-            </details>)}
+            memberQuotas.data.map(({ account, members }) => <div key={account.organization.id}>
+              <Header variant="h4">{account.organization.name} · {account.organization.slug}</Header>
+              {members.map((member) => <details key={member.user_id}>
+                <summary className="cursor-pointer font-semibold">{member.display_name} · {member.email} · {member.role === "owner" ? "オーナー" : member.role === "admin" ? "管理者" : "メンバー"}</summary>
+                <QuotaSummary limits={member.effective_limits} member />
+              </details>)}
+            </div>)}
           <Header
             variant="h3"
-            description="このアカウントに適用する上限です。変更中の値に対する使用率を上に表示します。"
+            description="組織の管理アカウントに設定する上限です。変更中の値に対する使用率を上に表示します。"
           >
             個別ハードリミット
           </Header>

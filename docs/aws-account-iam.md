@@ -18,11 +18,18 @@ managed `FullAWSAccess` policy, and the last attachment cannot be removed. SCPs
 do not apply to the management account. Existing HeteroCloud quota ownership
 and per-user quota extensions remain in force per account.
 
-Quota limits are still enforced per account and per member within that account;
-they are not an aggregate ceiling over all accounts in a cloud organization.
-The operator quota view currently lists accounts rather than grouping them by
-cloud organization. Do not rely on those account limits as an organization-wide
-cap when creating multiple member accounts.
+The operator quota view groups accounts by cloud organization. Migration 0029
+adds an initially disabled gate for aggregate **service allocation** limits:
+Flow service/room allocations, Flash service/replica/CPU/memory/disk allocations,
+and Syouyu bucket allocations. Once every API replica uses the new enforcement,
+the management account's operator-set quota is also the organization's ceiling.
+Requests across accounts use one transaction lock; deleting services remain
+charged until provider deletion completes. Existing account and member limits
+continue to apply. While the gate is disabled, limits remain account-scoped.
+
+This gate does not aggregate Flash weekly CPU/memory/GPU runtime, Registry
+storage, or direct provider credential usage across accounts. Those limits remain
+account-scoped. Do not assume they are organization-wide.
 
 IAM roles have a restricted AWS-style trust policy and short-lived HeteroCloud
 bearer sessions. Cross-account assumption requires both a source identity
@@ -52,6 +59,11 @@ controls once using a transactional DB migration/job:
 ```sql
 UPDATE cloud_security_activation SET scp_enabled = true, roles_enabled = true, browser_roles_enabled = true WHERE singleton = true;
 ```
+
+After all API replicas have also been upgraded to migration 0029's service
+allocation enforcement, verify their actual images and endpoints and activate
+the separate `organization_service_quotas_enabled` gate. This gate must not be
+enabled during a mixed-version rollout.
 
 Verify the deployment's actual image digests and readiness, rather than only
 the desired image, before activation. Once activated, do not roll back to a

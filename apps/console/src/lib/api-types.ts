@@ -178,6 +178,9 @@ export interface ResourceQuotaUsage {
 
 export interface ResourceQuotaTenant {
   organization: Organization;
+  cloud_organization_id?: string;
+  cloud_organization_name?: string;
+  management_account_id?: string;
   override_limits: ResourceQuotaLimits | null;
   effective_limits: ResourceQuotaLimits;
   usage: ResourceQuotaUsage;
@@ -214,6 +217,7 @@ export interface UnassignedQuotaResource {
 export interface OwnerQuotaOverview {
   defaults: ResourceQuotaLimits;
   tenants: ResourceQuotaTenant[];
+  organization_service_quotas_enabled?: boolean;
 }
 
 export interface UserExternalIdentity {
