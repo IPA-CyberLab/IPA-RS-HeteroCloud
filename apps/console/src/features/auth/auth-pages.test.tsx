@@ -56,7 +56,7 @@ function unauthenticatedSession() {
 }
 
 describe("認証画面", () => {
-  it("Keycloakのログインと登録だけを表示する", async () => {
+  it("ログインと登録だけを表示する", async () => {
     unauthenticatedSession();
     renderRoute("/login", <LoginPage />);
 
@@ -64,7 +64,7 @@ describe("認証画面", () => {
       await screen.findByRole("heading", { name: "ログイン" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Keycloakでログイン" }),
+      screen.getByRole("link", { name: "ログイン" }),
     ).toHaveAttribute("href", "/api/v1/auth/oidc/start");
     expect(
       screen.getByRole("link", { name: "アカウントを作成" }),
@@ -73,6 +73,8 @@ describe("認証画面", () => {
       "/api/v1/auth/oidc/start?intent=register",
     );
     expect(screen.queryByText("ローカルアカウント")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Keycloak/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/IDプロバイダー/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("メールアドレス")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("パスワード")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "ログイン" })).not.toBeInTheDocument();
@@ -90,7 +92,7 @@ describe("認証画面", () => {
     );
 
     expect(
-      await screen.findByRole("link", { name: "Keycloakでログイン" }),
+      await screen.findByRole("link", { name: "ログイン" }),
     ).toHaveAttribute("href", "/api/v1/auth/oidc/start");
     expect(
       screen.getByRole("link", { name: "アカウントを作成" }),

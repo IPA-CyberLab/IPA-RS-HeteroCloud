@@ -30,19 +30,13 @@ export function LoginPage() {
             </Header>
             {session.isError ? (
               <Alert type="warning">
-                セッション確認APIに接続できません。ログイン時に再試行します。
+                ログイン状態を確認できません。ログインをお試しください。
               </Alert>
             ) : null}
-            <Container
-              header={
-                <Header variant="h2" description="組織のIDプロバイダーで認証します。">
-                  Keycloak
-                </Header>
-              }
-            >
+            <Container>
               <SpaceBetween size="s">
                 <Button variant="primary" fullWidth href="/api/v1/auth/oidc/start" iconName="key">
-                  Keycloakでログイン
+                  ログイン
                 </Button>
                 <Button fullWidth href="/api/v1/auth/oidc/start?intent=register" iconName="user-profile-active">
                   アカウントを作成

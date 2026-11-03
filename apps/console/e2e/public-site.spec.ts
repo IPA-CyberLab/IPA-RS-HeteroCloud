@@ -25,6 +25,9 @@ test("restoring the console document at / loads the public homepage", async ({ p
   });
   await page.goto("/login");
   await expect(page.getByRole("heading", { name: "ログイン", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "ログイン", exact: true })).toHaveAttribute("href", "/api/v1/auth/oidc/start");
+  await expect(page.getByRole("link", { name: "アカウントを作成" })).toHaveAttribute("href", "/api/v1/auth/oidc/start?intent=register");
+  await expect(page.locator("main")).not.toContainText(/Keycloak|IDプロバイダー/i);
   await expect.poll(() => sessionRequests).toBe(1);
 
   await page.evaluate(() => {

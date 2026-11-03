@@ -78,12 +78,12 @@ const QUOTA_BOUNDS = {
 } as const;
 
 function authenticationMethodLabel(method: UserLoginEvent["authentication_method"]) {
-  return method === "oidc" ? "Keycloak (OIDC)" : "ローカル";
+  return method === "oidc" ? "外部認証" : "ローカル";
 }
 
 function accountAuthenticationLabel(account: OwnerAccount) {
   const methods = [];
-  if (account.external_identities.length > 0) methods.push("Keycloak (OIDC)");
+  if (account.external_identities.length > 0) methods.push("外部認証");
   if (account.has_local_password) methods.push("ローカル");
   return methods.join(" / ") || "未設定";
 }
@@ -1034,7 +1034,7 @@ export function OwnerQuotasPage() {
               {selectedAccount.external_identities.map((identity) => (
                 <div key={`${identity.issuer}:${identity.subject}`}>
                   <SpaceBetween size="xxs">
-                    <Box variant="awsui-key-label">Keycloak / OIDC</Box>
+                    <Box variant="awsui-key-label">外部認証のID</Box>
                     <Box>{identity.issuer}</Box>
                     <Box color="text-body-secondary">Subject: {identity.subject}</Box>
                     <Box color="text-body-secondary">
