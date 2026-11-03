@@ -1707,6 +1707,22 @@ impl Store {
         Ok(Some(SessionUser { user, memberships }))
     }
 
+    /// A display name belongs to the human user, not to their IAM principal.
+    /// Keeping principal names unchanged preserves account-scoped IAM identity.
+    pub async fn rename_user(&self, user_id: UserId, name: &str) -> Result<(), StoreError> {
+        let updated = sqlx::query(
+            "UPDATE users SET display_name = $2, updated_at = now() WHERE id = $1 AND status = 'active'",
+        )
+        .bind(user_id.0)
+        .bind(name)
+        .execute(&self.pool)
+        .await?;
+        if updated.rows_affected() != 1 {
+            return Err(StoreError::NotFound);
+        }
+        Ok(())
+    }
+
     pub async fn authorization_context(
         &self,
         user_id: UserId,
@@ -1772,6 +1788,23 @@ impl Store {
         .into_iter()
         .map(Organization::try_from)
         .collect()
+    }
+
+    pub async fn rename_account(
+        &self,
+        account_id: OrganizationId,
+        name: &str,
+    ) -> Result<Organization, StoreError> {
+        let row = sqlx::query_as::<_, OrganizationRow>(
+            "UPDATE organizations SET name = $2, updated_at = now() WHERE id = $1
+             RETURNING id, slug, name, created_at",
+        )
+        .bind(account_id.0)
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        Organization::try_from(row)
     }
 
     /// Creates a separate tenant and makes the authenticated user its owner.
@@ -2017,6 +2050,26 @@ impl Store {
         .collect()
     }
 
+    pub async fn rename_project(
+        &self,
+        organization_id: OrganizationId,
+        project_id: ProjectId,
+        name: &str,
+    ) -> Result<Project, StoreError> {
+        let row = sqlx::query_as::<_, ProjectRow>(
+            "UPDATE projects SET name = $3, updated_at = now()
+             WHERE organization_id = $1 AND id = $2
+             RETURNING id, organization_id, slug, name, created_at",
+        )
+        .bind(organization_id.0)
+        .bind(project_id.0)
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        Project::try_from(row)
+    }
+
     pub async fn create_project(
         &self,
         organization_id: OrganizationId,
@@ -2052,6 +2105,26 @@ impl Store {
         .into_iter()
         .map(Principal::try_from)
         .collect()
+    }
+
+    pub async fn rename_iam_user(
+        &self,
+        organization_id: OrganizationId,
+        principal_id: PrincipalId,
+        name: &str,
+    ) -> Result<Principal, StoreError> {
+        let row = sqlx::query_as::<_, PrincipalRow>(
+            "UPDATE principals SET name = $3, updated_at = now()
+             WHERE organization_id = $1 AND id = $2 AND kind = 'user'
+             RETURNING id, organization_id, kind, name, user_id, enabled, created_at",
+        )
+        .bind(organization_id.0)
+        .bind(principal_id.0)
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        Principal::try_from(row)
     }
 
     pub async fn create_service_account(

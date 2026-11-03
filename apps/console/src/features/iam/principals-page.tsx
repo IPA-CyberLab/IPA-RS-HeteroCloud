@@ -31,6 +31,8 @@ export function IamPrincipalsPage() {
   const [invitationOpen, setInvitationOpen] = useState(false);
   const [serviceAccountName, setServiceAccountName] = useState("");
   const [expiresInHours, setExpiresInHours] = useState("24");
+  const [editingUser, setEditingUser] = useState<Principal | null>(null);
+  const [userName, setUserName] = useState("");
   const createServiceAccount = useMutation({
     mutationFn: (name: string) =>
       api.iam.principals.createServiceAccount(organizationId, { name }),
@@ -45,6 +47,13 @@ export function IamPrincipalsPage() {
   const setEnabled = useMutation({
     mutationFn:(principal:Principal)=>api.iam.principals.setEnabled(organizationId,principal.id,!principal.enabled),
     onSuccess:()=>queryClient.invalidateQueries({queryKey:["organizations",organizationId,"iam","principals"]}),
+  });
+  const renameUser = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => api.iam.principals.renameUser(organizationId, id, name),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["organizations", organizationId, "iam", "principals"] });
+      setEditingUser(null);
+    },
   });
   const createInvitation = useMutation({
     mutationFn: () =>
@@ -87,14 +96,16 @@ export function IamPrincipalsPage() {
         header: "ユーザーID",
         cell: ({ getValue }) => <Box variant="code">{getValue<string | null>() ?? "-"}</Box>,
       },
-      {id:"actions",header:"操作",cell:({row})=>row.original.kind==="service_account" ? <Button disabled={setEnabled.isPending} onClick={()=>setEnabled.mutate(row.original)}>{row.original.enabled ? "無効化" : "有効化"}</Button> : null},
+      {id:"actions",header:"操作",cell:({row})=>row.original.kind==="service_account" ? <Button disabled={setEnabled.isPending} onClick={()=>setEnabled.mutate(row.original)}>{row.original.enabled ? "無効化" : "有効化"}</Button> : <Button ariaLabel={`${row.original.name}のIAMユーザー名を変更`} onClick={() => {
+        renameUser.reset(); setUserName(row.original.name); setEditingUser(row.original);
+      }}>ユーザー名を変更</Button>},
       {
         accessorKey: "created_at",
         header: "作成日時",
         cell: ({ getValue }) => formatDateTime(getValue<string>()),
       },
     ],
-    [setEnabled],
+    [setEnabled, renameUser],
   );
 
   if (principals.isPending) return <PageLoading label="プリンシパルを読み込んでいます" />;
@@ -148,6 +159,17 @@ export function IamPrincipalsPage() {
         emptyTitle="プリンシパルがありません"
         emptyDescription="サービスアカウントを作成するか、ユーザーを招待してください。"
       />
+      <Modal visible={editingUser !== null} onDismiss={() => setEditingUser(null)} header="IAMユーザー名を変更"
+        footer={<Box float="right"><SpaceBetween direction="horizontal" size="xs">
+          <Button onClick={() => setEditingUser(null)}>キャンセル</Button>
+          <Button variant="primary" loading={renameUser.isPending} disabled={!userName.trim() || Array.from(userName.trim()).length > 120}
+            onClick={() => { if (editingUser) renameUser.mutate({ id: editingUser.id, name: userName.trim() }); }}>保存</Button>
+        </SpaceBetween></Box>}>
+        <SpaceBetween size="m">
+          <FormField label="IAMユーザー名" description="このアカウントで使用する名前です。"><Input value={userName} onChange={({ detail }) => setUserName(detail.value)} /></FormField>
+          <FormError message={renameUser.isError ? getApiErrorMessage(renameUser.error) : null} />
+        </SpaceBetween>
+      </Modal>
       <Modal
         visible={serviceAccountOpen}
         onDismiss={() => setServiceAccountOpen(false)}

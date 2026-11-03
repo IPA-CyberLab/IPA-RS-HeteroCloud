@@ -134,6 +134,7 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route("/auth/oidc/start", get(oidc_start))
         .route("/auth/oidc/callback", get(oidc_callback))
         .route("/auth/session", get(session))
+        .route("/auth/profile", axum::routing::patch(rename_profile))
         .route("/auth/logout", post(logout))
         .route("/auth/role/exit", post(exit_browser_role))
         .route("/auth/cli/device", post(create_cli_device_authorization))
@@ -178,10 +179,13 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         )
         .route("/organizations", get(list_organizations).post(create_organization))
         .route("/organizations/join", post(join_organization))
-        .route("/organizations/{organization_id}/organization", get(describe_cloud_organization))
+        .route("/organizations/{organization_id}", axum::routing::patch(rename_account))
+        .route("/organizations/{organization_id}/organization", get(describe_cloud_organization).patch(rename_cloud_organization))
         .route("/organizations/{organization_id}/organization/tree", get(cloud_organization_tree))
         .route("/organizations/{organization_id}/organization/units", post(create_cloud_organizational_unit))
+        .route("/organizations/{organization_id}/organization/units/{unit_id}", axum::routing::patch(rename_cloud_unit))
         .route("/organizations/{organization_id}/organization/accounts", post(create_cloud_member_account))
+        .route("/organizations/{organization_id}/organization/accounts/{account_id}", axum::routing::patch(rename_cloud_account))
         .route("/organizations/{organization_id}/organization/accounts/{account_id}/parent", axum::routing::put(move_cloud_member_account))
         .route("/organizations/{organization_id}/organization/policies", get(list_service_control_policies).post(create_service_control_policy))
         .route("/organizations/{organization_id}/organization/policies/{policy_id}/targets/{target_type}/{target_id}", axum::routing::put(attach_service_control_policy).delete(detach_service_control_policy))
@@ -203,7 +207,9 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             "/organizations/{organization_id}/projects",
             get(list_projects).post(create_project),
         )
+        .route("/organizations/{organization_id}/projects/{project_id}", axum::routing::patch(rename_project))
         .route("/organizations/{organization_id}/iam/principals/{principal_id}", axum::routing::patch(set_service_account_enabled))
+        .route("/organizations/{organization_id}/iam/users/{principal_id}", axum::routing::patch(rename_iam_user))
         .route("/organizations/{organization_id}/iam/bindings/{binding_id}", axum::routing::delete(delete_iam_binding))
         .route("/organizations/{organization_id}/iam/groups", get(list_iam_groups).post(create_iam_group))
         .route("/organizations/{organization_id}/iam/groups/{group_id}", axum::routing::delete(delete_iam_group))
@@ -1467,6 +1473,52 @@ async fn session(
     Ok(Json(response))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RenameRequest {
+    name: String,
+}
+
+async fn rename_profile(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<RenameRequest>,
+) -> Result<StatusCode, ApiError> {
+    let session = authenticated_mutation(&state, &headers, &jar).await?;
+    let name = request.name.trim();
+    validate_name(name)?;
+    let request_id = Uuid::now_v7().to_string();
+    for membership in &session.user.memberships {
+        let resource = organization_resource(
+            membership.organization_id.0,
+            &format!("users/{}/profile", session.user.user.id),
+        );
+        state
+            .store
+            .append_audit(&AuditEvent {
+                organization_id: Some(membership.organization_id),
+                principal_id: Some(membership.principal_id),
+                user_id: Some(session.user.user.id),
+                request_id: &request_id,
+                source_ip: None,
+                action: "user:UpdateProfile",
+                resource: &resource,
+                decision: "allow",
+                reason: "self_service_allow",
+                metadata: json!({"authentication": {"actor": "user"}}),
+            })
+            .await
+            .map_err(ApiError::from_store)?;
+    }
+    state
+        .store
+        .rename_user(session.user.user.id, name)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn logout(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1853,6 +1905,117 @@ async fn list_organizations(
         _ => return Err(ApiError::Forbidden),
     };
     Ok(Json(json!({ "items": organizations })))
+}
+
+async fn rename_account(
+    State(state): State<Arc<AppState>>,
+    Path(account_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<RenameRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let name = request.name.trim();
+    validate_name(name)?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(account_id),
+        "account:PutAccountName",
+        &organization_resource(account_id, "account/*"),
+    )
+    .await?;
+    let account = state
+        .store
+        .rename_account(OrganizationId(account_id), name)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(account))
+}
+
+async fn rename_cloud_organization(
+    State(state): State<Arc<AppState>>,
+    Path(management_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<RenameRequest>,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let name = request.name.trim();
+    validate_name(name)?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(management_id),
+        "organizations:UpdateOrganization",
+        &organization_resource(management_id, "organization/*"),
+    )
+    .await?;
+    state
+        .store
+        .rename_cloud_organization(OrganizationId(management_id), name)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn rename_cloud_account(
+    State(state): State<Arc<AppState>>,
+    Path((management_id, account_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<RenameRequest>,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let name = request.name.trim();
+    validate_name(name)?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(management_id),
+        "account:PutAccountName",
+        &organization_resource(
+            management_id,
+            &format!("organization/accounts/{account_id}"),
+        ),
+    )
+    .await?;
+    state
+        .store
+        .rename_cloud_account(
+            OrganizationId(management_id),
+            OrganizationId(account_id),
+            name,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn rename_cloud_unit(
+    State(state): State<Arc<AppState>>,
+    Path((management_id, unit_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<RenameRequest>,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let name = request.name.trim();
+    validate_name(name)?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(management_id),
+        "organizations:UpdateOrganizationalUnit",
+        &organization_resource(management_id, &format!("organization/units/{unit_id}")),
+    )
+    .await?;
+    state
+        .store
+        .rename_cloud_unit(OrganizationId(management_id), unit_id, name)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn describe_cloud_organization(
@@ -2571,6 +2734,62 @@ async fn list_projects(
         .await
         .map_err(ApiError::from_store)?;
     Ok(Json(json!({ "items": projects })))
+}
+
+async fn rename_project(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, project_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<RenameRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let name = request.name.trim();
+    validate_name(name)?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "project:Update",
+        &organization_resource(organization_id, &format!("project/{project_id}")),
+    )
+    .await?;
+    let project = state
+        .store
+        .rename_project(OrganizationId(organization_id), ProjectId(project_id), name)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(project))
+}
+
+async fn rename_iam_user(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, principal_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<RenameRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let name = request.name.trim();
+    validate_name(name)?;
+    authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "iam:UpdateUser",
+        &organization_resource(organization_id, &format!("iam/users/{principal_id}")),
+    )
+    .await?;
+    let principal = state
+        .store
+        .rename_iam_user(
+            OrganizationId(organization_id),
+            PrincipalId(principal_id),
+            name,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(principal))
 }
 
 #[derive(Deserialize)]

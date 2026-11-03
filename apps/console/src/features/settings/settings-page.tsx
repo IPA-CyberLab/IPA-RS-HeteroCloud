@@ -1,14 +1,21 @@
 import { Box } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { Container } from "@/components/ui";
 import { FormField } from "@/components/ui";
 import { Header } from "@/components/ui";
+import { Input } from "@/components/ui";
 import { KeyValuePairs } from "@/components/ui";
+import { Modal } from "@/components/ui";
 import { Select } from "@/components/ui";
 import { SpaceBetween } from "@/components/ui";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { DataTable } from "@/components/shared/data-table";
+import { FormError } from "@/components/shared/form-error";
 import { PageHeader } from "@/components/shared/page-header";
 import { useSession } from "@/features/auth/session";
 import { useActiveOrganization } from "@/features/organizations/organization-context";
+import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { Membership } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/utils";
 
@@ -16,6 +23,19 @@ export function SettingsPage() {
   const session = useSession().data!;
   const { activeOrganization, memberships, setActiveOrganizationId } =
     useActiveOrganization();
+  const queryClient = useQueryClient();
+  const [editingName, setEditingName] = useState(false);
+  const [name, setName] = useState("");
+  const renameProfile = useMutation({
+    mutationFn: api.auth.renameProfile,
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["auth", "session"] }),
+        queryClient.invalidateQueries({ queryKey: ["organizations"] }),
+      ]);
+      setEditingName(false);
+    },
+  });
 
   return (
     <SpaceBetween size="l">
@@ -23,7 +43,11 @@ export function SettingsPage() {
         title="設定"
         description="アカウント情報と操作対象の組織を確認します。"
       />
-      <Container header={<Header variant="h2">アカウント</Header>}>
+      <Container header={<Header variant="h2" actions={<Button onClick={() => {
+        renameProfile.reset();
+        setName(session.user.display_name);
+        setEditingName(true);
+      }}>表示名を変更</Button>}>アカウント</Header>}>
         <KeyValuePairs
           columns={1}
           items={[
@@ -34,6 +58,18 @@ export function SettingsPage() {
           ]}
         />
       </Container>
+      <Modal visible={editingName} onDismiss={() => setEditingName(false)} header="表示名を変更"
+        footer={<Box float="right"><SpaceBetween direction="horizontal" size="xs">
+          <Button onClick={() => setEditingName(false)}>キャンセル</Button>
+          <Button variant="primary" loading={renameProfile.isPending}
+            disabled={!name.trim() || Array.from(name.trim()).length > 120}
+            onClick={() => renameProfile.mutate(name.trim())}>保存</Button>
+        </SpaceBetween></Box>}>
+        <SpaceBetween size="m">
+          <FormField label="表示名"><Input value={name} onChange={({ detail }) => setName(detail.value)} /></FormField>
+          <FormError message={renameProfile.isError ? getApiErrorMessage(renameProfile.error) : null} />
+        </SpaceBetween>
+      </Modal>
       <Container
         header={
           <Header variant="h2" description="操作する組織を選択します。">

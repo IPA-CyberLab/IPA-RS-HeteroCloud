@@ -67,6 +67,71 @@ struct ScpRow {
 }
 
 impl Store {
+    pub async fn rename_cloud_organization(
+        &self,
+        management_account_id: OrganizationId,
+        name: &str,
+    ) -> Result<(), StoreError> {
+        let updated = sqlx::query(
+            "UPDATE cloud_organizations SET name = $2 WHERE management_account_id = $1",
+        )
+        .bind(management_account_id.0)
+        .bind(name)
+        .execute(&self.pool)
+        .await?;
+        if updated.rows_affected() != 1 {
+            return Err(StoreError::NotFound);
+        }
+        Ok(())
+    }
+
+    pub async fn rename_cloud_account(
+        &self,
+        management_account_id: OrganizationId,
+        account_id: OrganizationId,
+        name: &str,
+    ) -> Result<(), StoreError> {
+        let updated = sqlx::query(
+            "UPDATE organizations a SET name = $3, updated_at = now()
+             FROM cloud_organization_accounts membership
+             JOIN cloud_organizations o ON o.id = membership.organization_id
+             WHERE o.management_account_id = $1 AND membership.account_id = $2
+               AND a.id = membership.account_id",
+        )
+        .bind(management_account_id.0)
+        .bind(account_id.0)
+        .bind(name)
+        .execute(&self.pool)
+        .await?;
+        if updated.rows_affected() != 1 {
+            return Err(StoreError::NotFound);
+        }
+        Ok(())
+    }
+
+    pub async fn rename_cloud_unit(
+        &self,
+        management_account_id: OrganizationId,
+        unit_id: Uuid,
+        name: &str,
+    ) -> Result<(), StoreError> {
+        let updated = sqlx::query(
+            "UPDATE cloud_organizational_units u SET name = $3
+             FROM cloud_organizations o
+             WHERE o.management_account_id = $1 AND u.organization_id = o.id
+               AND u.id = $2 AND u.parent_id IS NOT NULL",
+        )
+        .bind(management_account_id.0)
+        .bind(unit_id)
+        .bind(name)
+        .execute(&self.pool)
+        .await?;
+        if updated.rows_affected() != 1 {
+            return Err(StoreError::NotFound);
+        }
+        Ok(())
+    }
+
     pub async fn service_control_enabled(&self) -> Result<bool, StoreError> {
         Ok(sqlx::query_scalar::<_, bool>(
             "SELECT scp_enabled FROM cloud_security_activation WHERE singleton = true",

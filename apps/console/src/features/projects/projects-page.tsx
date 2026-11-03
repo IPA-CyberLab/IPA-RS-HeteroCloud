@@ -28,6 +28,8 @@ export function ProjectsPage() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [editedName, setEditedName] = useState("");
 
   const createProject = useMutation({
     mutationFn: (input: { name: string; slug: string }) =>
@@ -39,6 +41,14 @@ export function ProjectsPage() {
       await queryClient.invalidateQueries({
         queryKey: ["organizations", organizationId, "projects"],
       });
+    },
+  });
+  const renameProject = useMutation({
+    mutationFn: ({ id, name: value }: { id: string; name: string }) =>
+      api.projects.rename(organizationId, id, value),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["organizations", organizationId, "projects"] });
+      setEditingProject(null);
     },
   });
 
@@ -64,8 +74,17 @@ export function ProjectsPage() {
         header: "作成日時",
         cell: ({ getValue }) => formatDateTime(getValue<string>()),
       },
+      {
+        id: "actions",
+        header: "操作",
+        cell: ({ row }) => <Button ariaLabel={`${row.original.name}のプロジェクト名を変更`} onClick={() => {
+          renameProject.reset();
+          setEditedName(row.original.name);
+          setEditingProject(row.original);
+        }}>名前を変更</Button>,
+      },
     ],
-    [],
+    [renameProject],
   );
 
   if (projects.isPending) return <PageLoading label="プロジェクトを読み込んでいます" />;
@@ -89,7 +108,7 @@ export function ProjectsPage() {
     <SpaceBetween size="l">
       <PageHeader
         title="プロジェクト"
-        description={`${activeOrganization.organization_name} のサービスリソース境界を管理します。`}
+        description={`${activeOrganization.organization_name} のサービスをプロジェクトごとに整理します。`}
         actions={
           <Button
             variant="primary"
@@ -111,6 +130,18 @@ export function ProjectsPage() {
         emptyTitle="プロジェクトがありません"
         emptyDescription="最初のプロジェクトを作成してください。"
       />
+      <Modal visible={editingProject !== null} onDismiss={() => setEditingProject(null)} header="プロジェクト名を変更"
+        footer={<Box float="right"><SpaceBetween direction="horizontal" size="xs">
+          <Button onClick={() => setEditingProject(null)}>キャンセル</Button>
+          <Button variant="primary" loading={renameProject.isPending}
+            disabled={!editedName.trim() || Array.from(editedName.trim()).length > 120}
+            onClick={() => { if (editingProject) renameProject.mutate({ id: editingProject.id, name: editedName.trim() }); }}>保存</Button>
+        </SpaceBetween></Box>}>
+        <SpaceBetween size="m">
+          <FormField label="プロジェクト名"><Input value={editedName} onChange={({ detail }) => setEditedName(detail.value)} /></FormField>
+          <FormError message={renameProject.isError ? getApiErrorMessage(renameProject.error) : null} />
+        </SpaceBetween>
+      </Modal>
       <Modal
         visible={open}
         onDismiss={() => setOpen(false)}

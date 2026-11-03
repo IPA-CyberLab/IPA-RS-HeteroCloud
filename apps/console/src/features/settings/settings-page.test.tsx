@@ -1,6 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
+import { api } from "@/lib/api-client";
 import { SettingsPage } from "./settings-page";
 
 const { setActiveOrganizationId } = vi.hoisted(() => ({
@@ -38,7 +40,7 @@ vi.mock("@/features/organizations/organization-context", () => {
 describe("SettingsPage", () => {
   it("shows account details and switches organizations without implementation-status cards", async () => {
     const user = userEvent.setup();
-    render(<SettingsPage />);
+    render(<QueryClientProvider client={new QueryClient()}><SettingsPage /></QueryClientProvider>);
 
     expect(screen.getByText("Example User")).toBeInTheDocument();
     expect(screen.getByText("user@example.com")).toBeInTheDocument();
@@ -48,5 +50,17 @@ describe("SettingsPage", () => {
 
     await user.selectOptions(screen.getByLabelText("現在の組織"), "org-2");
     expect(setActiveOrganizationId).toHaveBeenCalledWith("org-2");
+  });
+
+  it("saves a new display name", async () => {
+    const user = userEvent.setup();
+    const rename = vi.spyOn(api.auth, "renameProfile").mockResolvedValue(undefined);
+    render(<QueryClientProvider client={new QueryClient()}><SettingsPage /></QueryClientProvider>);
+    await user.click(screen.getByRole("button", { name: "表示名を変更" }));
+    const input = screen.getByLabelText("表示名");
+    await user.clear(input);
+    await user.type(input, "New Name");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(rename.mock.calls[0]?.[0]).toBe("New Name");
   });
 });

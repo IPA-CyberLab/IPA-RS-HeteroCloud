@@ -140,6 +140,7 @@ async fn registration_checks_invitation_before_hashing_and_consumes_it_once()
             .await?
             .is_none()
     );
+    store.rename_user(oidc_user.user.id, "Chosen Name").await?;
     let returning_oidc_user = store
         .find_or_create_oidc_user(OidcUser {
             issuer: "https://idp.example.test/realms/heterocloud",
@@ -150,6 +151,7 @@ async fn registration_checks_invitation_before_hashing_and_consumes_it_once()
         .await?;
     assert_eq!(returning_oidc_user.user.id, oidc_user.user.id);
     assert_eq!(returning_oidc_user.user.email, "oidc-user@example.test");
+    assert_eq!(returning_oidc_user.user.display_name, "Chosen Name");
     assert!(matches!(
         store
             .find_or_create_oidc_user(OidcUser {

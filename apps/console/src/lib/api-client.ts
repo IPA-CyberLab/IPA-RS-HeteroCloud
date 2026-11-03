@@ -235,6 +235,8 @@ export class HeteroCloudApiClient {
       const session = await this.request<Session>("/auth/session", { signal });
       return this.rememberSession(session);
     },
+    renameProfile: (name: string) =>
+      this.request<void>("/auth/profile", { method: "PATCH", body: { name } }),
     login: async (input: LoginRequest) => {
       const session = await this.request<Session>("/auth/login", {
         method: "POST",
@@ -277,18 +279,26 @@ export class HeteroCloudApiClient {
       }),
     create: (input: { name: string; slug: string }) =>
       this.request<Organization>("/organizations", { method: "POST", body: input }),
+    renameAccount: (accountId: string, name: string) =>
+      this.request<Organization>(`/organizations/${encodeURIComponent(accountId)}`, { method: "PATCH", body: { name } }),
     join: (invitationCode: string) =>
       this.request<Organization>("/organizations/join", {
         method: "POST", body: { invitation_code: invitationCode },
       }),
     describeCloudOrganization: (accountId: string, signal?: AbortSignal) =>
       this.request<import("./api-types").CloudOrganization>(organizationPath(accountId, "organization"), { signal }),
+    renameCloudOrganization: (accountId: string, name: string) =>
+      this.request<void>(organizationPath(accountId, "organization"), { method: "PATCH", body: { name } }),
     tree: (accountId: string, signal?: AbortSignal) =>
       this.request<import("./api-types").CloudOrganizationTree>(organizationPath(accountId, "organization/tree"), { signal }),
     createUnit: (accountId: string, input: { name: string; parent_id: string }) =>
       this.request<void>(organizationPath(accountId, "organization/units"), { method: "POST", body: input }),
+    renameUnit: (accountId: string, unitId: string, name: string) =>
+      this.request<void>(organizationPath(accountId, `organization/units/${encodeURIComponent(unitId)}`), { method: "PATCH", body: { name } }),
     createMemberAccount: (accountId: string, input: { name: string; slug: string; parent_id: string }) =>
       this.request<Organization>(organizationPath(accountId, "organization/accounts"), { method: "POST", body: input }),
+    renameMemberAccount: (accountId: string, memberId: string, name: string) =>
+      this.request<void>(organizationPath(accountId, `organization/accounts/${encodeURIComponent(memberId)}`), { method: "PATCH", body: { name } }),
     moveMemberAccount: (accountId: string, memberId: string, parentId: string) =>
       this.request<void>(organizationPath(accountId, `organization/accounts/${encodeURIComponent(memberId)}/parent`), { method: "PUT", body: { parent_id: parentId } }),
     serviceControlPolicies: (accountId: string, signal?: AbortSignal) =>
@@ -401,6 +411,11 @@ export class HeteroCloudApiClient {
         method: "POST",
         body: input,
       }),
+    rename: (organizationId: string, projectId: string, name: string) =>
+      this.request<Project>(organizationPath(organizationId, `projects/${encodeURIComponent(projectId)}`), {
+        method: "PATCH",
+        body: { name },
+      }),
   };
 
   readonly identityCenter = {
@@ -446,6 +461,8 @@ export class HeteroCloudApiClient {
     },
     principals: {
       setEnabled: (organizationId:string,principalId:string,enabled:boolean)=>this.request<void>(organizationPath(organizationId,`iam/principals/${encodeURIComponent(principalId)}`),{method:"PATCH",body:{enabled}}),
+      renameUser: (organizationId: string, principalId: string, name: string) =>
+        this.request<Principal>(organizationPath(organizationId, `iam/users/${encodeURIComponent(principalId)}`), { method: "PATCH", body: { name } }),
       list: (organizationId: string, signal?: AbortSignal) =>
         this.request<CollectionResponse<Principal>>(
           organizationPath(organizationId, "iam/principals"),

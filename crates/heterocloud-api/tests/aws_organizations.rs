@@ -60,6 +60,23 @@ async fn request(
     ))
 }
 
+async fn member_patch(
+    state: Arc<AppState>,
+    path: &str,
+    body: Value,
+    csrf: &str,
+) -> Result<StatusCode, Box<dyn Error>> {
+    let request = Request::builder()
+        .method("PATCH")
+        .uri(path)
+        .header(header::ORIGIN, ORIGIN)
+        .header(header::COOKIE, "hc_session=rename-member-session")
+        .header("x-heterocloud-csrf", csrf)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&body)?))?;
+    Ok(app(state, None).oneshot(request).await?.status())
+}
+
 #[tokio::test]
 async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
 -> Result<(), Box<dyn Error>> {
@@ -232,6 +249,292 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
     assert_eq!(status, StatusCode::CREATED);
     let member_id = member["id"].as_str().ok_or("member id")?;
     let member_account = OrganizationId(uuid::Uuid::parse_str(member_id)?);
+
+    // Display names can change without changing account, project or IAM IDs.
+    let rename = |name: &str| Some(json!({"name": name}));
+    assert_eq!(
+        request(
+            state.clone(),
+            "PATCH",
+            "/api/v1/auth/profile",
+            rename("Renamed User"),
+            None,
+            None
+        )
+        .await?
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "PATCH",
+            "/api/v1/auth/profile",
+            rename("  Renamed User  "),
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let (_, updated_session) = request(
+        state.clone(),
+        "GET",
+        "/api/v1/auth/session",
+        None,
+        None,
+        None,
+    )
+    .await?;
+    assert_eq!(updated_session["user"]["display_name"], "Renamed User");
+    assert_eq!(updated_session["user"]["id"], owner.user.id.to_string());
+    let profile_audit_organizations: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT organization_id FROM audit_events WHERE user_id = $1 AND action = 'user:UpdateProfile' AND decision = 'allow'")
+        .bind(owner.user.id.0)
+        .fetch_all(store.pool())
+        .await?;
+    assert_eq!(profile_audit_organizations.len(), 2);
+    assert!(profile_audit_organizations.contains(&management.0));
+    assert!(profile_audit_organizations.contains(&member_account.0));
+    assert_eq!(
+        request(
+            state.clone(),
+            "PATCH",
+            "/api/v1/auth/profile",
+            rename(" "),
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+
+    let (status, renamed_account) = request(
+        state.clone(),
+        "PATCH",
+        &base,
+        rename("Management renamed"),
+        Some(csrf.expose_secret()),
+        None,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(renamed_account["id"], management.to_string());
+    assert_eq!(renamed_account["slug"], "organization-api");
+    assert_eq!(renamed_account["name"], "Management renamed");
+    assert_eq!(
+        request(
+            state.clone(),
+            "PATCH",
+            &format!("{base}/organization"),
+            rename("Organization renamed"),
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "PATCH",
+            &format!("{base}/organization/units/{unit_id}"),
+            rename("Unit renamed"),
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "PATCH",
+            &format!("{base}/organization/units/{root}"),
+            rename("No root rename"),
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "PATCH",
+            &format!("{base}/organization/accounts/{member_id}"),
+            rename("Account renamed"),
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
+    );
+
+    let project = store
+        .create_project(member_account, "rename-project", "Before")
+        .await?;
+    let wrong_account = format!("{base}/projects/{}", project.id);
+    let right_account = format!("/api/v1/organizations/{member_id}/projects/{}", project.id);
+    assert_eq!(
+        request(
+            state.clone(),
+            "PATCH",
+            &wrong_account,
+            rename("Wrong account"),
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, renamed_project) = request(
+        state.clone(),
+        "PATCH",
+        &right_account,
+        rename("Project renamed"),
+        Some(csrf.expose_secret()),
+        None,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(renamed_project["id"], project.id.to_string());
+    assert_eq!(renamed_project["slug"], "rename-project");
+    assert_eq!(renamed_project["name"], "Project renamed");
+
+    let (_, updated_tree) = request(
+        state.clone(),
+        "GET",
+        &format!("{base}/organization/tree"),
+        None,
+        None,
+        None,
+    )
+    .await?;
+    assert_eq!(updated_tree["organization"]["name"], "Organization renamed");
+    assert!(
+        updated_tree["units"]
+            .as_array()
+            .ok_or("units")?
+            .iter()
+            .any(|entry| entry["id"] == unit_id && entry["name"] == "Unit renamed")
+    );
+    assert!(
+        updated_tree["accounts"]
+            .as_array()
+            .ok_or("accounts")?
+            .iter()
+            .any(|entry| entry["id"] == member_id && entry["name"] == "Account renamed")
+    );
+
+    let other_user = uuid::Uuid::now_v7();
+    let other_principal = uuid::Uuid::now_v7();
+    sqlx::query("INSERT INTO users (id,email,display_name,password_hash,status) VALUES ($1,'rename-member@example.test','Member','test-only','active')")
+        .bind(other_user).execute(store.pool()).await?;
+    sqlx::query("INSERT INTO principals (id,organization_id,kind,name,user_id,quota_user_id,enabled) VALUES ($1,$2,'user','Limited Member',$3,$3,true)")
+        .bind(other_principal).bind(management.0).bind(other_user).execute(store.pool()).await?;
+    sqlx::query("INSERT INTO organization_memberships (organization_id,user_id,principal_id,role) VALUES ($1,$2,$3,'member')")
+        .bind(management.0).bind(other_user).bind(other_principal).execute(store.pool()).await?;
+    store
+        .create_session(
+            heterocloud_domain::UserId(other_user),
+            &token_hash("rename-member-session"),
+            Utc::now() + chrono::Duration::hours(1),
+            None,
+            "local",
+        )
+        .await?;
+    let member_csrf = csrf_token("rename-member-session", &state.config.csrf_key)?;
+    assert_eq!(
+        member_patch(
+            state.clone(),
+            &base,
+            json!({"name":"Unauthorized"}),
+            member_csrf.expose_secret()
+        )
+        .await?,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        member_patch(
+            state.clone(),
+            &format!("{base}/organization"),
+            json!({"name":"Unauthorized"}),
+            member_csrf.expose_secret()
+        )
+        .await?,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        member_patch(
+            state.clone(),
+            "/api/v1/auth/profile",
+            json!({"name":"Own Name"}),
+            member_csrf.expose_secret()
+        )
+        .await?,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        store
+            .session_user(owner.user.id)
+            .await?
+            .ok_or("owner")?
+            .user
+            .display_name,
+        "Renamed User"
+    );
+    let iam_user_path = format!("{base}/iam/users/{other_principal}");
+    assert_eq!(
+        member_patch(
+            state.clone(),
+            &iam_user_path,
+            json!({"name":"Unauthorized"}),
+            member_csrf.expose_secret()
+        )
+        .await?,
+        StatusCode::FORBIDDEN
+    );
+    let (status, renamed_iam_user) = request(
+        state.clone(),
+        "PATCH",
+        &iam_user_path,
+        rename("New IAM name"),
+        Some(csrf.expose_secret()),
+        None,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(renamed_iam_user["id"], other_principal.to_string());
+    assert_eq!(renamed_iam_user["name"], "New IAM name");
+    assert_eq!(
+        store
+            .session_user(heterocloud_domain::UserId(other_user))
+            .await?
+            .ok_or("member")?
+            .user
+            .display_name,
+        "Own Name"
+    );
+    assert_eq!(
+        request(
+            state.clone(),
+            "PATCH",
+            &format!("/api/v1/organizations/{member_id}/iam/users/{other_principal}"),
+            rename("Wrong account"),
+            Some(csrf.expose_secret()),
+            None
+        )
+        .await?
+        .0,
+        StatusCode::NOT_FOUND
+    );
     let (quota_status, quota_view) = request(
         state.clone(),
         "GET",
