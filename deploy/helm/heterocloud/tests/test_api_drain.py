@@ -28,6 +28,10 @@ class ApiDrainTest(unittest.TestCase):
         # TTL; graceful_shutdown itself can use a further 30 seconds.
         self.assertGreaterEqual(withdrawal_seconds, 30)
         self.assertGreaterEqual(pod['terminationGracePeriodSeconds'], withdrawal_seconds + 30)
+        # A new healthy replica must remain available long enough for the
+        # gateway to discover and health-check it before the previous replica
+        # is taken out of service, even across two cached DNS answers.
+        self.assertGreaterEqual(deployment['spec']['minReadySeconds'], 2 * 30 + 2)
 
 
 if __name__ == '__main__':

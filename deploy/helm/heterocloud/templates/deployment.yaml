@@ -6,6 +6,10 @@ metadata:
     {{- include "heterocloud.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  # Keep the previous replica available while the gateway discovers and
+  # health-checks the new one through the headless Service's DNS record.
+  # The cluster DNS TTL is 30s; allow two TTLs plus health-check slack.
+  minReadySeconds: 75
   revisionHistoryLimit: 5
   strategy:
     type: RollingUpdate
