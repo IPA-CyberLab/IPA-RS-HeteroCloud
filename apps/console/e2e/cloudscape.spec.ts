@@ -228,6 +228,17 @@ test.beforeEach(async ({ page }) => {
   await mockApi(page);
 });
 
+test("設定画面にはアカウントと組織の情報だけを表示する", async ({ page }) => {
+  await page.goto("/settings");
+
+  await expect(page.getByRole("heading", { name: "アカウント", exact: true })).toBeVisible();
+  await expect(page.getByRole("main").getByText("owner@heterocloud.example")).toBeVisible();
+  await expect(page.getByLabel("現在の組織")).toBeVisible();
+  await expect(page.getByText(/セッション保護|HttpOnly Cookie|Origin \+ CSRF/)).toHaveCount(0);
+  await expect(page.getByText("有効", { exact: true })).toHaveCount(0);
+  await expectNoPageOverflow(page);
+});
+
 test("概要から Flow 詳細まで操作でき、グラフと接続先を表示する", async ({ page, isMobile }, testInfo) => {
   test.skip(Boolean(isMobile), "デスクトップ操作の検証");
   const browserErrors = collectBrowserErrors(page);

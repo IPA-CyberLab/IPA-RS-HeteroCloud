@@ -134,6 +134,7 @@ describe("RegistryPage", () => {
     await user.click(
       await screen.findByRole("button", { name: "development-machineを削除" }),
     );
+    expect(screen.queryByText("有効")).not.toBeInTheDocument();
     expect(
       screen.getByRole("dialog", { name: "Flash Registry認証情報を削除" }),
     ).toBeInTheDocument();

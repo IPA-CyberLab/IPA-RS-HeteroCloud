@@ -9,7 +9,6 @@ import { Input } from "@/components/ui";
 import { Modal } from "@/components/ui";
 import { ProgressBar } from "@/components/ui";
 import { SpaceBetween } from "@/components/ui";
-import { StatusIndicator } from "@/components/ui";
 import { Table } from "@/components/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
@@ -308,11 +307,6 @@ export function RegistryPage() {
             id: "created",
             header: "発行日時",
             cell: (item) => formatDateTime(item.created_at),
-          },
-          {
-            id: "status",
-            header: "状態",
-            cell: () => <StatusIndicator type="success">有効</StatusIndicator>,
           },
           {
             id: "actions",

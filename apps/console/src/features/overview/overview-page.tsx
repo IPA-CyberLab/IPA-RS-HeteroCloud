@@ -104,7 +104,7 @@ function ResourceStatus({
       ) : (
         <>
           <Box variant="awsui-value-large">{formatNumber(value ?? 0)}</Box>
-          <StatusIndicator type="success">{detail}</StatusIndicator>
+          <Box color="text-body-secondary">{detail}</Box>
         </>
       )}
     </SpaceBetween>

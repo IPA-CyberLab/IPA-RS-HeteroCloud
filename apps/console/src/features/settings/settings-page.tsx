@@ -1,12 +1,10 @@
 import { Box } from "@/components/ui";
-import { ColumnLayout } from "@/components/ui";
 import { Container } from "@/components/ui";
 import { FormField } from "@/components/ui";
 import { Header } from "@/components/ui";
 import { KeyValuePairs } from "@/components/ui";
 import { Select } from "@/components/ui";
 import { SpaceBetween } from "@/components/ui";
-import { StatusIndicator } from "@/components/ui";
 import { DataTable } from "@/components/shared/data-table";
 import { PageHeader } from "@/components/shared/page-header";
 import { useSession } from "@/features/auth/session";
@@ -23,55 +21,22 @@ export function SettingsPage() {
     <SpaceBetween size="l">
       <PageHeader
         title="設定"
-        description="アカウント、セッション、コンソールの操作対象を確認します。"
+        description="アカウント情報と操作対象の組織を確認します。"
       />
-      <ColumnLayout columns={2}>
-        <Container header={<Header variant="h2">アカウント</Header>}>
-          <KeyValuePairs
-            columns={1}
-            items={[
-              { label: "表示名", value: session.user.display_name },
-              { label: "メールアドレス", value: session.user.email },
-              { label: "ユーザーID", value: <Box variant="code">{session.user.id}</Box> },
-              {
-                label: "状態",
-                value: (
-                  <StatusIndicator type={session.user.status === "active" ? "success" : "warning"}>
-                    {session.user.status === "active" ? "有効" : "停止中"}
-                  </StatusIndicator>
-                ),
-              },
-              { label: "登録日時", value: formatDateTime(session.user.created_at) },
-            ]}
-          />
-        </Container>
-        <Container header={<Header variant="h2">セッション保護</Header>}>
-          <KeyValuePairs
-            columns={1}
-            items={[
-              {
-                label: "HttpOnly Cookie",
-                value: (
-                  <StatusIndicator type="success">
-                    ブラウザスクリプトから参照できないCookieで保持
-                  </StatusIndicator>
-                ),
-              },
-              {
-                label: "Origin + CSRF検証",
-                value: (
-                  <StatusIndicator type="success">
-                    同一originとセッショントークン由来CSRFで保護
-                  </StatusIndicator>
-                ),
-              },
-            ]}
-          />
-        </Container>
-      </ColumnLayout>
+      <Container header={<Header variant="h2">アカウント</Header>}>
+        <KeyValuePairs
+          columns={1}
+          items={[
+            { label: "表示名", value: session.user.display_name },
+            { label: "メールアドレス", value: session.user.email },
+            { label: "ユーザーID", value: <Box variant="code">{session.user.id}</Box> },
+            { label: "登録日時", value: formatDateTime(session.user.created_at) },
+          ]}
+        />
+      </Container>
       <Container
         header={
-          <Header variant="h2" description="組織スコープAPIに使用する操作対象です。">
+          <Header variant="h2" description="操作する組織を選択します。">
             操作対象の組織
           </Header>
         }
