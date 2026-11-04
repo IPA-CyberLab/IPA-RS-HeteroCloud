@@ -1,4 +1,5 @@
 mock_provider "coder" {
+  override_during = plan
   mock_data "coder_workspace" {
     defaults = {
       id          = "new-workspace"
@@ -22,8 +23,12 @@ mock_provider "coder" {
   }
 }
 
-mock_provider "restapi" {}
+mock_provider "restapi" {
+  override_during = plan
+}
 
+# These assertions inspect the planned payloads. The local-exec readiness
+# lifecycle is exercised against a real Terraform apply in test_coder_flash_wait.py.
 variables {
   organization_id   = "test-organization"
   project_id        = "test-project"
@@ -34,7 +39,7 @@ variables {
 }
 
 run "new_workspace_reserves_more_temporary_space" {
-  command = apply
+  command = plan
 
   assert {
     condition = (
@@ -43,10 +48,15 @@ run "new_workspace_reserves_more_temporary_space" {
     )
     error_message = "New workspaces must reserve 10 GiB for rootfs and keep the original home capacity by adding 7 GiB to total disk."
   }
+
+  assert {
+    condition     = length(terraform_data.workspace_ready) == 1
+    error_message = "Starting a workspace must wait for the Flash service to become ready."
+  }
 }
 
 run "existing_workspace_keeps_larger_storage_allocation" {
-  command = apply
+  command = plan
 
   override_data {
     target = data.coder_workspace.me
@@ -73,7 +83,7 @@ run "existing_workspace_keeps_larger_storage_allocation" {
 }
 
 run "new_workspace_keeps_default_memory" {
-  command = apply
+  command = plan
 
   assert {
     condition     = jsondecode(restapi_object.workspace.data).spec.memory_mib == 8192
@@ -82,7 +92,7 @@ run "new_workspace_keeps_default_memory" {
 }
 
 run "explicit_persistent_home_survives_workspace_updates" {
-  command = apply
+  command = plan
 
   variables {
     workspace_storage_overrides = {
@@ -106,7 +116,7 @@ run "explicit_persistent_home_survives_workspace_updates" {
 }
 
 run "persistent_home_override_does_not_change_other_workspaces" {
-  command = apply
+  command = plan
 
   variables {
     workspace_storage_overrides = {
@@ -125,7 +135,7 @@ run "persistent_home_override_does_not_change_other_workspaces" {
 }
 
 run "configured_workspace_keeps_memory_when_running" {
-  command = apply
+  command = plan
 
   variables {
     workspace_memory_overrides = { new-workspace = 32768 }
@@ -138,7 +148,7 @@ run "configured_workspace_keeps_memory_when_running" {
 }
 
 run "configured_workspace_keeps_memory_when_stopped" {
-  command = apply
+  command = plan
 
   override_data {
     target = data.coder_workspace.me
@@ -159,10 +169,14 @@ run "configured_workspace_keeps_memory_when_stopped" {
     )
     error_message = "Stopping a workspace must retain its configured memory for the next start."
   }
+  assert {
+    condition     = length(terraform_data.workspace_ready) == 0
+    error_message = "Stopping a workspace must not wait for a running Flash service."
+  }
 }
 
 run "memory_override_does_not_change_other_workspaces" {
-  command = apply
+  command = plan
 
   variables {
     workspace_memory_overrides = { another-workspace = 32768 }

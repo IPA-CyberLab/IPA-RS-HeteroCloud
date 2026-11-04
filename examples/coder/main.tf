@@ -217,6 +217,26 @@ resource "restapi_object" "workspace" {
   }))
 }
 
+# Terraform applying a Flash service only queues provisioning. Keep the Coder
+# build in progress until the current service revision actually has a Pod.
+resource "terraform_data" "workspace_ready" {
+  count = data.coder_workspace.me.start_count == 0 ? 0 : 1
+
+  triggers_replace = [restapi_object.workspace.id, filesha256("${path.module}/wait-for-flash.sh")]
+  lifecycle {
+    replace_triggered_by = [restapi_object.workspace]
+  }
+  provisioner "local-exec" {
+    command = "exec /bin/sh \"$HETEROCLOUD_CODER_WAIT_SCRIPT\""
+    environment = {
+      HETEROCLOUD_CODER_WAIT_SCRIPT = abspath("${path.module}/wait-for-flash.sh")
+      HETEROCLOUD_CODER_BRIDGE      = var.provisioner_api_url
+      HETEROCLOUD_CODER_ACCOUNT_ID  = var.organization_id
+      HETEROCLOUD_CODER_SERVICE_ID  = restapi_object.workspace.id
+    }
+  }
+}
+
 resource "coder_metadata" "workspace" {
   resource_id = restapi_object.workspace.id
   item {
@@ -225,7 +245,7 @@ resource "coder_metadata" "workspace" {
   }
   item {
     key   = "Resources"
-    value = "4 vCPU / ${local.workspace_memory_mib / 1024} GiB RAM / ${local.workspace_storage.total_disk_gib} GiB total disk / ${local.workspace_storage.rootfs_storage_gib} GiB container filesystem"
+    value = "${local.service_spec.cpu_millis / 1000} vCPU / ${local.workspace_memory_mib / 1024} GiB RAM / ${local.workspace_storage.total_disk_gib} GiB total disk / ${local.workspace_storage.rootfs_storage_gib} GiB container filesystem"
   }
   item {
     key   = "Persistent directory"

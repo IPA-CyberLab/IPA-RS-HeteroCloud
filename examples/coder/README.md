@@ -10,6 +10,14 @@ The `coder_url` variable is retained for compatibility with older template varia
 
 The checked-in lock file pins the provider versions used in the deployed template. Coder validates the provider schema and performs template import before promotion. Workspace build verification must also confirm the agent connects; a successful Terraform apply alone is insufficient.
 
+A start build waits for the current Flash revision and at least one ready
+replica. Capacity shortages and missing images are reported in the build logs
+instead of leaving Coder showing a running workspace with no container. A
+failed wait never deletes the Flash service or its persistent home; after the
+underlying problem is resolved, retrying the build reuses them. Stopping does
+not wait for a running replica. Provider readiness does not itself prove the
+Coder agent can connect, so monitor the agent separately.
+
 The default allocation is 4 vCPU, 8 GiB RAM, 37 GiB total disk and 10 GiB for
 the container filesystem. Increasing the container filesystem from 3 to 10 GiB
 also increased the total disk budget by 7 GiB to preserve the existing home.
