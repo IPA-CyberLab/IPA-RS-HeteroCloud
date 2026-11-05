@@ -36,6 +36,9 @@ jobs:
       - run: cargo test --locked -p heterocloud-store --test flash_backups
         env:
           HETEROCLOUD_STORE_TEST_DATABASE_URL: postgres://heterocloud:test-only@127.0.0.1:5432/heterocloud_test_backups
+      - run: cargo test --locked -p heterocloud-store --test flash_backup_destinations
+        env:
+          HETEROCLOUD_STORE_TEST_DATABASE_URL: postgres://heterocloud:test-only@127.0.0.1:5432/heterocloud_test_backups
       - run: cargo test --locked -p heterocloud-store --test flash_operations
         env:
           HETEROCLOUD_STORE_TEST_DATABASE_URL: postgres://heterocloud:test-only@127.0.0.1:5432/heterocloud_test_backups

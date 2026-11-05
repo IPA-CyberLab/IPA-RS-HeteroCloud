@@ -219,6 +219,7 @@ async fn revisions_observations_leases_and_retention_are_durable_and_generation_
         interval_seconds: 3600,
         retention_count: 1,
         verify_restore: true,
+        destination_id: None,
     };
     let policy = store
         .put_flash_backup_policy(org, original.id, member.principal_id, &input)

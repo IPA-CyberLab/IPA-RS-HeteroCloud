@@ -1,4 +1,5 @@
 mod cloud_organizations;
+mod flash_backup_destinations;
 mod flash_backups;
 mod flash_operations;
 mod iam_groups;
@@ -23,6 +24,7 @@ pub use identity_center::{
 pub use organizations::{OrganizationMemberQuota, UnassignedQuotaResource};
 mod flash_domains;
 mod workload_identity;
+pub use flash_backup_destinations::{FlashBackupDestination, NewFlashBackupDestination};
 pub use flash_backups::FlashBackup;
 pub use flash_domains::FlashDomainBinding;
 pub use workload_identity::WorkloadTokenPrincipal;

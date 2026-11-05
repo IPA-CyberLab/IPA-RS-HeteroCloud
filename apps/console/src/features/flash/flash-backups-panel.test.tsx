@@ -19,6 +19,7 @@ function show(serviceId?: string) {
 describe("FlashBackupsPanel", () => {
   beforeEach(() => {
     vi.spyOn(api.flash.backups, "list").mockResolvedValue({ items: [backup] });
+    vi.spyOn(api.flash.backupDestinations, "list").mockResolvedValue({ items: [] });
     vi.spyOn(api.projects, "list").mockResolvedValue({ items: [{ id: "project-1", organization_id: "org-1", slug: "test", name: "Test", created_at: "2026-10-19T00:00:00Z" }] });
   });
   it("復元先を選んでから復元を要求し新サービスへ移動する", async () => {
@@ -67,5 +68,30 @@ describe("FlashBackupsPanel", () => {
     vi.mocked(api.flash.backups.list).mockResolvedValue({ items: [{ ...backup, status: { provider_unavailable: true } }] });
     show();
     await screen.findByText(/表示は最後に取得した状態です/);
+  });
+  it("利用可能な組織のS3を選んでバックアップを作成する", async () => {
+    vi.mocked(api.flash.backupDestinations.list).mockResolvedValue({items:[{id:"destination-1",organization_id:"org-1",name:"社外バックアップ",endpoint:"https://storage.example",bucket:"backup-bucket",region:"us-east-1",prefix:"backups",virtual_hosted:false,state:"ready",created_at:"2026-10-19T00:00:00Z",updated_at:"2026-10-19T00:00:00Z"}]});
+    const create=vi.spyOn(api.flash.backups,"create").mockResolvedValue({...backup,destination_id:"destination-1"});
+    show("source-1");
+    const user=userEvent.setup();
+    await user.type(screen.getByRole("textbox",{name:"バックアップ名"}),"offsite");
+    await user.selectOptions(await screen.findByRole("combobox",{name:"バックアップ保存先"}),"destination-1");
+    await user.click(screen.getByRole("button",{name:"バックアップを作成"}));
+    await waitFor(()=>expect(create).toHaveBeenCalledWith("org-1","source-1","offsite",expect.any(String),"destination-1"));
+  });
+  it("S3の認証情報は保存後にフォームから消える", async () => {
+    const create=vi.spyOn(api.flash.backupDestinations,"create").mockResolvedValue({id:"new",organization_id:"org-1",name:"外部",endpoint:"https://storage.example",bucket:"backup-bucket",region:"us-east-1",prefix:"",virtual_hosted:false,state:"pending",created_at:"2026-10-19T00:00:00Z",updated_at:"2026-10-19T00:00:00Z"});
+    show();
+    const user=userEvent.setup();
+    await user.click(await screen.findByRole("button",{name:"S3の保存先を追加"}));
+    await user.type(screen.getByRole("textbox",{name:"保存先の表示名"}),"外部");
+    await user.type(screen.getByRole("textbox",{name:"S3 エンドポイント"}),"https://storage.example");
+    await user.type(screen.getByRole("textbox",{name:"S3 バケット"}),"backup-bucket");
+    await user.type(screen.getByRole("textbox",{name:"S3 リージョン"}),"us-east-1");
+    await user.type(screen.getByLabelText("S3 アクセスキー"),"test-access");
+    await user.type(screen.getByLabelText("S3 シークレットキー"),"test-secret");
+    await user.click(screen.getByRole("button",{name:"保存"}));
+    await waitFor(()=>expect(create).toHaveBeenCalledWith("org-1",expect.objectContaining({access_key:"test-access",secret_key:"test-secret"})));
+    await waitFor(()=>expect(screen.queryByLabelText("S3 シークレットキー")).not.toBeInTheDocument());
   });
 });

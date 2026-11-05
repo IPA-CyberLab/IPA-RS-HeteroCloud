@@ -717,14 +717,19 @@ export class HeteroCloudApiClient {
       verify: (organizationId: string, backupId: string) => this.request<{verification_requested: boolean}>(organizationPath(organizationId, "flash/backups/"+encodeURIComponent(backupId)+"/verify"), { method: "POST" }),
       list: (organizationId: string, serviceId?: string, signal?: AbortSignal) =>
         this.request<CollectionResponse<import("./api-types").FlashBackup>>(organizationPath(organizationId, "flash/backups") + (serviceId ? `?service_instance_id=${encodeURIComponent(serviceId)}` : ""), { signal }),
-      create: (organizationId: string, serviceId: string, name: string, requestId: string) =>
-        this.request<import("./api-types").FlashBackup>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/backups`), { method: "POST", body: { name, request_id: requestId } }),
+      create: (organizationId: string, serviceId: string, name: string, requestId: string, destinationId?: string | null) =>
+        this.request<import("./api-types").FlashBackup>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/backups`), { method: "POST", body: { name, request_id: requestId, destination_id: destinationId ?? null } }),
       get: (organizationId: string, backupId: string, signal?: AbortSignal) =>
         this.request<import("./api-types").FlashBackup>(organizationPath(organizationId, `flash/backups/${encodeURIComponent(backupId)}`), { signal }),
       delete: (organizationId: string, backupId: string) =>
         this.request<import("./api-types").FlashBackup>(organizationPath(organizationId, `flash/backups/${encodeURIComponent(backupId)}`), { method: "DELETE" }),
       restore: (organizationId: string, backupId: string, input: { project_id: string; name: string; request_id: string }) =>
         this.request<FlashService>(organizationPath(organizationId, `flash/backups/${encodeURIComponent(backupId)}/restore`), { method: "POST", body: input }),
+    },
+    backupDestinations: {
+      list: (organizationId: string, signal?: AbortSignal) => this.request<CollectionResponse<import("./api-types").FlashBackupDestination>>(organizationPath(organizationId, "flash/backup-destinations"), { signal }),
+      create: (organizationId: string, input: import("./api-types").FlashBackupDestinationInput) => this.request<import("./api-types").FlashBackupDestination>(organizationPath(organizationId, "flash/backup-destinations"), { method: "POST", body: input }),
+      rotate: (organizationId: string, id: string, input: { access_key: string; secret_key: string }) => this.request<import("./api-types").FlashBackupDestination>(organizationPath(organizationId, `flash/backup-destinations/${encodeURIComponent(id)}/credentials`), { method: "PUT", body: input }),
     },
     gpuTypes: (signal?: AbortSignal) =>
       this.request<CollectionResponse<FlashGpuType>>("/flash/gpu-types", {

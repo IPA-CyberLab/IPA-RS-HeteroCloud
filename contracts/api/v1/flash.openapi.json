@@ -1166,6 +1166,156 @@
           }
         }
       }
+    },
+    "/api/v1/organizations/{organization_id}/flash/backup-destinations": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "summary": "List organization backup destinations",
+        "description": "Requires flash:ListBackups; omits credentials. Syouyu is the implicit default.",
+        "responses": {
+          "200": {
+            "description": "Organization destinations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/FlashBackupDestination"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "IAM denies operation"
+          }
+        }
+      },
+      "post": {
+        "summary": "Register an external S3 destination",
+        "description": "Requires flash:ManageBackupDestinations. Credentials are stored as a secret; the destination is asynchronous and becomes ready after connectivity is confirmed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlashBackupDestinationInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Destination accepted; credentials are never returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlashBackupDestination"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid S3 configuration"
+          },
+          "403": {
+            "description": "IAM denies operation"
+          },
+          "409": {
+            "description": "Conflicting request"
+          },
+          "503": {
+            "description": "Provider unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/organizations/{organization_id}/flash/backup-destinations/{destination_id}/credentials": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "destination_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "put": {
+        "summary": "Rotate a destination credential",
+        "description": "Requires flash:ManageBackupDestinations. The target, bucket and prefix remain immutable so existing backups stay recoverable.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "access_key",
+                  "secret_key"
+                ],
+                "properties": {
+                  "access_key": {
+                    "type": "string",
+                    "writeOnly": true
+                  },
+                  "secret_key": {
+                    "type": "string",
+                    "writeOnly": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Destination accepted; credentials are never returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlashBackupDestination"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "IAM denies operation"
+          },
+          "404": {
+            "description": "Destination not found"
+          },
+          "503": {
+            "description": "Provider unavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2454,6 +2604,14 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "destination_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Organization destination ID. Omit or use null for managed Syouyu."
           }
         }
       },
@@ -2473,6 +2631,14 @@
           "request_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "destination_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Organization destination ID. Omit or use null for managed Syouyu."
           }
         }
       },
@@ -2577,6 +2743,127 @@
           "verify_restore": {
             "type": "boolean",
             "default": true
+          },
+          "destination_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Organization destination ID. Omit or use null for managed Syouyu."
+          }
+        }
+      },
+      "FlashBackupDestinationInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "request_id",
+          "endpoint",
+          "bucket",
+          "region",
+          "access_key",
+          "secret_key"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "endpoint": {
+            "type": "string",
+            "format": "uri",
+            "description": "Public HTTPS S3 origin."
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string",
+            "default": ""
+          },
+          "virtual_hosted": {
+            "type": "boolean",
+            "default": false
+          },
+          "access_key": {
+            "type": "string",
+            "writeOnly": true
+          },
+          "secret_key": {
+            "type": "string",
+            "writeOnly": true
+          }
+        }
+      },
+      "FlashBackupDestination": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "name",
+          "endpoint",
+          "bucket",
+          "region",
+          "prefix",
+          "virtual_hosted",
+          "state",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "organization_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string",
+            "format": "uri",
+            "description": "Public HTTPS S3 origin."
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string",
+            "default": ""
+          },
+          "virtual_hosted": {
+            "type": "boolean",
+            "default": false
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "ready",
+              "error"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       }

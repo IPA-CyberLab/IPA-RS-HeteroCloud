@@ -364,7 +364,7 @@ async fn run_backup_policy(
     let name = format!("scheduled-{}", policy.next_run_at.format("%Y%m%d-%H%M%S"));
     let backup = state
         .store
-        .request_flash_backup(
+        .request_flash_backup_to(
             org,
             instance.id,
             principal,
@@ -378,6 +378,7 @@ async fn run_backup_policy(
                 .ok_or("backup_source_unavailable")?,
             observed["resolved_image"].as_str(),
             instance.generation,
+            policy.destination_id,
         )
         .await
         .map_err(|_| "backup_quota_or_source_unavailable")?;

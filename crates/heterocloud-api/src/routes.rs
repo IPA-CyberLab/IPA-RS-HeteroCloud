@@ -1,3 +1,5 @@
+#[path = "flash_backup_destination_routes.rs"]
+mod backup_destination_routes;
 #[path = "flash_backup_routes.rs"]
 mod backup_routes;
 #[path = "identity_center_routes.rs"]
@@ -278,6 +280,8 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             get(list_flash_services).post(create_flash_service),
         )
         .route("/organizations/{organization_id}/flash/backups",get(backup_routes::list_backups))
+        .route("/organizations/{organization_id}/flash/backup-destinations",get(backup_destination_routes::list).post(backup_destination_routes::create))
+        .route("/organizations/{organization_id}/flash/backup-destinations/{destination_id}/credentials",axum::routing::put(backup_destination_routes::rotate_credentials))
         .route("/organizations/{organization_id}/flash/backups/{backup_id}",get(backup_routes::get_backup).delete(backup_routes::delete_backup))
         .route("/organizations/{organization_id}/flash/backups/{backup_id}/restore",post(backup_routes::restore_backup))
         .route("/organizations/{organization_id}/flash/services/{service_instance_id}/backups",post(backup_routes::create_backup))

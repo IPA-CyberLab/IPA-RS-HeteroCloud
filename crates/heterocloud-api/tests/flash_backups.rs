@@ -11,7 +11,7 @@ use heterocloud_api::{
 use heterocloud_auth::token_hash;
 use heterocloud_domain::{OrganizationId, PolicyDocument, ProjectId};
 use heterocloud_iam::semantics_digest;
-use heterocloud_store::{BootstrapAdmin, Store};
+use heterocloud_store::{BootstrapAdmin, NewFlashBackupDestination, Store};
 use secrecy::SecretString;
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
@@ -220,6 +220,78 @@ async fn backups_enforce_tenant_iam_csrf_and_restore_only_into_a_new_stopped_ser
         }
         request.body(Body::from(body.to_string()))
     };
+    let destinations = format!("/api/v1/organizations/{org}/flash/backup-destinations");
+    let destination_input = NewFlashBackupDestination {
+        name: "external".into(),
+        request_id: Uuid::now_v7(),
+        endpoint: "https://s3.example.com".into(),
+        bucket: "backup-bucket".into(),
+        region: "test".into(),
+        prefix: "backups".into(),
+        virtual_hosted: false,
+        access_key: "fake-access".into(),
+        secret_key: "fake-secret".into(),
+    };
+    store
+        .reserve_flash_backup_destination(org, backup_owner.id, &destination_input)
+        .await?;
+    let result = app(state.clone(), None)
+        .oneshot(send(
+            "GET",
+            destinations.clone(),
+            Some(owner_key),
+            json!({}),
+        )?)
+        .await?;
+    assert_eq!(result.status(), StatusCode::OK);
+    let result = String::from_utf8(to_bytes(result.into_body(), 1024 * 1024).await?.to_vec())?;
+    assert!(result.contains("backup-bucket"));
+    assert!(!result.contains("fake-access") && !result.contains("fake-secret"));
+    assert_eq!(
+        app(state.clone(), None)
+            .oneshot(send(
+                "GET",
+                destinations.clone(),
+                Some(read_key),
+                json!({})
+            )?)
+            .await?
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let destination_body = json!({"name":"blocked","request_id":Uuid::now_v7(),"endpoint":"https://s3.example.com","bucket":"backup-bucket","region":"test","access_key":"fake-access","secret_key":"fake-secret"});
+    assert_eq!(
+        app(state.clone(), None)
+            .oneshot(send(
+                "POST",
+                destinations.clone(),
+                Some(read_key),
+                destination_body.clone()
+            )?)
+            .await?
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let csrf = Request::post(&destinations)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ORIGIN, "http://cloud.example.test")
+        .header(header::COOKIE, "hc_session=lifecycle-session")
+        .body(Body::from(destination_body.to_string()))?;
+    assert_eq!(
+        app(state.clone(), None).oneshot(csrf).await?.status(),
+        StatusCode::FORBIDDEN
+    );
+    let other_destinations = format!(
+        "/api/v1/organizations/{}/flash/backup-destinations",
+        Uuid::now_v7()
+    );
+    assert_eq!(
+        app(state.clone(), None)
+            .oneshot(send("GET", other_destinations, Some(owner_key), json!({}))?)
+            .await?
+            .status(),
+        StatusCode::FORBIDDEN
+    );
     for (credential, expected) in [
         (None, StatusCode::UNAUTHORIZED),
         (Some(read_key), StatusCode::FORBIDDEN),

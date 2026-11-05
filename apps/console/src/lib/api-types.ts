@@ -928,6 +928,7 @@ export interface FlashBackup {
   organization_id: string;
   project_id: string;
   service_instance_id: string;
+  destination_id?: string | null;
   name: string;
   source_name: string;
   volume_size_bytes: number;
@@ -948,6 +949,8 @@ export interface FlashDeploymentPolicy {
 export interface FlashDiagnostic { code: string; severity: "info" | "warning" | "error"; message: string; resource?: string }
 export interface FlashRevision { service_instance_id: string; generation: number; name: string; phase: "pending" | "ready" | "failed" | "rolled_back"; created_at: string; ready_at: string | null }
 export interface FlashEvent extends FlashDiagnostic { id: string; service_instance_id: string; generation: number; created_at: string; last_observed_at: string; resolved_at: string | null; acknowledged_at: string | null }
-export interface FlashBackupPolicyInput { enabled: boolean; interval_seconds: number; retention_count: number; verify_restore: boolean }
+export interface FlashBackupDestination { id: string; organization_id: string; name: string; endpoint: string; bucket: string; region: string; prefix: string; virtual_hosted: boolean; state: "pending" | "ready" | "error"; created_at: string; updated_at: string }
+export interface FlashBackupDestinationInput { name: string; request_id: string; endpoint: string; bucket: string; region: string; prefix: string; virtual_hosted: boolean; access_key: string; secret_key: string }
+export interface FlashBackupPolicyInput { enabled: boolean; interval_seconds: number; retention_count: number; verify_restore: boolean; destination_id?: string | null }
 export interface FlashBackupPolicy extends FlashBackupPolicyInput { service_instance_id: string; next_run_at: string; last_run_at: string | null; last_error: string | null; last_backup_id: string | null }
 export interface FlashRestoreVerification { phase: "queued" | "restoring" | "cleaning" | "passed" | "failed"; completed_at?: string | null; cleanup_verified?: boolean; sampled_files?: number; sampled_bytes?: number; sha256?: string }

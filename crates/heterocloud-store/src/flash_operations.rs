@@ -46,6 +46,8 @@ pub struct BackupPolicyInput {
     pub retention_count: i32,
     #[serde(default = "verify_default")]
     pub verify_restore: bool,
+    #[serde(default)]
+    pub destination_id: Option<Uuid>,
 }
 fn verify_default() -> bool {
     true
@@ -61,6 +63,7 @@ pub struct FlashBackupPolicy {
     pub interval_seconds: i32,
     pub retention_count: i32,
     pub verify_restore: bool,
+    pub destination_id: Option<Uuid>,
     pub next_run_at: DateTime<Utc>,
     pub last_run_at: Option<DateTime<Utc>>,
     pub last_backup_id: Option<Uuid>,
@@ -276,8 +279,17 @@ impl Store {
                 "Backup interval must be 1 hour to 7 days and retention 1 to 8 generations.".into(),
             ));
         }
-        sqlx::query_as("INSERT INTO flash_backup_policies(service_instance_id,organization_id,principal_id,enabled,interval_seconds,retention_count,verify_restore) SELECT id,organization_id,$3,$4,$5,$6,$7 FROM service_instances WHERE id=$1 AND organization_id=$2 AND provider='flash' AND state<>'deleting' ON CONFLICT(service_instance_id) DO UPDATE SET principal_id=$3,enabled=$4,interval_seconds=$5,retention_count=$6,verify_restore=$7,updated_at=now() RETURNING *")
-            .bind(service.0).bind(org.0).bind(principal.0).bind(input.enabled).bind(input.interval_seconds).bind(input.retention_count).bind(input.verify_restore).fetch_optional(&self.pool).await?.ok_or(StoreError::NotFound)
+        if let Some(id) = input.destination_id {
+            let ready: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM flash_backup_destinations WHERE organization_id=$1 AND id=$2 AND state='ready')")
+                .bind(org.0).bind(id).fetch_one(&self.pool).await?;
+            if !ready {
+                return Err(StoreError::RequestRejected(
+                    "Backup destination is not ready.".into(),
+                ));
+            }
+        }
+        sqlx::query_as("INSERT INTO flash_backup_policies(service_instance_id,organization_id,principal_id,enabled,interval_seconds,retention_count,verify_restore,destination_id) SELECT id,organization_id,$3,$4,$5,$6,$7,$8 FROM service_instances WHERE id=$1 AND organization_id=$2 AND provider='flash' AND state<>'deleting' ON CONFLICT(service_instance_id) DO UPDATE SET principal_id=$3,enabled=$4,interval_seconds=$5,retention_count=$6,verify_restore=$7,destination_id=$8,updated_at=now() RETURNING *")
+            .bind(service.0).bind(org.0).bind(principal.0).bind(input.enabled).bind(input.interval_seconds).bind(input.retention_count).bind(input.verify_restore).bind(input.destination_id).fetch_optional(&self.pool).await?.ok_or(StoreError::NotFound)
     }
 
     pub async fn claim_backup_policies(&self) -> Result<Vec<FlashBackupPolicy>, StoreError> {
@@ -318,8 +330,8 @@ impl Store {
     ) -> Result<(), StoreError> {
         // Only successfully uploaded scheduled backups count toward retention.
         // Manual backups and the last known good backup are never pruned here.
-        sqlx::query("UPDATE flash_backups SET delete_requested=true,phase='deleting',updated_at=now() WHERE id IN (SELECT id FROM flash_backups WHERE schedule_service_id=$1 AND organization_id=$2 AND phase='ready' AND NOT delete_requested AND (NOT $4 OR status->'restore_verification'->>'phase'='passed') ORDER BY created_at DESC OFFSET $3)")
-            .bind(policy.service_instance_id).bind(policy.organization_id).bind(i64::from(policy.retention_count)).bind(policy.verify_restore).execute(&self.pool).await?;
+        sqlx::query("UPDATE flash_backups SET delete_requested=true,phase='deleting',updated_at=now() WHERE id IN (SELECT id FROM flash_backups WHERE schedule_service_id=$1 AND organization_id=$2 AND phase='ready' AND NOT delete_requested AND destination_id IS NOT DISTINCT FROM $5 AND (NOT $4 OR status->'restore_verification'->>'phase'='passed') ORDER BY created_at DESC OFFSET $3)")
+            .bind(policy.service_instance_id).bind(policy.organization_id).bind(i64::from(policy.retention_count)).bind(policy.verify_restore).bind(policy.destination_id).execute(&self.pool).await?;
         Ok(())
     }
 }

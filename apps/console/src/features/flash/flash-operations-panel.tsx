@@ -5,6 +5,7 @@ import { Container } from "@/components/ui";
 import { FormField } from "@/components/ui";
 import { Header } from "@/components/ui";
 import { Input } from "@/components/ui";
+import { Select } from "@/components/ui";
 import { Modal } from "@/components/ui";
 import { SpaceBetween } from "@/components/ui";
 import { Tabs } from "@/components/ui";
@@ -15,6 +16,7 @@ import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { FlashBackupPolicyInput, FlashService } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/utils";
 import { flashProviderStatus } from "./flash-service-utils";
+import { useBackupDestinations } from "./flash-backup-destinations";
 
 const reasonLabels: Record<string,string> = {
   insufficient_disk_capacity:"ホストの空きディスクが不足しています。",
@@ -46,13 +48,15 @@ export function FlashOperationsPanel({organizationId,service}:{organizationId:st
   const history=useQuery({queryKey:[...base,"revisions"],queryFn:({signal})=>api.flash.operations.revisions(organizationId,service.id,signal),enabled:tab==="revisions",refetchInterval:tab==="revisions"?15000:false});
   const events=useQuery({queryKey:[...base,"events"],queryFn:({signal})=>api.flash.operations.events(organizationId,service.id,signal),enabled:tab==="events",refetchInterval:tab==="events"?15000:false});
   const policy=useQuery({queryKey:[...base,"backup-policy"],queryFn:({signal})=>api.flash.operations.backupPolicy(organizationId,service.id,signal),enabled:tab==="backup-policy",refetchInterval:tab==="backup-policy"?15000:false});
+  const destinations=useBackupDestinations(organizationId);
   const save=useMutation({mutationFn:(input:FlashBackupPolicyInput)=>api.flash.operations.putBackupPolicy(organizationId,service.id,input),onSuccess:()=>{setDraft(null);void client.invalidateQueries({queryKey:[...base,"backup-policy"]});}});
   const revert=useMutation({mutationFn:(generation:number)=>api.flash.operations.rollback(organizationId,service.id,generation,service.generation),onSuccess:(value)=>{client.setQueryData(base,value);setRollback(null);void client.invalidateQueries({queryKey:base});}});
   const status=flashProviderStatus(service.status);
   const disk=status.disk_usage;
   const diagnostics=status.diagnostics??[];
   const settings=draft??policy.data??{enabled:false,interval_seconds:86400,retention_count:2,verify_restore:true};
-  const change=(key:keyof FlashBackupPolicyInput,value:number|boolean)=>setDraft({...settings,[key]:value});
+  const change=(key:keyof FlashBackupPolicyInput,value:number|boolean|string|null)=>setDraft({...settings,[key]:value});
+  const destinationOptions=[{label:"Syouyu（既定）",value:""},...(destinations.data?.items??[]).map(d=>({label:d.name+(d.state==="ready"?"":"（接続確認中）"),value:d.id,disabled:d.state!=="ready"}))];
   return <Container header={<Header variant="h2">状態・更新・バックアップ設定</Header>}>
     <Tabs activeTabId={tab} onChange={({detail})=>setTab(detail.activeTabId)} tabs={[
       {id:"health",label:"状態と使用量",content:<SpaceBetween size="m">
@@ -79,6 +83,7 @@ export function FlashOperationsPanel({organizationId,service}:{organizationId:st
       {id:"backup-policy",label:"定期バックアップ",content:<SpaceBetween size="m">
         {policy.isError&&<Alert type="error">{getApiErrorMessage(policy.error)}</Alert>}
         <Toggle checked={settings.enabled} disabled={policy.isPending||save.isPending} onChange={({detail})=>change("enabled",detail.checked)}>定期バックアップを有効にする</Toggle>
+        <FormField label="保存先"><Select ariaLabel="定期バックアップ保存先" selectedOption={destinationOptions.find(d=>d.value===(settings.destination_id??""))??{label:settings.destination_id??"Syouyu（既定）",value:settings.destination_id??""}} options={destinationOptions} onChange={({detail})=>change("destination_id",detail.selectedOption.value||null)}/></FormField>
         <FormField label="取得間隔（時間）" description="1〜168時間"><Input ariaLabel="バックアップ取得間隔" type="number" value={String(settings.interval_seconds/3600)} onChange={({detail})=>change("interval_seconds",Number(detail.value)*3600)}/></FormField>
         <FormField label="保存世代数" description="1〜8世代。手動バックアップは世代整理の対象になりません。"><Input ariaLabel="バックアップ保存世代数" type="number" value={String(settings.retention_count)} onChange={({detail})=>change("retention_count",Number(detail.value))}/></FormField>
         <Toggle checked={settings.verify_restore} onChange={({detail})=>change("verify_restore",detail.checked)}>保存後に別ディスクへ復元して読み取りを検証する</Toggle>

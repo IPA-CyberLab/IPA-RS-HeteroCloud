@@ -18,6 +18,7 @@ import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { FlashBackup } from "@/lib/api-types";
 import { projectsQueryOptions } from "@/lib/queries";
 import { formatDateTime } from "@/lib/utils";
+import { FlashBackupDestinations, useBackupDestinations } from "./flash-backup-destinations";
 
 const phases: Record<FlashBackup["phase"], string> = {
   pending: "受付済み", creating: "保存中", ready: "復元可能", error: "保存失敗", deleting: "削除中",
@@ -29,7 +30,9 @@ export function FlashBackupsPanel({ organizationId, serviceId }: { organizationI
   const key = ["organizations", organizationId, "flash", "backups", serviceId ?? "all"];
   const query = useQuery({ queryKey: key, queryFn: ({ signal }) => api.flash.backups.list(organizationId, serviceId, signal), refetchInterval: 5000 });
   const projects = useQuery(projectsQueryOptions(organizationId));
+  const destinations = useBackupDestinations(organizationId);
   const [name, setName] = useState("");
+  const [destinationId, setDestinationId] = useState("");
   const [createRequestId, setCreateRequestId] = useState(() => crypto.randomUUID());
   const [selected, setSelected] = useState<FlashBackup | null>(null);
   const [operation, setOperation] = useState<"restore" | "delete">("restore");
@@ -38,7 +41,7 @@ export function FlashBackupsPanel({ organizationId, serviceId }: { organizationI
   const [restoreRequestId, setRestoreRequestId] = useState(() => crypto.randomUUID());
   const invalidate = () => client.invalidateQueries({ queryKey: ["organizations", organizationId, "flash", "backups"] });
   const create = useMutation({
-    mutationFn: () => api.flash.backups.create(organizationId, serviceId!, name.trim(), createRequestId),
+    mutationFn: () => api.flash.backups.create(organizationId, serviceId!, name.trim(), createRequestId, destinationId || null),
     onSuccess: () => { setName(""); setCreateRequestId(crypto.randomUUID()); void invalidate(); },
   });
   const remove = useMutation({ mutationFn: (id: string) => api.flash.backups.delete(organizationId, id),
@@ -57,6 +60,7 @@ export function FlashBackupsPanel({ organizationId, serviceId }: { organizationI
   const columns: ColumnDef<FlashBackup, unknown>[] = [
     { accessorKey: "name", header: "名前" },
     { accessorKey: "source_name", header: "保存元サービス" },
+    { id: "destination", header: "保存先", cell: ({row}) => row.original.destination_id ? destinations.data?.items.find(d => d.id === row.original.destination_id)?.name ?? row.original.destination_id : "Syouyu" },
     { accessorKey: "phase", header: "状態", cell: ({ row }) => <StatusIndicator type={row.original.phase === "ready" ? "success" : row.original.phase === "error" ? "error" : "loading"}>{phases[row.original.phase]}</StatusIndicator> },
     { accessorKey: "volume_size_bytes", header: "対象ディスク容量", cell: ({ row }) => `${(row.original.volume_size_bytes / 1024 ** 3).toLocaleString("ja-JP", { maximumFractionDigits: 2 })} GiB` },
     { accessorKey: "created_at", header: "受付日時", cell: ({ row }) => formatDateTime(row.original.created_at) },
@@ -74,15 +78,19 @@ export function FlashBackupsPanel({ organizationId, serviceId }: { organizationI
   const modalError = restore.error || remove.error;
   const busy = restore.isPending || remove.isPending;
   const projectOptions = projects.data?.items.map(p => ({ label: p.name, value: p.id })) ?? [];
+  const destinationOptions = [{label: "Syouyu（既定）", value: ""}, ...(destinations.data?.items ?? []).map(d => ({label: d.name + (d.state === "ready" ? "" : "（接続確認中）"), value: d.id, disabled: d.state !== "ready"}))];
   return <Container header={<Header variant="h2" actions={<Button loading={query.isFetching} onClick={() => void query.refetch()}>更新</Button>}>永続ディスクのバックアップ</Header>}>
     <SpaceBetween size="m">
       <Box>/root の内容を保存します。サービスを削除してもバックアップは残ります。環境変数、シークレット接続、追加マウントは復元対象に含みません。</Box>
+      {destinations.isError && <Alert type="warning">組織の保存先を取得できません。Syouyuは引き続き選択できます。</Alert>}
+      {destinations.data && <FlashBackupDestinations organizationId={organizationId} items={destinations.data.items}/>}
       {serviceId && <>
         <Box>稼働中の保存はクラッシュ整合性です。データベースなど、アプリケーション側で書き込みの停止が必要なデータは、サービスを停止してから保存してください。</Box>
         <SpaceBetween direction="horizontal" size="s">
           <FormField label="バックアップ名">
             <Input ariaLabel="バックアップ名" value={name} disabled={create.isPending} onChange={({ detail }) => { setName(detail.value); setCreateRequestId(crypto.randomUUID()); }} />
           </FormField>
+          <FormField label="保存先"><Select ariaLabel="バックアップ保存先" selectedOption={destinationOptions.find(option => option.value === destinationId) ?? destinationOptions[0]} options={destinationOptions} disabled={create.isPending} onChange={({detail}) => { setDestinationId(detail.selectedOption.value ?? ""); setCreateRequestId(crypto.randomUUID()); }}/></FormField>
           <Button variant="primary" disabled={!name.trim()} loading={create.isPending} onClick={() => create.mutate()}>バックアップを作成</Button>
         </SpaceBetween>
       </>}

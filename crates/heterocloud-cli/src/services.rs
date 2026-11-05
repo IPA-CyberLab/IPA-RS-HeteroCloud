@@ -67,6 +67,11 @@ pub enum FlashCommand {
         #[command(subcommand)]
         command: FlashBackupCommand,
     },
+    /// List or configure organization backup storage destinations.
+    BackupDestinations {
+        #[command(subcommand)]
+        command: FlashBackupDestinationCommand,
+    },
     /// Manage custom hostnames without restarting the container.
     Domains {
         #[command(subcommand)]
@@ -116,6 +121,9 @@ pub enum FlashBackupCommand {
         name: String,
         #[arg(long)]
         request_id: Option<Uuid>,
+        /// Omit for the managed Syouyu destination.
+        #[arg(long)]
+        destination_id: Option<Uuid>,
         #[arg(long)]
         no_wait: bool,
     },
@@ -136,6 +144,22 @@ pub enum FlashBackupCommand {
         request_id: Option<Uuid>,
         #[arg(long)]
         no_wait: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FlashBackupDestinationCommand {
+    List,
+    /// Read S3 settings and credentials as JSON from stdin or a private file.
+    Create {
+        #[arg(short, long, default_value = "-", value_name = "PATH")]
+        file: String,
+    },
+    /// Read replacement access_key and secret_key as JSON from stdin or a private file.
+    RotateCredentials {
+        id: Uuid,
+        #[arg(short, long, default_value = "-", value_name = "PATH")]
+        file: String,
     },
 }
 
@@ -843,6 +867,48 @@ pub(crate) async fn execute_flash(args: FlashArgs, settings: ApiSettings) -> Res
             println!("{}", serde_json::to_string_pretty(&value)?);
             return Ok(());
         }
+        FlashCommand::BackupDestinations { command } => {
+            let client = ApiClient::new(settings)?;
+            let base = format!(
+                "api/v1/organizations/{}/flash/backup-destinations",
+                client.organization_id
+            );
+            let (path, method, body) = match command {
+                FlashBackupDestinationCommand::List => (base, Method::GET, None),
+                FlashBackupDestinationCommand::Create { file } => {
+                    let mut input = read_backup_destination_input(&file)?;
+                    let object = input.as_object_mut().ok_or_else(|| {
+                        CliError::InvalidManifest("destination JSON must be an object".into())
+                    })?;
+                    let request_id = match object.get("request_id") {
+                        Some(value) => value
+                            .as_str()
+                            .and_then(|s| Uuid::parse_str(s).ok())
+                            .filter(|id| !id.is_nil())
+                            .ok_or_else(|| {
+                                CliError::InvalidManifest(
+                                    "request_id must be a nonzero UUID".into(),
+                                )
+                            })?,
+                        None => Uuid::now_v7(),
+                    };
+                    object.insert("request_id".into(), json!(request_id));
+                    eprintln!("Destination request ID: {request_id}");
+                    (base, Method::POST, Some(input))
+                }
+                FlashBackupDestinationCommand::RotateCredentials { id, file } => {
+                    let input = read_backup_destination_input(&file)?;
+                    (format!("{base}/{id}/credentials"), Method::PUT, Some(input))
+                }
+            };
+            let url = client
+                .endpoint
+                .join(&path)
+                .map_err(|e| CliError::InvalidApiEndpoint(e.to_string()))?;
+            let result: Value = client.send_json(method, url, body.as_ref()).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            return Ok(());
+        }
         FlashCommand::Rollback {
             id,
             generation,
@@ -1047,6 +1113,7 @@ async fn execute_backups(
             service_id,
             name,
             request_id,
+            destination_id,
             no_wait,
         } => {
             let request_id = request_id.unwrap_or_else(Uuid::now_v7);
@@ -1062,7 +1129,7 @@ async fn execute_backups(
                 .send_json(
                     Method::POST,
                     url,
-                    Some(&json!({"name":name,"request_id":request_id})),
+                    Some(&json!({"name":name,"request_id":request_id,"destination_id":destination_id})),
                 )
                 .await?;
             let id = value["id"]
@@ -1170,6 +1237,52 @@ async fn wait_backup(
         }
         sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now()))).await;
     }
+}
+
+fn read_backup_destination_input(path: &str) -> Result<Value, CliError> {
+    let mut reader: Box<dyn Read> = if path == "-" {
+        Box::new(io::stdin())
+    } else {
+        let file = fs::File::open(path).map_err(|source| CliError::InputFile {
+            path: path.into(),
+            source,
+        })?;
+        let metadata = file.metadata().map_err(|source| CliError::InputFile {
+            path: path.into(),
+            source,
+        })?;
+        if !metadata.is_file() {
+            return Err(CliError::InvalidManifest(
+                "credential input must be a regular file or stdin".into(),
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(CliError::InvalidManifest(
+                    "credential file must not be accessible to group or others (chmod 600)".into(),
+                ));
+            }
+        }
+        Box::new(file)
+    };
+    let mut input = Vec::new();
+    reader
+        .by_ref()
+        .take(16_385)
+        .read_to_end(&mut input)
+        .map_err(|source| CliError::InputFile {
+            path: path.into(),
+            source,
+        })?;
+    if input.is_empty() || input.len() > 16_384 {
+        return Err(CliError::InvalidManifest(
+            "credential JSON must contain 1 to 16384 bytes".into(),
+        ));
+    }
+    serde_json::from_slice(&input)
+        .map_err(|_| CliError::InvalidManifest("invalid credential JSON".into()))
 }
 
 fn read_client_secret(path: &str) -> Result<String, CliError> {
@@ -1751,6 +1864,21 @@ mod tests {
         assert!(validate_manifest("game", &json!({"region": "heteronet-global"})).is_ok());
         assert!(validate_manifest(" game", &json!({})).is_err());
         assert!(validate_manifest("game", &json!([])).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_destination_credentials_require_a_private_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+        let file = tempfile::NamedTempFile::new()?;
+        std::fs::write(file.path(), br#"{"access_key":"test","secret_key":"test"}"#)?;
+        let path = file.path().to_str().ok_or("path is not UTF-8")?;
+        std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o644))?;
+        assert!(read_backup_destination_input(path).is_err());
+        std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o600))?;
+        assert_eq!(read_backup_destination_input(path)?["access_key"], "test");
+        Ok(())
     }
 
     #[test]

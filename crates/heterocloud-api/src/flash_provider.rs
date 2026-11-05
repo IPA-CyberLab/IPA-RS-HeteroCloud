@@ -41,6 +41,40 @@ pub struct FlashProviderProxy {
 }
 
 impl FlashProviderProxy {
+    /// Destination credentials are transported to the provider only in the
+    /// authenticated request body. They are never included in errors.
+    pub async fn backup_destination_request(
+        &self,
+        context: FlashProviderContext,
+        method: reqwest::Method,
+        body: Option<&Value>,
+    ) -> Result<Value, FlashProviderError> {
+        let action = if method == reqwest::Method::GET {
+            "flash.backups.destination.get"
+        } else {
+            "flash.backups.destination.write"
+        };
+        let url = self.endpoint.join(&format!(
+            "internal/v1/organizations/{}/backup-destinations/{}",
+            context.organization_id, context.service_instance_id
+        ))?;
+        let mut request = self
+            .client
+            .request(method, url)
+            .bearer_auth(self.sign(&context, action)?)
+            .timeout(Duration::from_secs(10));
+        if let Some(body) = body {
+            request = request.json(body);
+        }
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            return Err(FlashProviderError::ProviderStatus(
+                response.status().as_u16(),
+            ));
+        }
+        Ok(response.json().await?)
+    }
+
     pub async fn backup_request(
         &self,
         context: FlashProviderContext,

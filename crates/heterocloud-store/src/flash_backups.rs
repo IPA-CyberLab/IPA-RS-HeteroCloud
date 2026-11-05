@@ -14,6 +14,7 @@ pub struct FlashBackup {
     pub project_id: Uuid,
     pub service_instance_id: Uuid,
     pub schedule_service_id: Option<Uuid>,
+    pub destination_id: Option<Uuid>,
     #[serde(skip_serializing)]
     pub principal_id: Uuid,
     #[serde(skip_serializing)]
@@ -45,6 +46,19 @@ impl Store {
         service: ServiceInstanceId,
         name: &str,
     ) -> Result<Option<FlashBackup>, StoreError> {
+        self.flash_backup_request_to(organization, principal, request_id, service, name, None)
+            .await
+    }
+
+    pub async fn flash_backup_request_to(
+        &self,
+        organization: OrganizationId,
+        principal: PrincipalId,
+        request_id: Uuid,
+        service: ServiceInstanceId,
+        name: &str,
+        destination: Option<Uuid>,
+    ) -> Result<Option<FlashBackup>, StoreError> {
         let existing = sqlx::query_as::<_, FlashBackup>(
             "SELECT * FROM flash_backups WHERE organization_id=$1 AND request_id=$2",
         )
@@ -56,6 +70,7 @@ impl Store {
             && (backup.principal_id != principal.0
                 || backup.service_instance_id != service.0
                 || backup.name != name
+                || backup.destination_id != destination
                 || backup.delete_requested)
         {
             return Err(StoreError::Conflict);
@@ -82,6 +97,35 @@ impl Store {
         resolved_image: Option<&str>,
         expected_generation: i64,
     ) -> Result<FlashBackup, StoreError> {
+        self.request_flash_backup_to(
+            organization,
+            service,
+            principal,
+            request_id,
+            name,
+            volume_size_bytes,
+            source_pvc_uid,
+            resolved_image,
+            expected_generation,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn request_flash_backup_to(
+        &self,
+        organization: OrganizationId,
+        service: ServiceInstanceId,
+        principal: PrincipalId,
+        request_id: Uuid,
+        name: &str,
+        volume_size_bytes: i64,
+        source_pvc_uid: &str,
+        resolved_image: Option<&str>,
+        expected_generation: i64,
+        destination: Option<Uuid>,
+    ) -> Result<FlashBackup, StoreError> {
         if volume_size_bytes <= 0 || source_pvc_uid.is_empty() {
             return Err(StoreError::RequestRejected(
                 "Persistent disk is not ready.".into(),
@@ -99,6 +143,7 @@ impl Store {
         {
             if existing.service_instance_id != service.0
                 || existing.name != name
+                || existing.destination_id != destination
                 || existing.principal_id != principal.0
                 || existing.delete_requested
             {
@@ -106,6 +151,15 @@ impl Store {
             }
             tx.commit().await?;
             return Ok(existing);
+        }
+        if let Some(destination) = destination {
+            let available: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM flash_backup_destinations WHERE organization_id=$1 AND id=$2 AND state='ready')")
+                .bind(organization.0).bind(destination).fetch_one(&mut *tx).await?;
+            if !available {
+                return Err(StoreError::RequestRejected(
+                    "Backup destination is not ready.".into(),
+                ));
+            }
         }
         let source = sqlx::query_as::<_, (Uuid, String, i64, Value)>(
             "SELECT project_id,name,generation,spec FROM service_instances WHERE id=$1 AND organization_id=$2 AND provider='flash' AND state <> 'deleting' FOR SHARE",
@@ -136,10 +190,10 @@ impl Store {
             spec["image"] = Value::String(image.to_owned());
         }
         let backup = sqlx::query_as::<_, FlashBackup>(
-            "INSERT INTO flash_backups(id,organization_id,project_id,service_instance_id,principal_id,request_id,name,source_name,source_generation,source_pvc_uid,source_spec,volume_size_bytes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *",
+            "INSERT INTO flash_backups(id,organization_id,project_id,service_instance_id,principal_id,request_id,name,source_name,source_generation,source_pvc_uid,source_spec,volume_size_bytes,destination_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *",
         ).bind(Uuid::now_v7()).bind(organization.0).bind(source.0).bind(service.0)
             .bind(principal.0).bind(request_id).bind(name).bind(source.1).bind(source.2)
-            .bind(source_pvc_uid).bind(spec).bind(volume_size_bytes).fetch_one(&mut *tx).await?;
+            .bind(source_pvc_uid).bind(spec).bind(volume_size_bytes).bind(destination).fetch_one(&mut *tx).await?;
         tx.commit().await?;
         Ok(backup)
     }

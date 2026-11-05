@@ -3,6 +3,7 @@ use crate::{
     flash_provider::{FlashProviderContext, FlashProviderError},
     routes::AppState,
 };
+use futures_util::{StreamExt, stream};
 use heterocloud_domain::{OrganizationId, PrincipalId, ProjectId, ServiceInstanceId};
 use heterocloud_store::FlashBackup;
 use reqwest::Method;
@@ -52,6 +53,64 @@ fn validated_verification(value: &Value) -> Value {
 }
 
 pub fn spawn_reconciler(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
+    let destinations_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(15));
+        loop {
+            ticker.tick().await;
+            let Ok(destinations) = destinations_state
+                .store
+                .flash_backup_destinations_to_refresh()
+                .await
+            else {
+                continue;
+            };
+            stream::iter(destinations.into_iter().map(|destination| {
+                let state = Arc::clone(&destinations_state);
+                async move {
+                    let Some(provider) = &state.flash_provider else {
+                        return;
+                    };
+                    let context = FlashProviderContext {
+                        principal_id: PrincipalId(destination.principal_id),
+                        user_id: None,
+                        organization_id: OrganizationId(destination.organization_id),
+                        project_id: ProjectId(uuid::Uuid::nil()),
+                        service_instance_id: ServiceInstanceId(destination.id),
+                        generation: 1,
+                    };
+                    let ready = if let Ok(value) = provider
+                        .backup_destination_request(context, Method::GET, None)
+                        .await
+                    {
+                        if value["id"].as_str() == Some(destination.id.to_string().as_str())
+                            && value["organization_id"].as_str()
+                                == Some(destination.organization_id.to_string().as_str())
+                        {
+                            value["ready"].as_bool()
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    // Rotate attempts so inaccessible targets cannot starve others.
+                    let _ = state
+                        .store
+                        .refresh_flash_backup_destination(
+                            OrganizationId(destination.organization_id),
+                            destination.id,
+                            destination.updated_at,
+                            ready,
+                        )
+                        .await;
+                }
+            }))
+            .buffer_unordered(4)
+            .collect::<Vec<_>>()
+            .await;
+        }
+    });
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(5));
         loop {
@@ -93,7 +152,19 @@ pub fn spawn_reconciler(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
                     continue;
                 }
                 let response = if backup.phase == "pending" {
-                    provider.backup_request(context(&backup),"flash.backups.create",Method::POST,None,Some(&json!({"id":backup.id,"name":backup.name,"source_pvc_uid":backup.source_pvc_uid,"volume_size_bytes":backup.volume_size_bytes}))).await
+                    let mut body = json!({"id":backup.id,"name":backup.name,"source_pvc_uid":backup.source_pvc_uid,"volume_size_bytes":backup.volume_size_bytes});
+                    if let Some(destination) = backup.destination_id {
+                        body["destination_id"] = json!(destination);
+                    }
+                    provider
+                        .backup_request(
+                            context(&backup),
+                            "flash.backups.create",
+                            Method::POST,
+                            None,
+                            Some(&body),
+                        )
+                        .await
                 } else {
                     provider
                         .backup_request(

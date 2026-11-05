@@ -14,6 +14,8 @@ pub(super) struct BackupListQuery {
 pub(super) struct CreateBackup {
     name: String,
     request_id: Uuid,
+    #[serde(default)]
+    destination_id: Option<Uuid>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -112,12 +114,13 @@ pub(super) async fn create_backup(
     .await?;
     if let Some(backup) = state
         .store
-        .flash_backup_request(
+        .flash_backup_request_to(
             OrganizationId(org),
             authorization.principal_id,
             request.request_id,
             ServiceInstanceId(service_id),
             &request.name,
+            request.destination_id,
         )
         .await
         .map_err(ApiError::from_store)?
@@ -154,7 +157,7 @@ pub(super) async fn create_backup(
         .ok_or(ApiError::FlashProviderUnavailable)?;
     let backup = state
         .store
-        .request_flash_backup(
+        .request_flash_backup_to(
             OrganizationId(org),
             ServiceInstanceId(service_id),
             authorization.principal_id,
@@ -164,6 +167,7 @@ pub(super) async fn create_backup(
             pvc_uid,
             observed["resolved_image"].as_str(),
             generation,
+            request.destination_id,
         )
         .await
         .map_err(ApiError::from_store)?;
