@@ -44,6 +44,15 @@ class Client:
         return json.loads(data) if data else None
 
 
+def has_deadline(build, field="deadline"):
+    value = build.get(field)
+    if value is None or value == "":
+        return False
+    if not isinstance(value, str):
+        raise ValueError("Unexpected workspace deadline")
+    return not value.startswith("0001-01-01T00:00:00")
+
+
 def reconcile(client, template_id, policy, apply=False, resume=False):
     scheduling = {key: policy.get(key) for key in ("default_ttl_ms", "allow_user_autostop")}
     if (set(policy) - {"default_ttl_ms", "allow_user_autostop", "workspace_automatic_updates"}
@@ -85,11 +94,19 @@ def reconcile(client, template_id, policy, apply=False, resume=False):
                 current = client.call(path)
                 if current.get("automatic_updates") != desired:
                     raise RuntimeError("The workspace's update policy was not applied")
-        if apply and current.get("ttl_ms") not in (None, 0):
+        build = current["latest_build"]
+        is_start = build.get("transition") == "start" or build.get("status") in ("running", "starting")
+        if apply and is_start and has_deadline(build, "max_deadline"):
+            raise RuntimeError("The workspace has a mandatory template stop deadline")
+        if apply and (current.get("ttl_ms") not in (None, 0)
+                      or (is_start and has_deadline(build))):
             client.call(path + "/ttl", "PUT", {"ttl_ms": 0})
             current = client.call(path)
             if current.get("ttl_ms") not in (None, 0):
                 raise RuntimeError("The workspace's autostop was not disabled")
+            build = current["latest_build"]
+            if is_start and has_deadline(build):
+                raise RuntimeError("The running workspace still has a stop deadline")
         build = current["latest_build"]
         should_resume = (resume and build["status"] == "stopped"
                          and build.get("reason") == "autostop")

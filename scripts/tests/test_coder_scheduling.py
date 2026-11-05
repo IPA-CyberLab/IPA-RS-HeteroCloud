@@ -43,6 +43,8 @@ class Client:
         workspace = next(w for w in self.workspaces if w["id"] == identifier)
         if path.endswith("/ttl"):
             workspace["ttl_ms"] = body["ttl_ms"]
+            if workspace["latest_build"].get("transition") == "start":
+                workspace["latest_build"]["deadline"] = "0001-01-01T00:00:00Z"
             return None
         if path.endswith("/autoupdates"):
             workspace["automatic_updates"] = body["automatic_updates"]
@@ -82,6 +84,33 @@ class SchedulingTests(unittest.TestCase):
         client = Client()
         module.reconcile(client, "template", POLICY, apply=True, resume=False)
         self.assertFalse(any(p.endswith("/builds") for m, p, b in client.mutations))
+
+    def test_running_deadline_is_cleared_even_if_ttl_is_already_unset(self):
+        client = Client()
+        workspace = client.workspaces[2]
+        workspace["ttl_ms"] = None
+        workspace["latest_build"].update(transition="start", deadline="2026-11-06T12:00:00Z",
+                                         max_deadline="0001-01-01T00:00:00Z")
+        module.reconcile(client, "template", POLICY, apply=True)
+        self.assertEqual(workspace["latest_build"]["deadline"], "0001-01-01T00:00:00Z")
+        self.assertIn(("PUT", "/api/v2/workspaces/running/ttl", {"ttl_ms": 0}), client.mutations)
+        self.assertFalse(any(p.endswith("/builds") for m, p, b in client.mutations))
+
+    def test_mandatory_stop_deadline_is_reported(self):
+        client = Client()
+        workspace = client.workspaces[2]
+        workspace["latest_build"].update(transition="start", deadline="2026-11-06T12:00:00Z",
+                                         max_deadline="2026-11-06T12:00:00Z")
+        with self.assertRaisesRegex(RuntimeError, "mandatory template stop deadline"):
+            module.reconcile(client, "template", POLICY, apply=True)
+
+    def test_deadline_must_actually_clear(self):
+        client = Client()
+        workspace = client.workspaces[2]
+        workspace["ttl_ms"] = None
+        workspace["latest_build"].update(deadline="2026-11-06T12:00:00Z")
+        with self.assertRaisesRegex(RuntimeError, "still has a stop deadline"):
+            module.reconcile(client, "template", POLICY, apply=True)
 
     def test_opted_in_workspace_updates_on_next_start_without_rebuild(self):
         client = Client()

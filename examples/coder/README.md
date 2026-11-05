@@ -86,6 +86,8 @@ existing user's workspace TTLs without rebuilding running workspaces. Add
 `--resume-autostopped` to resume workspaces whose latest stop reason is
 `autostop`; manually stopped workspaces remain stopped. New workspaces inherit
 the disabled default, and users can still opt into a stop timer explicitly.
+The command checks the current build deadline as well as the workspace TTL,
+and reports a mandatory template deadline if one prevents disabling autostop.
 
 Production policies live in `deploy/coder/scheduling.json`; pass that file with
 `--policy deploy/coder/scheduling.json`. Its optional `workspace_automatic_updates`
@@ -94,6 +96,12 @@ active template on the next start; applying this setting does not rebuild a
 running workspace. Unlisted workspaces keep their update preference, and the
 reconciler rejects entries outside the authenticated owner and template before
 writing anything. HyperEVM follows the corrected disk template on its next start.
+
+The production list of managed templates lives in the HeteroNetwork repository
+at `deploy/coder/workspace-scheduling.json`. Its Terraform reconciler configures
+template defaults without overwriting workspace-specific schedules. Add every
+new or copied template to that list: Coder's template creation CLI defaults to
+24 hours, and Terraform does not continuously reconcile changes on its own.
 
 For live IDE acceptance, `scripts/e2e/coder_ide_browser.mjs` requires the console's
 Playwright dependencies and Chromium. Pipe one JSON object through stdin with
