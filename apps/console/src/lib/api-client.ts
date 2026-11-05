@@ -718,7 +718,7 @@ export class HeteroCloudApiClient {
       list: (organizationId: string, serviceId?: string, signal?: AbortSignal) =>
         this.request<CollectionResponse<import("./api-types").FlashBackup>>(organizationPath(organizationId, "flash/backups") + (serviceId ? `?service_instance_id=${encodeURIComponent(serviceId)}` : ""), { signal }),
       create: (organizationId: string, serviceId: string, name: string, requestId: string, destinationId?: string | null) =>
-        this.request<import("./api-types").FlashBackup>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/backups`), { method: "POST", body: { name, request_id: requestId, destination_id: destinationId ?? null } }),
+        this.request<import("./api-types").FlashBackup>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/backups`), { method: "POST", body: { name, request_id: requestId, ...(destinationId ? {destination_id: destinationId} : {}) } }),
       get: (organizationId: string, backupId: string, signal?: AbortSignal) =>
         this.request<import("./api-types").FlashBackup>(organizationPath(organizationId, `flash/backups/${encodeURIComponent(backupId)}`), { signal }),
       delete: (organizationId: string, backupId: string) =>

@@ -239,6 +239,19 @@ def run_suite(a):
     a.run("flash-backups-list", ["flash","backups","list"], api=True, responses=[reply({"items":[backup]})], check=domain_check("GET",backup_path))
     a.run("flash-backups-get", ["flash","backups","get",domain_id], api=True, responses=[reply(backup)], check=domain_check("GET",backup_path+"/"+domain_id))
     a.run("flash-backups-create", ["flash","backups","create",ID,"--name","checkpoint","--request-id",domain_id,"--no-wait"], api=True, responses=[reply(backup,202)], check=domain_check("POST",f"/api/v1/organizations/{ORG}/flash/services/{ID}/backups",{"name":"checkpoint","request_id":domain_id}))
+    a.run("flash-backups-create-destination", ["flash","backups","create",ID,"--name","checkpoint","--request-id",domain_id,"--destination-id",PROJECT,"--no-wait"], api=True, responses=[reply(backup,202)], check=domain_check("POST",f"/api/v1/organizations/{ORG}/flash/services/{ID}/backups",{"name":"checkpoint","request_id":domain_id,"destination_id":PROJECT}))
+    destination_path = f"/api/v1/organizations/{ORG}/flash/backup-destinations"
+    destination_input = {"name":"audit","request_id":domain_id,"endpoint":"https://storage.example.test","bucket":"backup-bucket","region":"test","access_key":"fake-audit-access","secret_key":"fake-audit-secret"}
+    destination_view = {"id":domain_id,"name":"audit","state":"pending"}
+    def destination_check(method, path, body=None):
+        def check(out, err, requests, children, elapsed):
+            domain_check(method, path, body)(out, err, requests, children, elapsed)
+            require("fake-audit-access" not in out + err and "fake-audit-secret" not in out + err, "destination credentials were printed")
+        return check
+    a.run("flash-backup-destinations-list",["flash","backup-destinations","list"],api=True,responses=[reply({"items":[]})],check=destination_check("GET",destination_path))
+    a.run("flash-backup-destinations-create",["flash","backup-destinations","create","--file","-"],api=True,stdin=json.dumps(destination_input),responses=[reply(destination_view,202)],check=destination_check("POST",destination_path,destination_input))
+    rotated = {"access_key":"fake-audit-access","secret_key":"fake-audit-secret"}
+    a.run("flash-backup-destinations-rotate",["flash","backup-destinations","rotate-credentials",domain_id,"--file","-"],api=True,stdin=json.dumps(rotated),responses=[reply(destination_view)],check=destination_check("PUT",destination_path+"/"+domain_id+"/credentials",rotated))
     a.run("flash-backups-restore", ["flash","backups","restore",domain_id,"--project-id",PROJECT,"--name","restored","--request-id",domain_id,"--no-wait"], api=True, responses=[reply(service("flash"),202)], check=domain_check("POST",backup_path+"/"+domain_id+"/restore",{"name":"restored","project_id":PROJECT,"request_id":domain_id}))
     a.run("flash-backups-delete", ["flash","backups","delete",domain_id,"--yes","--no-wait"], api=True, responses=[reply({**backup,"phase":"deleting"},202)], check=domain_check("DELETE",backup_path+"/"+domain_id))
 

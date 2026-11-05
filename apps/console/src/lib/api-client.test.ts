@@ -551,6 +551,17 @@ describe("HeteroCloudApiClient", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("バックアップ先未指定時は既存APIと互換のリクエストを送る", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse(session)).mockImplementation(async () => jsonResponse({id:"backup"})) as unknown as typeof fetch;
+    const client = new HeteroCloudApiClient("/api/v1", fetcher);
+    await client.auth.session();
+    await client.flash.backups.create(organizationId,"service","daily","request",null);
+    await client.flash.backups.create(organizationId,"service","daily","request-2","destination");
+    const calls=vi.mocked(fetcher).mock.calls;
+    expect(JSON.parse(String(calls[1][1]?.body))).toEqual({name:"daily",request_id:"request"});
+    expect(JSON.parse(String(calls[2][1]?.body))).toEqual({name:"daily",request_id:"request-2",destination_id:"destination"});
+  });
+
   it("API障害時に偽データへフォールバックせずエラーを返す", async () => {
     const fetcher = vi.fn(async () => {
       throw new TypeError("connection refused");

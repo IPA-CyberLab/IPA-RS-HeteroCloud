@@ -1125,13 +1125,11 @@ async fn execute_backups(
                     ServiceKind::Flash.collection_path(client.organization_id)
                 ))
                 .map_err(|e| CliError::InvalidApiEndpoint(e.to_string()))?;
-            let value: Value = client
-                .send_json(
-                    Method::POST,
-                    url,
-                    Some(&json!({"name":name,"request_id":request_id,"destination_id":destination_id})),
-                )
-                .await?;
+            let mut body = json!({"name":name,"request_id":request_id});
+            if let Some(destination) = destination_id {
+                body["destination_id"] = json!(destination);
+            }
+            let value: Value = client.send_json(Method::POST, url, Some(&body)).await?;
             let id = value["id"]
                 .as_str()
                 .and_then(|s| Uuid::parse_str(s).ok())

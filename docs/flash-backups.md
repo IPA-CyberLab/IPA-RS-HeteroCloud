@@ -62,7 +62,7 @@ S3 エンドポイントには対応していません。セッショントー�
 
 CLI 0.1.106 以降で利用できます。接続先は既存の `HETEROCLOUD_ENDPOINT`、
 組織は `HETEROCLOUD_ORGANIZATION_ID` または通常の CLI オプションで選択します。
-外部の保存先登録と `--destination-id` は CLI 0.1.112 以降が必要です。
+外部の保存先登録と `--destination-id` は CLI 0.1.113 以降が必要です。
 
 ```sh
 heterocloud update
