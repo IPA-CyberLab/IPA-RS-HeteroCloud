@@ -35,12 +35,15 @@ the dYdx agent connected, and the code-server health check passed. The original
 PVC and volume were retained.
 
 The home filesystem has approximately 26 GiB allocated and was 100% full.
-File Browser had not completed its startup download. Outbound GitHub requests
-timed out during investigation, although later probes succeeded; this is an
-intermittent observation, not a diagnosis of the network path. The disk remained
-full and the volume was attached but degraded with only one read/write replica.
-No files were deleted and no disk expansion was performed while the requested
-size change was awaiting the owner's response.
+File Browser initially had not completed its startup download; it later started
+and returned HTTP 200 on its local endpoint. Browser access was not verified.
+Outbound GitHub requests timed out during investigation, although later probes
+succeeded; this is an intermittent observation, not a diagnosis of the network
+path. The disk remained full and the volume was attached but degraded with only
+one read/write replica. Longhorn attempted to rebuild another replica, but it
+had not become healthy during verification. No files were deleted and no disk
+expansion was performed while the requested size change was awaiting the
+owner's response.
 
 The capacity service's admission workers also became saturated and caused
 its shared liveness endpoint to return 503, resulting in repeated restarts.
