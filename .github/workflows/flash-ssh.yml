@@ -48,8 +48,8 @@ jobs:
           HETEROCLOUD_TEST_DATABASE_URL: postgres://heterocloud:test-only@127.0.0.1:5432/heterocloud_test_ssh
           HETEROCLOUD_TEST_CLI: ${{ github.workspace }}/target/debug/heterocloud
         run: cargo test --locked -p heterocloud-api --test flash_ssh -- --nocapture
-      - run: cargo test --locked -p heterocloud-api --lib flash_ssh
-      - run: cargo test --locked -p heterocloud-cli --lib ssh::
+      - run: 'cargo test --locked -p heterocloud-api --lib ssh_routes::tests'
+      - run: 'cargo test --locked -p heterocloud-cli --lib ssh::tests'
       - uses: actions/setup-node@v7
         with:
           node-version: 24
