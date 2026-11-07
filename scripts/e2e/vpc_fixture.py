@@ -28,6 +28,8 @@ def main():
     parser.add_argument("--dsn-file", required=True, type=Path)
     parser.add_argument("--fixture", required=True, type=Path)
     parser.add_argument("--vpc-id")
+    parser.add_argument("--flash-logs-report", action="append", default=[], type=Path,
+                        help="During removal, clean only retained log-test history identified by this report")
     args = parser.parse_args()
     with psycopg.connect(args.dsn_file.read_text().strip()) as db:
         if args.action == "browser-session":
@@ -75,10 +77,28 @@ def main():
         if args.action == "remove":
             fixture = json.loads(args.fixture.read_text())
             for tenant in fixture["tenants"]:
+                assert tenant["slug"].startswith("vpc-e2e-")
+                owned = db.execute("SELECT 1 FROM organizations WHERE id=%s AND slug=%s AND slug LIKE 'vpc-e2e-%%'", (tenant["organization_id"], tenant["slug"])).fetchone()
+                if not owned:
+                    raise RuntimeError("Fixture organization no longer matches its recorded identity")
                 # Never cascade-delete live infrastructure or an unrelated tenant.
                 count = db.execute("SELECT count(*) FROM service_instances WHERE organization_id=%s", (tenant["organization_id"],)).fetchone()[0]
                 if count:
                     raise RuntimeError("Delete test services through the API before removing the fixture")
+                if tenant == fixture["tenants"][0]:
+                    for path in args.flash_logs_report:
+                        report = json.loads(path.read_text())
+                        if not report.get("service_id"):
+                            continue
+                        service = uuid.UUID(report["service_id"])
+                        name = report["service_name"]
+                        if report.get("schema_version") != 1 or not name.startswith("flash-logs-e2e-"):
+                            raise RuntimeError("Refusing an unrelated Flash logs report")
+                        revisions = db.execute("SELECT project_id,name FROM flash_service_revisions WHERE organization_id=%s AND service_instance_id=%s", (tenant["organization_id"], service)).fetchall()
+                        if any(str(project) != tenant["project_id"] or actual != name for project, actual in revisions):
+                            raise RuntimeError("Retained history does not match the disposable report")
+                        db.execute("DELETE FROM flash_service_events WHERE organization_id=%s AND service_instance_id=%s", (tenant["organization_id"], service))
+                        db.execute("DELETE FROM flash_service_revisions WHERE organization_id=%s AND project_id=%s AND service_instance_id=%s AND name=%s", (tenant["organization_id"], tenant["project_id"], service, name))
                 db.execute("DELETE FROM organizations WHERE id=%s AND slug=%s AND slug LIKE 'vpc-e2e-%%'", (tenant["organization_id"], tenant["slug"]))
             if fixture.get("browser_user_id"):
                 db.execute("DELETE FROM users WHERE id=%s AND email=%s", (fixture["browser_user_id"], fixture["tenants"][0]["slug"] + "@example.invalid"))

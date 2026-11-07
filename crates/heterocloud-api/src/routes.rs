@@ -73,8 +73,8 @@ use crate::{
     config::RuntimeConfig,
     error::ApiError,
     flash_provider::{
-        FlashContainerList, FlashProviderContext, FlashProviderProxy, FlashUsageItem,
-        bridge_websockets, refresh_autoscaled_status, refresh_autoscaled_statuses,
+        FlashContainerList, FlashProviderContext, FlashProviderError, FlashProviderProxy,
+        FlashUsageItem, bridge_websockets, refresh_autoscaled_status, refresh_autoscaled_statuses,
     },
     flow_access::{FlowAccessInput, SignedFlowAccessContext},
     metrics::fetch_and_record_realtime_metrics,
@@ -5590,11 +5590,20 @@ async fn get_flash_logs(
             query.previous,
         )
         .await
-        .map_err(|error| {
+        .map_err(flash_logs_provider_error)?;
+    Ok(no_store_response(Json(logs)))
+}
+
+fn flash_logs_provider_error(error: FlashProviderError) -> ApiError {
+    match error {
+        // A replica may disappear during a rollout; the provider does not
+        // reveal whether a pod with that name belongs to another service.
+        FlashProviderError::ProviderStatus(404) => ApiError::NotFound,
+        error => {
             tracing::warn!(error = %error, "Flash log retrieval failed");
             ApiError::FlashProviderUnavailable
-        })?;
-    Ok(no_store_response(Json(logs)))
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -7888,6 +7897,23 @@ mod tests {
     use crate::error::ApiError;
     use crate::flash_provider::{FlashUsageItem, FlashWeeklyUsage};
     use crate::syouyu_provider::{SyouyuProviderCredential, SyouyuProviderPermissions};
+
+    #[test]
+    fn missing_log_replica_is_not_a_provider_outage() {
+        use crate::flash_provider::FlashProviderError;
+        assert!(matches!(
+            super::flash_logs_provider_error(FlashProviderError::ProviderStatus(404)),
+            ApiError::NotFound
+        ));
+        assert!(matches!(
+            super::flash_logs_provider_error(FlashProviderError::ProviderStatus(503)),
+            ApiError::FlashProviderUnavailable
+        ));
+        assert!(matches!(
+            super::flash_logs_provider_error(FlashProviderError::ProviderStatus(403)),
+            ApiError::FlashProviderUnavailable
+        ));
+    }
 
     use super::{
         CSRF_HEADER, CreateDeveloperAccessCredential, CreateInvitation,

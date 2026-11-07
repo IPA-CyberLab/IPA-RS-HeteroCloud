@@ -1,5 +1,28 @@
 # VPC live E2E
 
+For live Flash workload logs, create a separate empty fixture and browser session:
+
+```sh
+python3 scripts/e2e/vpc_fixture.py create --dsn-file "$PRIVATE_DIR/database-url" --fixture "$PRIVATE_DIR/logs-fixture.json"
+python3 scripts/e2e/vpc_fixture.py browser-session --dsn-file "$PRIVATE_DIR/database-url" --fixture "$PRIVATE_DIR/logs-fixture.json"
+python3 scripts/e2e/flash_logs_live.py --endpoint "$HETEROCLOUD_ENDPOINT" \
+  --fixture "$PRIVATE_DIR/logs-fixture.json" --report "$PRIVATE_DIR/logs-report.json" \
+  --cli heterocloud --browser-output "$PRIVATE_DIR/logs-browser"
+python3 scripts/e2e/vpc_fixture.py remove --dsn-file "$PRIVATE_DIR/database-url" \
+  --fixture "$PRIVATE_DIR/logs-fixture.json" --flash-logs-report "$PRIVATE_DIR/logs-report.json"
+```
+
+This creates one small, stateless private workload. It verifies actual Pod logs,
+the no-store response, anonymous and cross-organization rejection, rejection of
+a different Pod name, the CLI, and desktop/mobile console rendering. Cleanup
+deletes only the uniquely named test service; fixture removal refuses to delete
+an organization that still owns services. The report allows cleanup of that
+service's retained revision and event history. Its provider usage record must
+also be removed by an administrator after checking its organization, project,
+service ID and UID. The temporary browser session does not test interactive
+IdP sign-in. Keep the fixture and database URL private, and remove the fixture
+even when a test fails.
+
 For configuration updates and disk resizing, use a separate empty fixture:
 
 ```sh
