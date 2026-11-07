@@ -146,6 +146,73 @@ async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
         registration_limiter: Arc::new(Semaphore::new(2)),
     });
     let path = format!("/api/v1/organizations/{org}/flash/services/{}", instance.id);
+    // Log access is distinct from both service updates and anonymous access.
+    let log_path = format!("{path}/logs");
+    assert_eq!(
+        app(state.clone(), None)
+            .oneshot(Request::get(&log_path).body(Body::empty())?)
+            .await?
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        app(state.clone(), None)
+            .oneshot(
+                Request::get(&log_path)
+                    .header(header::AUTHORIZATION, format!("Bearer {key}"))
+                    .body(Body::empty())?
+            )
+            .await?
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let log_reader = store.create_service_account(org, "log-reader").await?;
+    let log_policy: PolicyDocument = serde_json::from_value(
+        json!({"version":"2026-07-31", "statements":[{"effect":"Allow","actions":["flash:GetLogs"],"resources":[format!("hc:org:{org}:flash/instance/{}", instance.id)]}]}),
+    )?;
+    let log_policy = store
+        .create_policy(org, "log reading", &log_policy, &semantics_digest())
+        .await?;
+    store
+        .create_binding(org, log_reader.id, log_policy.id)
+        .await?;
+    let log_key = "hc_1234567890abcdef_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG";
+    store
+        .create_api_key(
+            org,
+            log_reader.id,
+            "logs",
+            "1234567890abcdef",
+            &token_hash(log_key),
+            Some(Utc::now() + chrono::Duration::minutes(10)),
+        )
+        .await?;
+    assert_eq!(
+        app(state.clone(), None)
+            .oneshot(
+                Request::get(&log_path)
+                    .header(header::AUTHORIZATION, format!("Bearer {log_key}"))
+                    .body(Body::empty())?
+            )
+            .await?
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    let other_path = format!(
+        "/api/v1/organizations/{org}/flash/services/{}/logs",
+        Uuid::now_v7()
+    );
+    assert_eq!(
+        app(state.clone(), None)
+            .oneshot(
+                Request::get(other_path)
+                    .header(header::AUTHORIZATION, format!("Bearer {log_key}"))
+                    .body(Body::empty())?
+            )
+            .await?
+            .status(),
+        StatusCode::FORBIDDEN
+    );
     let post = |path: String, key: Option<&str>| -> Result<Request<Body>, axum::http::Error> {
         let mut r = Request::post(path);
         if let Some(key) = key {

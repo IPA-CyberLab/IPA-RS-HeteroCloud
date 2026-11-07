@@ -19,6 +19,8 @@ use tokio_tungstenite::{
 use url::Url;
 
 const LIST_CONTAINERS_ACTION: &str = "flash.containers.list";
+const GET_LOGS_ACTION: &str = "flash.logs.get";
+const MAX_LOG_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const EXEC_ACTION: &str = "flash.exec";
 const STATUS_ACTION: &str = "flash.status.get";
 const LIVE_STATUS_BUDGET: Duration = Duration::from_secs(2);
@@ -244,6 +246,58 @@ impl FlashProviderProxy {
             ));
         }
         Ok(response.json().await?)
+    }
+
+    pub async fn get_logs(
+        &self,
+        context: FlashProviderContext,
+        pod: Option<&str>,
+        previous: bool,
+    ) -> Result<FlashLogs, FlashProviderError> {
+        let signed = self.sign(&context, GET_LOGS_ACTION)?;
+        let mut url = self.endpoint.join(&format!(
+            "internal/v1/service-instances/{}/logs",
+            context.service_instance_id
+        ))?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("generation", &context.generation.to_string());
+            if let Some(pod) = pod {
+                query.append_pair("pod", pod);
+            }
+            if previous {
+                query.append_pair("previous", "true");
+            }
+        }
+        let mut response = self
+            .client
+            .get(url)
+            .bearer_auth(signed)
+            .timeout(Duration::from_secs(12))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(FlashProviderError::ProviderStatus(
+                response.status().as_u16(),
+            ));
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if chunk.len() > MAX_LOG_RESPONSE_BYTES.saturating_sub(body.len()) {
+                return Err(FlashProviderError::InvalidLogs);
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let logs: FlashLogs =
+            serde_json::from_slice(&body).map_err(|_| FlashProviderError::InvalidLogs)?;
+        if logs.pod.as_deref() != pod
+            || logs.previous != previous
+            || logs.items.len() > 4096
+            || (pod.is_some() != logs.text.is_some())
+        {
+            return Err(FlashProviderError::InvalidLogs);
+        }
+        Ok(logs)
     }
 
     pub async fn list_gpu_catalog(&self) -> Result<Vec<GpuCatalogDevice>, FlashProviderError> {
@@ -621,6 +675,15 @@ pub struct FlashContainer {
     pub ready: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FlashLogs {
+    pub items: Vec<FlashContainer>,
+    pub pod: Option<String>,
+    pub previous: bool,
+    pub text: Option<String>,
+    pub truncated: bool,
+}
+
 pub async fn bridge_websockets(browser: WebSocket, provider: ProviderWebSocket) {
     let (mut browser_send, mut browser_receive) = browser.split();
     let (mut provider_send, mut provider_receive) = provider.split();
@@ -679,6 +742,8 @@ pub enum FlashProviderError {
     InvalidLiveStatus,
     #[error("Flash provider GPU catalog is malformed or too large")]
     InvalidGpuCatalog,
+    #[error("Flash provider log response is malformed or too large")]
+    InvalidLogs,
     #[error("Flash provider usage snapshot is malformed or too large")]
     InvalidUsageSnapshot,
     #[error(transparent)]
@@ -862,6 +927,80 @@ MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
         assert_eq!(claims["project_id"], original.project_id.to_string());
         assert_eq!(claims["service_instance_id"], original.id.to_string());
         assert_eq!(claims["aud"], "heterocloud-flash");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn logs_use_scoped_action_and_reject_invalid_or_oversized_responses()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let original = service(1);
+        let principal = PrincipalId(Uuid::from_u128(4));
+        let context = super::FlashProviderContext {
+            principal_id: principal,
+            user_id: None,
+            organization_id: original.organization_id,
+            project_id: original.project_id,
+            service_instance_id: original.id,
+            generation: original.generation,
+        };
+        let body = json!({"items":[{"name":"flash-pod-1","phase":"Running","ready":true}],
+            "pod":"flash-pod-1","previous":true,"text":"fixture log","truncated":false});
+        let mock = mock_provider(StatusCode::OK, body.to_string(), Duration::ZERO).await?;
+        let logs = mock
+            .proxy
+            .get_logs(context, Some("flash-pod-1"), true)
+            .await?;
+        assert_eq!(logs.text.as_deref(), Some("fixture log"));
+        {
+            let requests = mock.requests.lock().map_err(|_| "request lock poisoned")?;
+            let (method, uri, headers) = requests.first().ok_or("missing request")?;
+            assert_eq!(*method, Method::GET);
+            assert_eq!(
+                uri.path(),
+                format!("/internal/v1/service-instances/{}/logs", original.id)
+            );
+            assert_eq!(
+                uri.query(),
+                Some("generation=7&pod=flash-pod-1&previous=true")
+            );
+            let token = headers
+                .get(http::header::AUTHORIZATION)
+                .ok_or("missing auth")?
+                .to_str()?
+                .strip_prefix("Bearer ")
+                .ok_or("not bearer")?;
+            let payload = token.split('.').nth(1).ok_or("missing JWT payload")?;
+            let claims: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload)?)?;
+            assert_eq!(claims["action"], "flash.logs.get");
+            assert_eq!(
+                claims["organization_id"],
+                original.organization_id.to_string()
+            );
+            assert_eq!(claims["project_id"], original.project_id.to_string());
+            assert_eq!(claims["service_instance_id"], original.id.to_string());
+        }
+
+        let mismatch = mock_provider(StatusCode::OK, body.to_string(), Duration::ZERO).await?;
+        assert!(matches!(
+            mismatch
+                .proxy
+                .get_logs(context, Some("foreign-pod"), true)
+                .await,
+            Err(super::FlashProviderError::InvalidLogs)
+        ));
+        let large = mock_provider(
+            StatusCode::OK,
+            "x".repeat(super::MAX_LOG_RESPONSE_BYTES + 1),
+            Duration::ZERO,
+        )
+        .await?;
+        assert!(matches!(
+            large
+                .proxy
+                .get_logs(context, Some("flash-pod-1"), true)
+                .await,
+            Err(super::FlashProviderError::InvalidLogs)
+        ));
         Ok(())
     }
 

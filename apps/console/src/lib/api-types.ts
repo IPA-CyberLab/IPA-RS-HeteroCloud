@@ -787,6 +787,13 @@ export interface FlashContainerList {
   items: FlashContainer[];
 }
 
+export interface FlashLogs extends FlashContainerList {
+  pod: string | null;
+  previous: boolean;
+  text: string | null;
+  truncated: boolean;
+}
+
 export interface CreateFlashServiceRequest {
   project_id: string;
   name: string;

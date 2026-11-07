@@ -24,6 +24,7 @@ import type {
   IdentityCenterUser,
   FlashService,
   FlashContainerList,
+  FlashLogs,
   IamPolicy,
   InvitationResponse,
   LoginRequest,
@@ -833,6 +834,12 @@ export class HeteroCloudApiClient {
             `flash/services/${encodeURIComponent(serviceId)}/containers`,
           ),
           { signal },
+        ),
+      getLogs: (organizationId: string, serviceId: string, pod?: string, previous?: boolean, signal?: AbortSignal) =>
+        this.request<FlashLogs>(
+          organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/logs`) +
+            queryString({ pod, previous: previous ? "true" : undefined }),
+          { signal, cache: "no-store" },
         ),
       execWebSocketUrl: (
         organizationId: string,

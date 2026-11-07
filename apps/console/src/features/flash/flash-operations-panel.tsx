@@ -17,6 +17,7 @@ import type { FlashBackupPolicyInput, FlashService } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/utils";
 import { flashProviderStatus } from "./flash-service-utils";
 import { useBackupDestinations } from "./flash-backup-destinations";
+import { FlashLogsPanel } from "./flash-logs-panel";
 
 const reasonLabels: Record<string,string> = {
   insufficient_disk_capacity:"ホストの空きディスクが不足しています。",
@@ -72,6 +73,7 @@ export function FlashOperationsPanel({organizationId,service}:{organizationId:st
         {events.data?.items.map(e=><Alert key={e.id} type={e.resolved_at?"info":e.severity} header={(e.resolved_at?"解消済み":"通知")+"・"+formatDateTime(e.created_at)}>{diagnosticText(e.code,e.message)}</Alert>)}
         {events.data?.items.length===0&&<Box>通知履歴はありません。</Box>}
       </SpaceBetween>},
+      {id:"logs",label:"コンテナログ",content:<FlashLogsPanel organizationId={organizationId} serviceId={service.id}/>},
       {id:"revisions",label:"更新履歴",content:<SpaceBetween size="m">
         {history.isError&&<Alert type="error">{getApiErrorMessage(history.error)}</Alert>}
         {history.isPending&&<Box>更新履歴を取得しています。</Box>}

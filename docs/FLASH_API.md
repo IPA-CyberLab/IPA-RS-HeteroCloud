@@ -146,6 +146,17 @@ the spec, generation or reconcile outbox. Deleting services retain existing quot
 release behavior. Owner usage reports use the same reservation calculation, not
 live running replica counts.
 
+## Container logs
+
+`GET /api/v1/organizations/{organization_id}/flash/services/{service_id}/logs`
+requires the service-scoped `flash:GetLogs` IAM action, independently of the
+interactive `flash:ExecInstance` permission. Without a `pod` parameter it lists
+containers belonging to the service; with `pod` it returns that workload's
+latest 500 lines, at most 256 KiB, and `previous=true` selects the previously
+terminated container. Responses disable caching. These are live Kubernetes
+logs: they can disappear when a pod is removed or its logs rotate; they are
+not a durable log archive, a monitoring service, or an alerting system.
+
 ## Weekly Runtime Quotas and Usage
 
 Flash enforces three organization-shared weekly runtime limits:

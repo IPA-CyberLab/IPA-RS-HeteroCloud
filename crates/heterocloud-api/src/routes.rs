@@ -332,6 +332,10 @@ pub fn api_router(state: Arc<AppState>) -> Router {
             get(list_flash_containers),
         )
         .route(
+            "/organizations/{organization_id}/flash/services/{service_instance_id}/logs",
+            get(get_flash_logs),
+        )
+        .route(
             "/organizations/{organization_id}/flash/services/{service_instance_id}/domains",
             get(list_flash_domains).post(add_flash_domain),
         )
@@ -5537,6 +5541,60 @@ async fn list_flash_containers(
             ApiError::FlashProviderUnavailable
         })?;
     Ok(Json(containers))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FlashLogsQuery {
+    pod: Option<String>,
+    #[serde(default)]
+    previous: bool,
+}
+
+async fn get_flash_logs(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<FlashLogsQuery>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Response, ApiError> {
+    if query
+        .pod
+        .as_deref()
+        .is_some_and(|pod| !valid_kubernetes_name(pod))
+        || (query.previous && query.pod.is_none())
+    {
+        return Err(ApiError::BadRequest("pod is invalid".into()));
+    }
+    let actor = authenticated_actor(&state, &headers, &jar).await?;
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        OrganizationId(organization_id),
+        "flash:GetLogs",
+        &flash_service_resource(organization_id, service_instance_id),
+    )
+    .await?;
+    let instance = flash_service(&state, organization_id, service_instance_id).await?;
+    if instance.state == ServiceState::Deleting {
+        return Err(ApiError::ServiceInstanceNotReady);
+    }
+    let provider = state
+        .flash_provider
+        .as_ref()
+        .ok_or(ApiError::FlashProviderUnavailable)?;
+    let logs = provider
+        .get_logs(
+            flash_provider_context(&instance, authorization.principal_id),
+            query.pod.as_deref(),
+            query.previous,
+        )
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = %error, "Flash log retrieval failed");
+            ApiError::FlashProviderUnavailable
+        })?;
+    Ok(no_store_response(Json(logs)))
 }
 
 #[derive(Deserialize)]

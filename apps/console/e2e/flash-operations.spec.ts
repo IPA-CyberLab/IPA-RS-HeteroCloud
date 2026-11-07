@@ -25,6 +25,11 @@ test("diagnostics, revision rollback and scheduled backups share the service con
       if(request.method()==="PUT"){expect(request.postDataJSON()).toEqual({enabled:true,interval_seconds:86400,retention_count:2,verify_restore:true});mutations.push("backup-policy");policy={...request.postDataJSON(),next_run_at:time};}
       body=policy;
     }
+    else if(path.endsWith("/logs")){
+      const query = new URL(request.url()).searchParams;
+      const pod = query.get("pod");
+      body = {items:[{name:"pod-a",phase:"Running",ready:true},{name:"pod-b",phase:"Failed",ready:false}],pod,previous:query.get("previous")==="true",text:pod?`<script>${pod}</script>`:null,truncated:query.get("previous")==="true"};
+    }
     else if(path.endsWith("/flash/services/service-1"))body=service;
     else if(path.endsWith("/flash/quota"))body={};
     else if(path.endsWith("/domains")||path.endsWith("/flash/backups")||path.endsWith("/vpc/networks")||path.endsWith("/events"))body={items:[]};
@@ -36,6 +41,12 @@ test("diagnostics, revision rollback and scheduled backups share the service con
   await expect(page.getByText("永続ディスクの使用率が90%以上です。")).toBeVisible({timeout:3000});
   expect(Date.now()-start).toBeLessThan(3000);
   await expect(page.getByText(/90.00 \/ 100.00 GiB/)).toBeVisible();
+  await page.getByRole("tab",{name:"コンテナログ",exact:true}).click();
+  await expect(page.getByText("<script>pod-a</script>")).toBeVisible();
+  await page.getByLabel("ログを表示するコンテナ").selectOption("pod-b");
+  await expect(page.getByText("<script>pod-b</script>")).toBeVisible();
+  await page.getByLabel("前回終了したコンテナのログ").check();
+  await expect(page.getByText("ログの一部のみを表示しています。")).toBeVisible();
   await page.getByRole("tab",{name:"更新履歴",exact:true}).click();
   await page.getByRole("button",{name:"世代 1 に切り戻す"}).click();
   expect(mutations).toEqual([]);
