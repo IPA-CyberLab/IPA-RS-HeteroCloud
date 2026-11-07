@@ -81,6 +81,19 @@ class WaitForFlashTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('イメージが見つかりません', result.stderr)
 
+    def test_temporary_capacity_shortage_does_not_fail_a_later_successful_start(self):
+        result, requests = self.run_wait([
+            service('provisioning', code='insufficient_compute_capacity'),
+            service('provisioning', code='insufficient_compute_capacity'),
+            service('provisioning', code='insufficient_compute_capacity'),
+            service('provisioning', code='insufficient_compute_capacity'),
+            service('ready', ready=1),
+        ], seconds=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertGreaterEqual(requests, 5)
+        self.assertIn('空き容量が不足', result.stdout)
+        self.assertIn('コンテナが起動しました', result.stdout)
+
     def test_stale_ready_status_does_not_pass(self):
         result, _ = self.run_wait([service('ready', observed=3, ready=1)], seconds=2)
         self.assertNotEqual(result.returncode, 0)

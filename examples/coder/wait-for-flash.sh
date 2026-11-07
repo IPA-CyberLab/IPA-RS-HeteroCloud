@@ -28,7 +28,19 @@ endpoint="${bridge%/}/api/v1/organizations/$account/flash/services/$service"
 deadline=$(( $(date +%s) + timeout ))
 last_problem=''
 problem_count=0
+last_problem_at=0
+reported_problem=''
 printf '%s\n' 'Flash の起動と永続ディスクの準備を待っています。'
+
+describe_problem() {
+  case "$1" in
+    insufficient_replicated_storage) printf '%s' 'Flash: 永続ディスクを複製する空き容量が不足しています。' ;;
+    insufficient_disk_capacity) printf '%s' 'Flash: コンテナのディスク空き容量が不足しています。' ;;
+    insufficient_compute_capacity) printf '%s' 'Flash: CPU またはメモリの空き容量が不足しています。' ;;
+    storage_replica_policy_unavailable) printf '%s' 'Flash: 永続ディスクの複製設定を確認できません。' ;;
+    image_unavailable) printf '%s' 'Flash: ワークスペースのイメージが見つかりません。テンプレートを更新してください。' ;;
+  esac
+}
 
 while [ "$(date +%s)" -lt "$deadline" ]; do
   # No response is written to disk or used as a command-line argument.
@@ -58,22 +70,23 @@ EOF_STATUS
           insufficient_replicated_storage|insufficient_disk_capacity|insufficient_compute_capacity|storage_replica_policy_unavailable|image_unavailable)
             if [ "$problem" = "$last_problem" ]; then problem_count=$((problem_count + 1)); else problem_count=1; fi
             last_problem=$problem
-            if [ "$problem_count" -ge 3 ]; then
-              case "$problem" in
-                insufficient_replicated_storage) echo 'Flash: 永続ディスクを複製する空き容量が不足しています。' >&2 ;;
-                insufficient_disk_capacity) echo 'Flash: コンテナのディスク空き容量が不足しています。' >&2 ;;
-                insufficient_compute_capacity) echo 'Flash: CPU またはメモリの空き容量が不足しています。' >&2 ;;
-                storage_replica_policy_unavailable) echo 'Flash: 永続ディスクの複製設定を確認できません。' >&2 ;;
-                image_unavailable) echo 'Flash: ワークスペースのイメージが見つかりません。テンプレートを更新してください。' >&2 ;;
-              esac
-              exit 1
+            last_problem_at=$(date +%s)
+            if [ "$problem_count" -ge 3 ] && [ "$reported_problem" != "$problem" ]; then
+              describe_problem "$problem"
+              printf '%s\n' ' 復旧を待っています。'
+              reported_problem=$problem
             fi ;;
-          *) last_problem=''; problem_count=0 ;;
+          *) last_problem=''; problem_count=0; last_problem_at=0; reported_problem='' ;;
         esac
       fi
     fi
   fi
   sleep "$interval"
 done
+if [ "$problem_count" -ge 3 ] && [ $(( $(date +%s) - last_problem_at )) -le $(( interval * 2 + 10 )) ]; then
+  describe_problem "$last_problem" >&2
+  printf '\n' >&2
+  exit 1
+fi
 printf '%s\n' 'Flash の起動を確認できませんでした。サービスの状態と容量を確認して再試行してください。' >&2
 exit 1
