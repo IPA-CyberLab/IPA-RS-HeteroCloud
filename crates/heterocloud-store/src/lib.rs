@@ -2,6 +2,7 @@ mod cloud_organizations;
 mod flash_backup_destinations;
 mod flash_backups;
 mod flash_operations;
+mod flash_ssh_keys;
 mod iam_groups;
 mod iam_roles;
 mod identity_center;
@@ -27,6 +28,7 @@ mod workload_identity;
 pub use flash_backup_destinations::{FlashBackupDestination, NewFlashBackupDestination};
 pub use flash_backups::FlashBackup;
 pub use flash_domains::FlashDomainBinding;
+pub use flash_ssh_keys::FlashSshKey;
 pub use workload_identity::WorkloadTokenPrincipal;
 
 use std::collections::{BTreeMap, BTreeSet};

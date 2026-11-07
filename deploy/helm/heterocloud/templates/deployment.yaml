@@ -94,6 +94,19 @@ spec:
             - --flow-public-endpoints={{ join "," (required "flowPublicEndpoints is required" .Values.flowPublicEndpoints) }}
             - --flow-internal-endpoint={{ required "flowInternalEndpoint is required" .Values.flowInternalEndpoint }}
             - --flash-internal-endpoint={{ required "flashExec.endpoint is required" .Values.flashExec.endpoint }}
+            {{- if .Values.flashSsh.enabled }}
+            - --flash-ssh-host-key-file=/var/run/secrets/flash-ssh/host-key
+            {{- if .Values.flashSsh.tcp.enabled }}
+            {{- if .Values.flashSsh.tcp.advertisedHost }}
+            - {{ printf "--flash-ssh-advertised-host=%s" .Values.flashSsh.tcp.advertisedHost | quote }}
+            {{- end }}
+            {{- if .Values.hostNetwork }}
+            - --flash-ssh-listen=$(HOST_IP):{{ .Values.flashSsh.tcp.port }}
+            {{- else }}
+            - --flash-ssh-listen=0.0.0.0:{{ .Values.flashSsh.tcp.port }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.worker.vpcEndpoint }}
             - --vpc-endpoint={{ .Values.worker.vpcEndpoint }}
             {{- end }}
@@ -150,6 +163,11 @@ spec:
             - name: https
               containerPort: 8443
               protocol: TCP
+            {{- if and .Values.flashSsh.enabled .Values.flashSsh.tcp.enabled }}
+            - name: flash-ssh
+              containerPort: {{ .Values.flashSsh.tcp.port }}
+              protocol: TCP
+            {{- end }}
           lifecycle:
             preStop:
               exec:
@@ -181,6 +199,11 @@ spec:
               drop:
                 - ALL
           volumeMounts:
+            {{- if .Values.flashSsh.enabled }}
+            - name: flash-ssh-host-key
+              mountPath: /var/run/secrets/flash-ssh
+              readOnly: true
+            {{- end }}
             {{- if .Values.workloadIdentity.enabled }}
             - name: heterocloud-kubernetes
               mountPath: /var/run/secrets/heterocloud-kubernetes
@@ -224,6 +247,15 @@ spec:
             - name: tmp
               mountPath: /tmp
       volumes:
+        {{- if .Values.flashSsh.enabled }}
+        - name: flash-ssh-host-key
+          secret:
+            secretName: {{ required "flashSsh.hostKeySecretName is required" .Values.flashSsh.hostKeySecretName | quote }}
+            defaultMode: 0400
+            items:
+              - key: {{ .Values.flashSsh.hostKeySecretKey | quote }}
+                path: host-key
+        {{- end }}
         {{- if .Values.workloadIdentity.enabled }}
         - name: heterocloud-kubernetes
           projected:

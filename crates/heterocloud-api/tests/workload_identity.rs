@@ -116,6 +116,7 @@ async fn task_iam_is_scoped_revocable_and_cli_oauth_can_manage_iam() -> Result<(
     let origin = Url::parse("http://cloud.example.test")?;
     let state = Arc::new(AppState {
         workload_identity: None,
+        ssh_gateway: None,
         store: store.clone(),
         config: RuntimeConfig {
             public_origin: origin,

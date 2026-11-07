@@ -36,6 +36,7 @@ import { formatDateTime, formatNumber } from "@/lib/utils";
 import { FlashBackupsPanel } from "./flash-backups-panel";
 import { FlashOperationsPanel } from "./flash-operations-panel";
 import { FlashDomainsPanel } from "./flash-domains-panel";
+import { FlashSshPanel } from "./flash-ssh-panel";
 import { FlashEndpoints } from "./flash-endpoints";
 import { FlashSecretsPanel } from "./flash-secrets-panel";
 import {
@@ -460,6 +461,7 @@ export function FlashServiceDetailPage() {
         />
       </Container>
       <FlashDomainsPanel organizationId={organizationId} serviceId={serviceId} oidc={Boolean(item.spec.exposure.authentication)} />
+      <FlashSshPanel organizationId={organizationId} serviceId={serviceId} />
       <FlashOperationsPanel organizationId={organizationId} service={item} />
       <FlashBackupsPanel key={`${organizationId}/${serviceId}`} organizationId={organizationId} serviceId={serviceId} />
       <Modal

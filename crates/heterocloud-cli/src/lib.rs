@@ -13,6 +13,7 @@ use thiserror::Error;
 mod auth;
 mod external_dns;
 mod services;
+mod ssh;
 pub mod update;
 mod workload;
 
@@ -207,6 +208,8 @@ pub struct DnsRecord {
 
 #[derive(Debug, Error)]
 pub enum CliError {
+    #[error("SSH exited with status {0}")]
+    SshExit(u8),
     #[error("CLI update failed: {0}")]
     Update(String),
     #[error(
@@ -406,6 +409,44 @@ pub async fn execute(cli: Cli) -> Result<(), CliError> {
             services::execute_iam(args, settings).await
         }
         TopLevelCommand::Flash(args) => {
+            let command = match args.command {
+                services::FlashCommand::Ssh {
+                    id,
+                    identity_file,
+                    known_hosts_file,
+                    command,
+                } => {
+                    let organization = match organization_id {
+                        Some(id) => id,
+                        None => {
+                            auth::load_stored_credential(endpoint.as_deref(), allow_insecure_http)?
+                                .organization_id
+                        }
+                    };
+                    return ssh::connect(
+                        endpoint.as_deref(),
+                        organization,
+                        id,
+                        identity_file.as_deref(),
+                        known_hosts_file.as_deref(),
+                        &command,
+                        allow_insecure_http,
+                    )
+                    .await;
+                }
+                services::FlashCommand::SshProxy { id } => {
+                    let organization = match organization_id {
+                        Some(id) => id,
+                        None => {
+                            auth::load_stored_credential(endpoint.as_deref(), allow_insecure_http)?
+                                .organization_id
+                        }
+                    };
+                    return ssh::proxy(endpoint.as_deref(), organization, id, allow_insecure_http)
+                        .await;
+                }
+                command => command,
+            };
             let settings = service_api_settings(
                 endpoint,
                 api_key,
@@ -415,7 +456,7 @@ pub async fn execute(cli: Cli) -> Result<(), CliError> {
                 allow_insecure_http,
                 output,
             )?;
-            services::execute_flash(args, settings).await
+            services::execute_flash(FlashArgs { command }, settings).await
         }
         TopLevelCommand::Vpc(args) => {
             let settings = service_api_settings(

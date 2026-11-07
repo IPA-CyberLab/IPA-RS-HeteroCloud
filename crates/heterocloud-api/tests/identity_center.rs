@@ -122,6 +122,7 @@ async fn browser_assignments_enforce_permissions_scp_and_revocation() -> Result<
     let member_csrf = csrf_token(MEMBER, &csrf_key)?;
     let state = Arc::new(AppState {
         workload_identity: None,
+        ssh_gateway: None,
         store: store.clone(),
         config: RuntimeConfig {
             public_origin: Url::parse(ORIGIN)?,

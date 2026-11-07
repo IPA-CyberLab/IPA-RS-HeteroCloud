@@ -69,6 +69,18 @@ pub struct Config {
     )]
     pub flash_internal_endpoint: Url,
 
+    /// Shared OpenSSH host key. When omitted, Flash SSH is disabled.
+    #[arg(long, env = "HETEROCLOUD_FLASH_SSH_HOST_KEY_FILE")]
+    pub flash_ssh_host_key_file: Option<PathBuf>,
+
+    /// Optional direct TCP listener; SSH-over-HTTPS does not require it.
+    #[arg(long, env = "HETEROCLOUD_FLASH_SSH_LISTEN")]
+    pub flash_ssh_listen: Option<SocketAddr>,
+
+    /// User-visible host for the optional direct SSH entry point.
+    #[arg(long, env = "HETEROCLOUD_FLASH_SSH_ADVERTISED_HOST")]
+    pub flash_ssh_advertised_host: Option<String>,
+
     #[arg(long, env = "HETEROCLOUD_VPC_ENDPOINT")]
     pub vpc_endpoint: Option<Url>,
 

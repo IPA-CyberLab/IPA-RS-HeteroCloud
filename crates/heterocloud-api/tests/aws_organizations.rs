@@ -122,6 +122,7 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
     let csrf = csrf_token(TOKEN, &csrf_key)?;
     let state = Arc::new(AppState {
         workload_identity: None,
+        ssh_gateway: None,
         store: store.clone(),
         config: RuntimeConfig {
             public_origin: Url::parse(ORIGIN)?,

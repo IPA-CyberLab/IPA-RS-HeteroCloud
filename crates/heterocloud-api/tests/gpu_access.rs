@@ -229,6 +229,7 @@ async fn test_state()
     let owner_origin = Url::parse(OWNER_ORIGIN)?;
     let state = Arc::new(AppState {
         workload_identity: None,
+        ssh_gateway: None,
         store: store.clone(),
         config: RuntimeConfig {
             public_origin: owner_origin.clone(),

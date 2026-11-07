@@ -1,7 +1,7 @@
 use std::process::ExitCode;
 
 use clap::Parser;
-use heterocloud_cli::{Cli, TopLevelCommand, execute, update};
+use heterocloud_cli::{Cli, CliError, TopLevelCommand, execute, update};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -10,6 +10,7 @@ async fn main() -> ExitCode {
         .then(|| tokio::spawn(update::available_update_notice()));
     let result = match execute(cli).await {
         Ok(()) => ExitCode::SUCCESS,
+        Err(CliError::SshExit(code)) => ExitCode::from(code),
         Err(error) => {
             eprintln!("error: {error}");
             ExitCode::FAILURE

@@ -52,6 +52,23 @@ flashExec:
   audience: heterocloud-flash
   providerKeyId: heterocloud-provider-1
 
+flashSsh:
+  enabled: false
+  hostKeySecretName: ""
+  hostKeySecretKey: host-key
+  # Optional direct TCP entry. HTTPS tunneling requires no additional port.
+  tcp:
+    enabled: false
+    port: 2222
+    serviceType: ClusterIP
+    nodePort: null
+    externalIPs: []
+    overlayDnsName: ""
+    advertisedHost: ""
+  githubImportCidrs:
+    - 0.0.0.0/0
+    - ::/0
+
 syouyu:
   internalEndpoint: http://heterocloud-syouyu-api.heterocloud-syouyu.svc.cluster.local:8080/
   accessIssuer: heterocloud

@@ -777,6 +777,22 @@ export interface SyouyuUsage {
   credential_count: number;
 }
 
+export interface FlashSshKey {
+  id: string;
+  organization_id: string;
+  user_id: string;
+  name: string;
+  public_key: string;
+  fingerprint: string;
+  github_username: string | null;
+  created_at: string;
+}
+
+export interface FlashSshKeyPreview {
+  public_key: string;
+  fingerprint: string;
+}
+
 export interface FlashContainer {
   name: string;
   phase: string;

@@ -1,0 +1,28 @@
+{{- if and .Values.flashSsh.enabled .Values.flashSsh.tcp.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "heterocloud.fullname" . }}-flash-ssh
+  {{- if .Values.flashSsh.tcp.overlayDnsName }}
+  annotations:
+    networking.heteronetwork.io/overlay-dns-name: {{ .Values.flashSsh.tcp.overlayDnsName | quote }}
+  {{- end }}
+  labels:
+    {{- include "heterocloud.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.flashSsh.tcp.serviceType }}
+  {{- with .Values.flashSsh.tcp.externalIPs }}
+  externalIPs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    {{- include "heterocloud.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: ssh
+      port: {{ .Values.flashSsh.tcp.port }}
+      targetPort: {{ .Values.flashSsh.tcp.port }}
+      protocol: TCP
+      {{- if .Values.flashSsh.tcp.nodePort }}
+      nodePort: {{ .Values.flashSsh.tcp.nodePort }}
+      {{- end }}
+{{- end }}

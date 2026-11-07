@@ -16,7 +16,21 @@ spec:
     - ports:
         - port: 8443
           protocol: TCP
+        {{- if and .Values.flashSsh.enabled .Values.flashSsh.tcp.enabled }}
+        - port: {{ .Values.flashSsh.tcp.port }}
+          protocol: TCP
+        {{- end }}
   egress:
+    {{- if .Values.flashSsh.enabled }}
+    - to:
+        {{- range .Values.flashSsh.githubImportCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - port: 443
+          protocol: TCP
+    {{- end }}
     {{- if .Values.workloadIdentity.enabled }}
     - to:
         {{- range (required "workloadIdentity.apiCidrs is required when workload identity is enabled" .Values.workloadIdentity.apiCidrs) }}

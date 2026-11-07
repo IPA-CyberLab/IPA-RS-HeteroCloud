@@ -117,8 +117,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         heterocloud_api::workload_identity::WorkloadIdentity::from_environment()
             .await?
             .map(Arc::new);
+    let mut ssh_gateway = config
+        .flash_ssh_host_key_file
+        .as_deref()
+        .map(heterocloud_api::routes::FlashSshGateway::from_file)
+        .transpose()?;
+    if let Some(host) = config.flash_ssh_advertised_host.as_deref() {
+        let listen = config
+            .flash_ssh_listen
+            .ok_or("An advertised Flash SSH host requires a TCP listener")?;
+        ssh_gateway
+            .as_mut()
+            .ok_or("An advertised Flash SSH host requires a host key")?
+            .set_advertised_tcp(host, listen.port())?;
+    }
+    let ssh_gateway = ssh_gateway.map(Arc::new);
+    if config.flash_ssh_listen.is_some() && ssh_gateway.is_none() {
+        return Err("Flash SSH listener requires a host key".into());
+    }
     let state = Arc::new(AppState {
         workload_identity,
+        ssh_gateway,
         store,
         config: runtime,
         flow_client: provider_client,
@@ -128,6 +147,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         registry,
         registration_limiter: Arc::new(Semaphore::new(4)),
     });
+    if let Some(listen) = config.flash_ssh_listen {
+        let listener = TcpListener::bind(listen).await?;
+        heterocloud_api::routes::FlashSshGateway::spawn_listener(Arc::clone(&state), listener);
+        info!(%listen, "Flash SSH TCP listener is ready");
+    }
     let _metrics_collector = spawn_realtime_metrics_collector(Arc::clone(&state));
     let _domain_reconciler = heterocloud_api::flash_domains::spawn_reconciler(Arc::clone(&state));
     let _backup_reconciler = heterocloud_api::flash_backups::spawn_reconciler(Arc::clone(&state));

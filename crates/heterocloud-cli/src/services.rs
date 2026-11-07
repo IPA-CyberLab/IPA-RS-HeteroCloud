@@ -43,6 +43,23 @@ pub struct FlashArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum FlashCommand {
+    /// Open an SSH session to a Flash service using an assigned public key.
+    Ssh {
+        #[arg(value_name = "SERVICE_ID")]
+        id: Uuid,
+        /// Path to the local SSH private key.
+        #[arg(short = 'i', long)]
+        identity_file: Option<PathBuf>,
+        /// Use a specific OpenSSH known-hosts file for host-key verification.
+        #[arg(long)]
+        known_hosts_file: Option<PathBuf>,
+        /// Command to run instead of an interactive shell.
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
+    /// Internal SSH ProxyCommand transport over HTTPS.
+    #[command(hide = true)]
+    SshProxy { id: Uuid },
     /// List service containers or read a container's recent workload logs.
     Logs {
         #[arg(value_name = "SERVICE_ID")]
@@ -840,6 +857,11 @@ pub(crate) async fn execute(
 
 pub(crate) async fn execute_flash(args: FlashArgs, settings: ApiSettings) -> Result<(), CliError> {
     let (id, stopped, no_wait) = match args.command {
+        FlashCommand::Ssh { .. } | FlashCommand::SshProxy { .. } => {
+            return Err(CliError::Authentication(
+                "SSH command dispatch failed".into(),
+            ));
+        }
         FlashCommand::Logs { id, pod, previous } => {
             let client = ApiClient::new(settings)?;
             let mut url = client

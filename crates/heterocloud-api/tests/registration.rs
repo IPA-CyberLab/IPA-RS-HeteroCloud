@@ -780,6 +780,7 @@ async fn test_state() -> Result<Option<(Store, Arc<AppState>)>, Box<dyn Error>> 
     let public_origin = Url::parse(PUBLIC_ORIGIN)?;
     let state = Arc::new(AppState {
         workload_identity: None,
+        ssh_gateway: None,
         store: store.clone(),
         config: RuntimeConfig {
             public_origin,

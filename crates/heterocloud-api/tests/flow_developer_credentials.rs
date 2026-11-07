@@ -443,6 +443,7 @@ async fn test_state() -> Result<
     let csrf = csrf_token(SESSION_TOKEN, &csrf_key)?;
     let state = Arc::new(AppState {
         workload_identity: None,
+        ssh_gateway: None,
         store: store.clone(),
         config: RuntimeConfig {
             public_origin: Url::parse(PUBLIC_ORIGIN)?,

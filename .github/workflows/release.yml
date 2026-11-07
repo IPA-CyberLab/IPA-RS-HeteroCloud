@@ -104,6 +104,9 @@ jobs:
             cargo test --locked -p heterocloud-api --test flash_lifecycle
           HETEROCLOUD_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
             cargo test --locked -p heterocloud-api --test flash_domains
+          cargo build --locked -p heterocloud-cli --bin heterocloud
+          HETEROCLOUD_TEST_DATABASE_URL="$TEST_DATABASE_URL" HETEROCLOUD_TEST_CLI="$GITHUB_WORKSPACE/target/debug/heterocloud" \
+            cargo test --locked -p heterocloud-api --test flash_ssh
           HETEROCLOUD_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
             cargo test --locked -p heterocloud-api --test workload_identity
           HETEROCLOUD_STORE_TEST_DATABASE_URL="$TEST_DATABASE_URL" \

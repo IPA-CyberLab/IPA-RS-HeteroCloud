@@ -6,6 +6,10 @@ mod backup_routes;
 mod identity_center_routes;
 #[path = "flash_operation_routes.rs"]
 mod operation_routes;
+#[path = "flash_ssh_gateway.rs"]
+mod ssh_gateway;
+#[path = "flash_ssh_routes.rs"]
+mod ssh_routes;
 use identity_center_routes::{
     add_identity_center_group_user, create_identity_center_assignment,
     create_identity_center_group, create_identity_center_permission_set,
@@ -15,6 +19,7 @@ use identity_center_routes::{
     remove_identity_center_group_user, revoke_identity_center_assignment,
     start_identity_center_session, update_identity_center_permission_set,
 };
+pub use ssh_gateway::FlashSshGateway;
 use std::{
     collections::{BTreeSet, HashMap},
     convert::Infallible,
@@ -125,6 +130,7 @@ pub struct AppState {
     pub registry: Option<Arc<RegistryClient>>,
     pub registration_limiter: Arc<Semaphore>,
     pub workload_identity: Option<Arc<crate::workload_identity::WorkloadIdentity>>,
+    pub ssh_gateway: Option<Arc<FlashSshGateway>>,
 }
 
 pub fn api_router(state: Arc<AppState>) -> Router {
@@ -346,6 +352,34 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route(
             "/organizations/{organization_id}/flash/services/{service_instance_id}/exec",
             get(exec_flash_container),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/ssh-keys",
+            get(ssh_routes::list_keys).post(ssh_routes::create_key),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/ssh-info",
+            get(ssh_routes::gateway_info),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/ssh-keys/github-preview",
+            post(ssh_routes::github_preview),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/ssh-keys/{key_id}",
+            axum::routing::delete(ssh_routes::delete_key),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/services/{service_instance_id}/ssh-keys",
+            get(ssh_routes::service_keys),
+        )
+        .route(
+            "/organizations/{organization_id}/flash/services/{service_instance_id}/ssh-keys/{key_id}",
+            axum::routing::put(ssh_routes::attach_service_key).delete(ssh_routes::detach_service_key),
+        )
+        .route(
+            "/flash-ssh/{organization_id}/{service_instance_id}",
+            get(ssh_gateway::websocket),
         )
         .route(
             "/organizations/{organization_id}/syouyu/buckets",

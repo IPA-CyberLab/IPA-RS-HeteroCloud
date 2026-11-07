@@ -441,14 +441,48 @@ impl FlashProviderProxy {
         context: FlashProviderContext,
         pod: &str,
     ) -> Result<ProviderWebSocket, FlashProviderError> {
+        self.connect_exec_path(context, pod, "exec", None).await
+    }
+
+    pub async fn connect_ssh_exec(
+        &self,
+        context: FlashProviderContext,
+        pod: &str,
+    ) -> Result<ProviderWebSocket, FlashProviderError> {
+        self.connect_exec_path(context, pod, "ssh-exec", None).await
+    }
+
+    pub async fn connect_ssh_forward(
+        &self,
+        context: FlashProviderContext,
+        pod: &str,
+        port: u16,
+    ) -> Result<ProviderWebSocket, FlashProviderError> {
+        self.connect_exec_path(context, pod, "ssh-forward", Some(port))
+            .await
+    }
+
+    async fn connect_exec_path(
+        &self,
+        context: FlashProviderContext,
+        pod: &str,
+        path: &str,
+        port: Option<u16>,
+    ) -> Result<ProviderWebSocket, FlashProviderError> {
         let signed = self.sign(&context, EXEC_ACTION)?;
         let mut url = self.endpoint.join(&format!(
-            "internal/v1/service-instances/{}/exec",
+            "internal/v1/service-instances/{}/{path}",
             context.service_instance_id
         ))?;
-        url.query_pairs_mut()
-            .append_pair("generation", &context.generation.to_string())
-            .append_pair("pod", pod);
+        {
+            let mut query = url.query_pairs_mut();
+            query
+                .append_pair("generation", &context.generation.to_string())
+                .append_pair("pod", pod);
+            if let Some(port) = port {
+                query.append_pair("port", &port.to_string());
+            }
+        }
         let websocket_scheme = match url.scheme() {
             "http" => "ws",
             "https" => "wss",

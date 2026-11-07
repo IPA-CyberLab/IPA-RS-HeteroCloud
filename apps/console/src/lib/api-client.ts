@@ -705,6 +705,22 @@ export class HeteroCloudApiClient {
   };
 
   readonly flash = {
+    sshKeys: {
+      info: (org: string, signal?: AbortSignal) =>
+        this.request<{enabled: boolean; host_key_fingerprint: string | null; tcp: {host: string; port: number} | null}>(organizationPath(org, "flash/ssh-info"), {signal}),
+      list: (org: string, signal?: AbortSignal) =>
+        this.request<CollectionResponse<import("./api-types").FlashSshKey>>(organizationPath(org, "flash/ssh-keys"), { signal }),
+      create: (org: string, input: {name: string; public_key: string; github_username?: string}) =>
+        this.request<import("./api-types").FlashSshKey>(organizationPath(org, "flash/ssh-keys"), {method: "POST", body: input}),
+      previewGithub: (org: string, username: string) =>
+        this.request<{username: string; items: import("./api-types").FlashSshKeyPreview[]}>(organizationPath(org, "flash/ssh-keys/github-preview"), {method: "POST", body: {username}}),
+      delete: (org: string, id: string) =>
+        this.request<void>(organizationPath(org, `flash/ssh-keys/${encodeURIComponent(id)}`), {method: "DELETE"}),
+      forService: (org: string, service: string, signal?: AbortSignal) =>
+        this.request<{key_ids: string[]}>(organizationPath(org, `flash/services/${encodeURIComponent(service)}/ssh-keys`), {signal}),
+      setForService: (org: string, service: string, key: string, enabled: boolean) =>
+        this.request<{key_ids: string[]}>(organizationPath(org, `flash/services/${encodeURIComponent(service)}/ssh-keys/${encodeURIComponent(key)}`), {method: enabled ? "PUT" : "DELETE"}),
+    },
     operations: {
       alerts: (org:string, signal?:AbortSignal) => this.request<CollectionResponse<import("./api-types").FlashEvent>>(organizationPath(org,"flash/events"),{signal}),
       ownerAlerts: (signal?:AbortSignal) => this.request<CollectionResponse<import("./api-types").FlashEvent>>("/owner/flash/events",{signal}),

@@ -115,6 +115,7 @@ async fn custom_domains_enforce_iam_csrf_scope_and_leave_workload_generation_unc
     let origin = Url::parse("http://cloud.example.test")?;
     let state = Arc::new(AppState {
         workload_identity: None,
+        ssh_gateway: None,
         store: store.clone(),
         config: RuntimeConfig {
             public_origin: origin,

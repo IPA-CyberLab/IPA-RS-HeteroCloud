@@ -170,6 +170,7 @@ async fn backups_enforce_tenant_iam_csrf_and_restore_only_into_a_new_stopped_ser
     let origin = Url::parse("http://cloud.example.test")?;
     let state = Arc::new(AppState {
         workload_identity: None,
+        ssh_gateway: None,
         store: store.clone(),
         config: RuntimeConfig {
             public_origin: origin,
