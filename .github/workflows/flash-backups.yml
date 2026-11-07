@@ -30,6 +30,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo test --locked -p heterocloud-api --lib
+      - run: cargo test --locked -p heterocloud-cli --lib
       - run: cargo test --locked -p heterocloud-api --test flash_backups
         env:
           HETEROCLOUD_TEST_DATABASE_URL: postgres://heterocloud:test-only@127.0.0.1:5432/heterocloud_test_backups

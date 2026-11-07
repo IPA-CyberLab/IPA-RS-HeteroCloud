@@ -156,6 +156,9 @@ latest 500 lines, at most 256 KiB, and `previous=true` selects the previously
 terminated container. Responses disable caching. These are live Kubernetes
 logs: they can disappear when a pod is removed or its logs rotate; they are
 not a durable log archive, a monitoring service, or an alerting system.
+With the CLI, `heterocloud flash logs SERVICE_ID` lists containers, then
+`heterocloud flash logs SERVICE_ID --pod POD_NAME` reads one. Add `--previous`
+to request the previous terminated container.
 
 ## Weekly Runtime Quotas and Usage
 

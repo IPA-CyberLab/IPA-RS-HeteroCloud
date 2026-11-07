@@ -43,6 +43,17 @@ pub struct FlashArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum FlashCommand {
+    /// List service containers or read a container's recent workload logs.
+    Logs {
+        #[arg(value_name = "SERVICE_ID")]
+        id: Uuid,
+        /// Container name from an earlier logs request without --pod.
+        #[arg(long)]
+        pod: Option<String>,
+        /// Read the previous terminated container, if available.
+        #[arg(long, requires = "pod")]
+        previous: bool,
+    },
     /// List immutable deployment history (without historical environment values).
     Revisions { id: Uuid },
     /// Show resource, startup, capacity and recovery notifications.
@@ -829,6 +840,25 @@ pub(crate) async fn execute(
 
 pub(crate) async fn execute_flash(args: FlashArgs, settings: ApiSettings) -> Result<(), CliError> {
     let (id, stopped, no_wait) = match args.command {
+        FlashCommand::Logs { id, pod, previous } => {
+            let client = ApiClient::new(settings)?;
+            let mut url = client
+                .endpoint
+                .join(&format!(
+                    "{}/{id}/logs",
+                    ServiceKind::Flash.collection_path(client.organization_id)
+                ))
+                .map_err(|error| CliError::InvalidApiEndpoint(error.to_string()))?;
+            if let Some(pod) = pod.as_deref() {
+                url.query_pairs_mut().append_pair("pod", pod);
+            }
+            if previous {
+                url.query_pairs_mut().append_pair("previous", "true");
+            }
+            let value: Value = client.send_json(Method::GET, url, None::<&Value>).await?;
+            println!("{}", serde_json::to_string_pretty(&value)?);
+            return Ok(());
+        }
         FlashCommand::Revisions { id } | FlashCommand::Events { id } => {
             let suffix = if matches!(args.command, FlashCommand::Revisions { .. }) {
                 "revisions"
@@ -1818,6 +1848,29 @@ mod tests {
         assert!(crate::Cli::try_parse_from(["heterocloud", "flash", "list"]).is_ok());
     }
 
+    #[test]
+    fn flash_logs_require_a_pod_for_the_previous_container() {
+        use clap::Parser;
+        let id = "00000000-0000-0000-0000-000000000007";
+        assert!(crate::Cli::try_parse_from(["heterocloud", "flash", "logs", id]).is_ok());
+        assert!(
+            crate::Cli::try_parse_from([
+                "heterocloud",
+                "flash",
+                "logs",
+                id,
+                "--pod",
+                "pod-a",
+                "--previous"
+            ])
+            .is_ok()
+        );
+        assert!(
+            crate::Cli::try_parse_from(["heterocloud", "flash", "logs", id, "--previous"]).is_err()
+        );
+        assert!(crate::Cli::try_parse_from(["heterocloud", "flow", "logs", id]).is_err());
+    }
+
     fn settings(endpoint: &str, allow_insecure_http: bool) -> ApiSettings {
         ApiSettings {
             endpoint: endpoint.into(),
@@ -1931,6 +1984,49 @@ mod tests {
         assert!(request.starts_with(&format!(
             "GET /api/v1/organizations/00000000-0000-0000-0000-000000000000/realtime/services?project_id={project_id} HTTP/1.1"
         )));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer hc_0123456789_secret\r\n")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn flash_logs_request_is_scoped_and_encodes_the_selected_pod()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let server = thread::spawn(move || -> io::Result<String> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+            let mut buffer = vec![0_u8; 16 * 1024];
+            let length = stream.read(&mut buffer)?;
+            let request = String::from_utf8_lossy(&buffer[..length]).into_owned();
+            let body =
+                r#"{"items":[],"pod":"pod-a","previous":true,"text":"test","truncated":false}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )?;
+            Ok(request)
+        });
+        let id = Uuid::from_u128(7);
+        execute_flash(
+            FlashArgs {
+                command: FlashCommand::Logs {
+                    id,
+                    pod: Some("pod-a".into()),
+                    previous: true,
+                },
+            },
+            settings(&format!("http://{address}"), true),
+        )
+        .await?;
+        let request = server.join().map_err(|_| "mock server panicked")??;
+        assert!(request.starts_with(&format!("GET /api/v1/organizations/{}/flash/services/{id}/logs?pod=pod-a&previous=true HTTP/1.1", Uuid::nil())));
         assert!(
             request
                 .to_ascii_lowercase()
