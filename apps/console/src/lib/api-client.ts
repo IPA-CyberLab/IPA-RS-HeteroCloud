@@ -357,6 +357,10 @@ export class HeteroCloudApiClient {
       this.request<OwnerFlashCostManagement>("/owner/cost-management", {
         signal,
       }),
+    flashRateCards: {
+      list: (signal?: AbortSignal) => this.request<CollectionResponse<import("./api-types").FlashRateCard>>("/owner/flash/rate-cards", { signal }),
+      schedule: (input: import("./api-types").FlashRateCardInput) => this.request<import("./api-types").FlashRateCard>("/owner/flash/rate-cards", { method: "PUT", body: input }),
+    },
     gpus: {
       list: (signal?: AbortSignal) =>
         this.request<CollectionResponse<OwnerGpu>>("/owner/gpus", { signal }),
@@ -762,6 +766,12 @@ export class HeteroCloudApiClient {
         organizationPath(organizationId, "flash/usage"),
         { signal },
       ),
+    weeklyBudget: {
+      set: (organizationId: string, input: import("./api-types").FlashWeeklyBudgetInput) =>
+        this.request<import("./api-types").FlashWeeklyBudget>(organizationPath(organizationId, "flash/weekly-budget"), { method: "PUT", body: input }),
+      remove: (organizationId: string) =>
+        this.request<void>(organizationPath(organizationId, "flash/weekly-budget"), { method: "DELETE" }),
+    },
     services: {
       list: (organizationId: string, signal?: AbortSignal) =>
         this.request<CollectionResponse<FlashService>>(

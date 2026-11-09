@@ -59,11 +59,11 @@ use heterocloud_iam::{
 use heterocloud_store::{
     AuditEvent, AuthorizationContext, CliAccessTokenPrincipal, CliDeviceApprovalOutcome,
     CliDeviceExchangeOutcome, DeveloperCredentialMint, DeveloperCredentialMintOutcome,
-    FlowDeveloperCredentialRecord, GpuVisibility, MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE,
-    MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE, MAX_REALTIME_METRIC_HISTORY_SAMPLES,
-    MAX_USER_LOGIN_EVENTS_PER_USER, NewFlowAccessContext, NewFlowDeveloperCredential,
-    NewIamRoleSession, OidcUser, RealtimeMetricCollectionTarget, RegisterWithInvitation,
-    SessionUser, Store,
+    FlashRateCard, FlashWeeklyBudget, FlowDeveloperCredentialRecord, GpuVisibility,
+    MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE, MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE,
+    MAX_REALTIME_METRIC_HISTORY_SAMPLES, MAX_USER_LOGIN_EVENTS_PER_USER, NewFlashRateCard,
+    NewFlashWeeklyBudget, NewFlowAccessContext, NewFlowDeveloperCredential, NewIamRoleSession,
+    OidcUser, RealtimeMetricCollectionTarget, RegisterWithInvitation, SessionUser, Store,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -161,6 +161,7 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route("/auth/cli/logout", post(cli_logout))
         .route("/owner/quotas", get(owner_quota_overview))
         .route("/owner/cost-management", get(owner_cost_management))
+        .route("/owner/flash/rate-cards", get(owner_flash_rate_cards).put(schedule_owner_flash_rate_card))
         .route("/owner/flash/events",get(operation_routes::owner_events))
         .route("/owner/accounts", get(list_owner_accounts))
         .route("/owner/gpus", get(list_owner_gpus))
@@ -198,6 +199,7 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route("/organizations/{organization_id}/organization/policies", get(list_service_control_policies).post(create_service_control_policy))
         .route("/organizations/{organization_id}/organization/policies/{policy_id}/targets/{target_type}/{target_id}", axum::routing::put(attach_service_control_policy).delete(detach_service_control_policy))
         .route("/organizations/{organization_id}/quotas", get(organization_quotas))
+        .route("/organizations/{organization_id}/flash/weekly-budget", axum::routing::put(set_flash_weekly_budget).delete(delete_flash_weekly_budget))
         .route("/organizations/{organization_id}/quota-unassigned", get(unassigned_quota_resources))
         .route(
             "/organizations/{organization_id}/quota-unassigned/{kind}/{resource_id}",
@@ -559,6 +561,7 @@ struct FlashCostManagement {
     usage: FlashRuntimeUsage,
     current: FlashCurrentAllocation,
     services: Vec<FlashUsageItem>,
+    estimate: FlashEstimate,
 }
 
 #[derive(Debug, Serialize)]
@@ -568,6 +571,161 @@ struct OwnerFlashCostTenant {
     usage: FlashRuntimeUsage,
     current: FlashCurrentAllocation,
     services: Vec<FlashUsageItem>,
+    estimate: FlashEstimate,
+}
+
+/// An estimate is based only on the current week's metered Flash allocations.
+/// It deliberately does not claim to be an invoice or a complete cloud bill.
+#[derive(Debug, Serialize)]
+struct FlashEstimate {
+    rate_card: Option<FlashRateCard>,
+    budget: Option<FlashWeeklyBudget>,
+    amount_microunits: Option<u64>,
+    warning_reached: Option<bool>,
+}
+
+fn estimate_flash_cost(usage: &FlashRuntimeUsage, rate: &FlashRateCard) -> Option<u64> {
+    // Use a common denominator and round once, avoiding floating point and
+    // discrepancies caused by rounding each resource separately.
+    const DENOMINATOR: u128 = 460_800_000;
+    let cpu = u128::from(usage.cpu_millicore_seconds)
+        .checked_mul(u128::try_from(rate.cpu_microunits_per_vcpu_hour).ok()?)?
+        .checked_mul(128)?;
+    let memory = u128::from(usage.memory_mib_seconds)
+        .checked_mul(u128::try_from(rate.memory_microunits_per_gib_hour).ok()?)?
+        .checked_mul(125)?;
+    let gpu = u128::from(usage.gpu_seconds)
+        .checked_mul(u128::try_from(rate.gpu_microunits_per_gpu_hour).ok()?)?
+        .checked_mul(128_000)?;
+    let amount = cpu
+        .checked_add(memory)?
+        .checked_add(gpu)?
+        .checked_add(DENOMINATOR / 2)?
+        / DENOMINATOR;
+    // JSON clients commonly use IEEE-754 numbers. Return unknown rather than
+    // silently losing monetary precision beyond the safe integer range.
+    (amount <= 9_007_199_254_740_991).then(|| amount as u64)
+}
+
+fn flash_estimate(
+    usage: &FlashRuntimeUsage,
+    rate_card: Option<FlashRateCard>,
+    budget: Option<FlashWeeklyBudget>,
+) -> FlashEstimate {
+    let amount_microunits = rate_card
+        .as_ref()
+        .and_then(|rate| estimate_flash_cost(usage, rate));
+    let warning_reached = rate_card
+        .as_ref()
+        .zip(budget.as_ref())
+        .and_then(|(rate, limit)| {
+            if rate.currency != limit.currency {
+                return None;
+            }
+            let amount = amount_microunits?;
+            let budget = u128::try_from(limit.amount_microunits).ok()?;
+            let threshold = u128::try_from(limit.warning_percentage).ok()?;
+            Some(u128::from(amount) * 100 >= budget * threshold)
+        });
+    FlashEstimate {
+        rate_card,
+        budget,
+        amount_microunits,
+        warning_reached,
+    }
+}
+
+fn utc_week_start(epoch: i64) -> i64 {
+    (epoch - 345_600).div_euclid(604_800) * 604_800 + 345_600
+}
+
+async fn owner_flash_rate_cards(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &jar, peer, false).await?;
+    let items = state
+        .store
+        .flash_rate_cards()
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(json!({"items": items})))
+}
+
+async fn schedule_owner_flash_rate_card(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    PeerAddress(peer): PeerAddress,
+    Json(input): Json<NewFlashRateCard>,
+) -> Result<Json<FlashRateCard>, ApiError> {
+    let owner = require_owner(&state, &headers, &jar, peer, true).await?;
+    let next_week = utc_week_start(Utc::now().timestamp()) + 604_800;
+    let rate = state
+        .store
+        .schedule_flash_rate_card(&input, owner.user.user.id, next_week)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(rate))
+}
+
+async fn flash_budget_administrator(
+    state: &AppState,
+    actor: &AuthenticatedActor,
+    org: OrganizationId,
+) -> Result<(), ApiError> {
+    let (_, context) = quota_human_context(state, actor, org).await?;
+    let identity_center = matches!(actor, AuthenticatedActor::RoleSession { session, .. } if session.identity_center_user_id.is_some());
+    if !identity_center && !matches!(context.role.as_str(), "owner" | "admin") {
+        return Err(ApiError::Forbidden);
+    }
+    authorize_actor(
+        state,
+        actor,
+        org,
+        "billing:ManageBudget",
+        &organization_resource(org.0, "billing/flash-weekly-budget"),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn set_flash_weekly_budget(
+    State(state): State<Arc<AppState>>,
+    Path(org): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(input): Json<NewFlashWeeklyBudget>,
+) -> Result<Json<FlashWeeklyBudget>, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let org = OrganizationId(org);
+    flash_budget_administrator(&state, &actor, org).await?;
+    Ok(Json(
+        state
+            .store
+            .set_flash_weekly_budget(org, &input)
+            .await
+            .map_err(ApiError::from_store)?,
+    ))
+}
+
+async fn delete_flash_weekly_budget(
+    State(state): State<Arc<AppState>>,
+    Path(org): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<StatusCode, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let org = OrganizationId(org);
+    flash_budget_administrator(&state, &actor, org).await?;
+    state
+        .store
+        .delete_flash_weekly_budget(org)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn provider_flash_usage(
@@ -601,6 +759,26 @@ async fn owner_cost_management(
         provider_flash_usage(&state)
     )?;
     let (usage, current) = summarize_flash_usage(&snapshot.items);
+    let (rate, budgets) = tokio::try_join!(
+        async {
+            state
+                .store
+                .flash_rate_for_week(snapshot.week_started_at)
+                .await
+                .map_err(ApiError::from_store)
+        },
+        async {
+            state
+                .store
+                .all_flash_weekly_budgets()
+                .await
+                .map_err(ApiError::from_store)
+        },
+    )?;
+    let mut budgets_by_organization = budgets
+        .into_iter()
+        .map(|budget| (budget.organization_id, budget))
+        .collect::<HashMap<_, _>>();
     let mut usage_by_organization = HashMap::<OrganizationId, Vec<FlashUsageItem>>::new();
     for item in snapshot.items {
         usage_by_organization
@@ -616,6 +794,11 @@ async fn owner_cost_management(
                 .unwrap_or_default();
             let (usage, current) = summarize_flash_usage(&services);
             OwnerFlashCostTenant {
+                estimate: flash_estimate(
+                    &usage,
+                    rate.clone(),
+                    budgets_by_organization.remove(&tenant.organization.id.0),
+                ),
                 organization: tenant.organization,
                 limits: tenant.effective_limits.flash,
                 usage,
@@ -4144,6 +4327,23 @@ async fn get_flash_usage(
         .filter(|item| item.organization_id == organization_id)
         .collect::<Vec<_>>();
     let (usage, current) = summarize_flash_usage(&services);
+    let (rate, budget) = tokio::try_join!(
+        async {
+            state
+                .store
+                .flash_rate_for_week(snapshot.week_started_at)
+                .await
+                .map_err(ApiError::from_store)
+        },
+        async {
+            state
+                .store
+                .flash_weekly_budget(organization_id)
+                .await
+                .map_err(ApiError::from_store)
+        },
+    )?;
+    let estimate = flash_estimate(&usage, rate, budget);
     Ok(Json(FlashCostManagement {
         generated_at: snapshot.generated_at,
         week_started_at: snapshot.week_started_at,
@@ -4152,6 +4352,7 @@ async fn get_flash_usage(
         usage,
         current,
         services,
+        estimate,
     }))
 }
 
@@ -8008,6 +8209,61 @@ mod tests {
         assert_eq!(current.cpu_millis, 1_000);
         assert_eq!(current.memory_mib, 2_048);
         assert_eq!(current.gpus, 2);
+    }
+
+    #[test]
+    fn flash_estimate_uses_exact_units_and_keeps_missing_or_mismatched_data_unknown() {
+        let usage = FlashRuntimeUsage {
+            cpu_millicore_seconds: 3_600_000,
+            memory_mib_seconds: 3_686_400,
+            gpu_seconds: 3_600,
+        };
+        let rate = FlashRateCard {
+            effective_week_start: 345_600,
+            currency: "USD".into(),
+            cpu_microunits_per_vcpu_hour: 1_000_000,
+            memory_microunits_per_gib_hour: 2_000_000,
+            gpu_microunits_per_gpu_hour: 3_000_000,
+        };
+        assert_eq!(estimate_flash_cost(&usage, &rate), Some(6_000_000));
+        assert_eq!(utc_week_start(345_600), 345_600);
+        assert_eq!(utc_week_start(345_599), -259_200);
+        let budget = FlashWeeklyBudget {
+            organization_id: Uuid::from_u128(1),
+            currency: "USD".into(),
+            amount_microunits: 7_500_000,
+            warning_percentage: 80,
+        };
+        let estimated = flash_estimate(&usage, Some(rate.clone()), Some(budget.clone()));
+        assert_eq!(estimated.amount_microunits, Some(6_000_000));
+        assert_eq!(estimated.warning_reached, Some(true));
+        let mismatch = FlashWeeklyBudget {
+            currency: "JPY".into(),
+            ..budget
+        };
+        assert_eq!(
+            flash_estimate(&usage, Some(rate.clone()), Some(mismatch)).warning_reached,
+            None
+        );
+        assert_eq!(flash_estimate(&usage, None, None).amount_microunits, None);
+        let huge = FlashRuntimeUsage {
+            cpu_millicore_seconds: u64::MAX,
+            memory_mib_seconds: u64::MAX,
+            gpu_seconds: u64::MAX,
+        };
+        assert_eq!(estimate_flash_cost(&huge, &rate), None);
+        let half = FlashRuntimeUsage {
+            cpu_millicore_seconds: 1_800_000,
+            memory_mib_seconds: 0,
+            gpu_seconds: 0,
+        };
+        let unit_rate = FlashRateCard {
+            cpu_microunits_per_vcpu_hour: 1,
+            memory_microunits_per_gib_hour: 0,
+            gpu_microunits_per_gpu_hour: 0,
+            ..rate
+        };
+        assert_eq!(estimate_flash_cost(&half, &unit_rate), Some(1));
     }
 
     #[test]

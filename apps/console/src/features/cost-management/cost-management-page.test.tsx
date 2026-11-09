@@ -1,11 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api-client";
 import type { FlashCostManagement, OwnerFlashCostManagement } from "@/lib/api-types";
 import { CostManagementPage, OwnerCostManagementPage } from "./cost-management-page";
+import { toMicrounits } from "./flash-billing-panels";
 
 vi.mock("@/features/organizations/organization-context", () => ({
   useActiveOrganization: () => ({
@@ -74,6 +76,12 @@ const accountUsage: FlashCostManagement = {
       },
     },
   ],
+  estimate: {
+    rate_card: { effective_week_start: 345_600, currency: "USD", cpu_microunits_per_vcpu_hour: 1_000_000,
+      memory_microunits_per_gib_hour: 2_000_000, gpu_microunits_per_gpu_hour: 3_000_000 },
+    budget: { organization_id: "organization-1", currency: "USD", amount_microunits: 7_500_000, warning_percentage: 80 },
+    amount_microunits: 6_000_000, warning_reached: true,
+  },
 };
 
 function renderPage(page: ReactNode) {
@@ -90,6 +98,7 @@ function renderPage(page: ReactNode) {
 describe("cost management pages", () => {
   beforeEach(() => {
     vi.spyOn(api.flash, "usage").mockResolvedValue(accountUsage);
+    vi.spyOn(api.owner.flashRateCards, "list").mockResolvedValue({items: []});
     vi.spyOn(api.owner, "costManagement").mockResolvedValue({
       generated_at: accountUsage.generated_at,
       week_started_at: accountUsage.week_started_at,
@@ -134,5 +143,28 @@ describe("cost management pages", () => {
     expect(await screen.findByText("Example account")).toBeInTheDocument();
     expect(screen.getAllByText("1 vCPU 時間").length).toBeGreaterThan(0);
     expect(api.owner.costManagement).toHaveBeenCalledWith(expect.any(AbortSignal));
+  });
+
+  it("shows the budget warning and saves an exact decimal budget", async () => {
+    const user = userEvent.setup();
+    const save = vi.spyOn(api.flash.weeklyBudget, "set").mockResolvedValue({
+      organization_id: "organization-1", currency: "USD", amount_microunits: 12_340_001, warning_percentage: 80,
+    });
+    renderPage(<CostManagementPage />);
+    expect(await screen.findByText(/週間予算の警告率に達しました/)).toBeInTheDocument();
+    const input = screen.getByLabelText("週間予算");
+    await user.clear(input);
+    await user.type(input, "12.340001");
+    await user.click(screen.getByRole("button", {name: "予算を保存"}));
+    expect(save).toHaveBeenCalledWith("organization-1", {
+      currency: "USD", amount_microunits: 12_340_001, warning_percentage: 80,
+    });
+  });
+
+  it("converts currency amounts without rounding or accepting excess precision", () => {
+    expect(toMicrounits("12.340001")).toBe(12_340_001);
+    expect(toMicrounits("0.000001")).toBe(1);
+    expect(toMicrounits("0.0000001")).toBeNull();
+    expect(toMicrounits("-1")).toBeNull();
   });
 });

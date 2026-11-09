@@ -108,6 +108,35 @@ export interface FlashCostManagement {
   usage: FlashRuntimeUsage;
   current: FlashCurrentAllocation;
   services: FlashUsageService[];
+  estimate?: FlashEstimate;
+}
+
+export interface FlashRateCardInput {
+  currency: string;
+  cpu_microunits_per_vcpu_hour: number;
+  memory_microunits_per_gib_hour: number;
+  gpu_microunits_per_gpu_hour: number;
+}
+
+export interface FlashRateCard extends FlashRateCardInput {
+  effective_week_start: number;
+}
+
+export interface FlashWeeklyBudgetInput {
+  currency: string;
+  amount_microunits: number;
+  warning_percentage: number;
+}
+
+export interface FlashWeeklyBudget extends FlashWeeklyBudgetInput {
+  organization_id: string;
+}
+
+export interface FlashEstimate {
+  rate_card: FlashRateCard | null;
+  budget: FlashWeeklyBudget | null;
+  amount_microunits: number | null;
+  warning_reached: boolean | null;
 }
 
 export interface OwnerFlashCostTenant {
@@ -116,6 +145,7 @@ export interface OwnerFlashCostTenant {
   usage: FlashRuntimeUsage;
   current: FlashCurrentAllocation;
   services: FlashUsageService[];
+  estimate?: FlashEstimate;
 }
 
 export interface OwnerFlashCostManagement {

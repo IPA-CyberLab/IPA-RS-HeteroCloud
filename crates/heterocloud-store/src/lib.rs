@@ -1,6 +1,7 @@
 mod cloud_organizations;
 mod flash_backup_destinations;
 mod flash_backups;
+mod flash_billing;
 mod flash_operations;
 mod flash_ssh_keys;
 mod iam_groups;
@@ -27,6 +28,7 @@ mod flash_domains;
 mod workload_identity;
 pub use flash_backup_destinations::{FlashBackupDestination, NewFlashBackupDestination};
 pub use flash_backups::FlashBackup;
+pub use flash_billing::{FlashRateCard, FlashWeeklyBudget, NewFlashRateCard, NewFlashWeeklyBudget};
 pub use flash_domains::FlashDomainBinding;
 pub use flash_ssh_keys::FlashSshKey;
 pub use workload_identity::WorkloadTokenPrincipal;

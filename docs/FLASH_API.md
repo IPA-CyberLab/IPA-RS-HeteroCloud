@@ -177,7 +177,27 @@ consumed. The authenticated tenant endpoint
 current allocation, limits, and service-level history. The owner-only
 `GET /api/v1/owner/cost-management` returns the same view across every cloud
 account. Both console views label the values as vCPU-hours, GiB-hours, and
-GPU-hours; no currency rate is implied.
+GPU-hours. An operator can schedule a CPU, memory and GPU rate card in the
+owner console. Rates take effect at the start of the next UTC week, and a
+week's rate cannot be changed after that week starts. Until a rate is set,
+the currency estimate is unknown. Estimates cover only metered Flash
+allocations; they are not invoices and do not include storage, network, or
+other services.
+
+Organization administrators can set a Flash weekly budget and a warning
+threshold on the cost page, or use the CLI (amounts are in millionths of
+the currency unit):
+
+```sh
+heterocloud flash budget get
+printf '%s\n' '{"currency":"USD","amount_microunits":10000000,"warning_percentage":80}' | heterocloud flash budget set --file -
+heterocloud flash budget delete --yes
+```
+
+The warning is displayed on the cost page. It does not stop workloads,
+change quota limits, or send email. A budget in a different currency from the
+current rate is not compared. The estimate and warning are unavailable when
+the provider's usage data cannot be obtained.
 
 ## Web Publication
 

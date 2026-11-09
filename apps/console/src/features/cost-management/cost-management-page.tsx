@@ -27,6 +27,7 @@ import {
   ownerFlashCostManagementQueryOptions,
 } from "@/lib/queries";
 import { formatDateTime, formatNumber } from "@/lib/utils";
+import { FlashBudgetPanel, FlashRateCardPanel, formatMicrounits } from "./flash-billing-panels";
 
 const CPU_MILLICORE_SECONDS_PER_VCPU_HOUR = 1_000 * 60 * 60;
 const MEMORY_MIB_SECONDS_PER_GIB_HOUR = 1_024 * 60 * 60;
@@ -213,7 +214,7 @@ function serviceColumns(): ColumnDef<FlashUsageService, unknown>[] {
 
 export function CostManagementPage() {
   const queryClient = useQueryClient();
-  const { activeOrganization } = useActiveOrganization();
+  const { activeOrganization, activeRole } = useActiveOrganization();
   const organizationId = activeOrganization.organization_id;
   const usage = useQuery(flashCostManagementQueryOptions(organizationId));
 
@@ -250,6 +251,8 @@ export function CostManagementPage() {
         }
       />
       <RuntimeUsagePanel usage={data.usage} limits={data.limits} />
+      <FlashBudgetPanel key={organizationId} organizationId={organizationId} estimate={data.estimate}
+        canEdit={activeOrganization.role === "owner" || activeOrganization.role === "admin" || Boolean(activeRole)} />
       <CurrentAllocationPanel current={data.current} />
       <DataTable
         columns={serviceColumns()}
@@ -287,6 +290,17 @@ function ownerColumns(): ColumnDef<OwnerFlashCostTenant, unknown>[] {
           <Box color="text-body-secondary">{row.original.organization.slug}</Box>
         </SpaceBetween>
       ),
+    },
+    {
+      id: "estimate",
+      header: "今週の Flash 概算",
+      accessorFn: (tenant) => tenant.estimate?.amount_microunits ?? -1,
+      cell: ({row}) => {
+        const estimate = row.original.estimate;
+        return estimate?.rate_card && estimate.amount_microunits != null
+          ? formatMicrounits(estimate.rate_card.currency, estimate.amount_microunits)
+          : "取得できません";
+      },
     },
     {
       id: "cpu",
@@ -386,6 +400,7 @@ export function OwnerCostManagementPage() {
         </ColumnLayout>
       </Container>
       <CurrentAllocationPanel current={data.current} />
+      <FlashRateCardPanel />
       <DataTable
         columns={columns}
         data={data.tenants}

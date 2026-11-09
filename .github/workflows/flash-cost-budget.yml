@@ -1,0 +1,63 @@
+name: Flash cost and budget
+on:
+  push:
+    branches: [master, 'codex/flash-cost-budget-ci']
+    paths:
+      - 'crates/heterocloud-api/**'
+      - 'crates/heterocloud-cli/**'
+      - 'crates/heterocloud-store/**'
+      - 'apps/console/**'
+      - 'migrations/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/flash-cost-budget.yml'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:17.6
+        env:
+          POSTGRES_USER: heterocloud
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: heterocloud_test_budget
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U heterocloud -d heterocloud_test_budget"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.1
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo test --locked -p heterocloud-api --lib flash_estimate_uses_exact_units
+      - run: cargo test --locked -p heterocloud-cli --lib flash_budget_commands
+      - run: cargo test --locked -p heterocloud-store --test flash_billing
+        env:
+          HETEROCLOUD_STORE_TEST_DATABASE_URL: postgres://heterocloud:test-only@127.0.0.1:5432/heterocloud_test_budget
+      - run: cargo test --locked -p heterocloud-api --test flash_budget
+        env:
+          HETEROCLOUD_TEST_DATABASE_URL: postgres://heterocloud:test-only@127.0.0.1:5432/heterocloud_test_budget
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/console/package-lock.json
+      - run: npm ci
+        working-directory: apps/console
+      - run: npm test -- --run --maxWorkers=1 src/features/cost-management/cost-management-page.test.tsx
+        working-directory: apps/console
+      - run: npm run build
+        working-directory: apps/console

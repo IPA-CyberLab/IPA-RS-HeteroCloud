@@ -100,6 +100,11 @@ pub enum FlashCommand {
         #[command(subcommand)]
         command: FlashBackupDestinationCommand,
     },
+    /// View the Flash spending estimate or manage the organization's weekly budget.
+    Budget {
+        #[command(subcommand)]
+        command: FlashBudgetCommand,
+    },
     /// Manage custom hostnames without restarting the container.
     Domains {
         #[command(subcommand)]
@@ -126,6 +131,22 @@ pub enum FlashCommand {
     },
     #[command(flatten)]
     Service(ServiceCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FlashBudgetCommand {
+    /// Show this week's estimate, price and configured budget.
+    Get,
+    /// Read currency, amount_microunits and warning_percentage as JSON.
+    Set {
+        #[arg(short, long, default_value = "-", value_name = "PATH")]
+        file: String,
+    },
+    /// Remove the budget without changing usage limits.
+    Delete {
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -958,6 +979,43 @@ pub(crate) async fn execute_flash(args: FlashArgs, settings: ApiSettings) -> Res
                 .join(&path)
                 .map_err(|e| CliError::InvalidApiEndpoint(e.to_string()))?;
             let result: Value = client.send_json(method, url, body.as_ref()).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            return Ok(());
+        }
+        FlashCommand::Budget { command } => {
+            let client = ApiClient::new(settings)?;
+            let base = format!("api/v1/organizations/{}/flash", client.organization_id);
+            let (path, method, body) = match command {
+                FlashBudgetCommand::Get => (format!("{base}/usage"), Method::GET, None),
+                FlashBudgetCommand::Set { file } => (
+                    format!("{base}/weekly-budget"),
+                    Method::PUT,
+                    Some(read_manifest::<Value>(&file)?),
+                ),
+                FlashBudgetCommand::Delete { yes } => {
+                    if !yes {
+                        return Err(CliError::InvalidManifest(
+                            "budget delete requires --yes".into(),
+                        ));
+                    }
+                    (format!("{base}/weekly-budget"), Method::DELETE, None)
+                }
+            };
+            let is_usage = method == Method::GET;
+            let url = client
+                .endpoint
+                .join(&path)
+                .map_err(|error| CliError::InvalidApiEndpoint(error.to_string()))?;
+            let result = client.send_json(method, url, body.as_ref()).await?;
+            let result = if is_usage {
+                result.get("estimate").cloned().ok_or_else(|| {
+                    CliError::InvalidManifest(
+                        "The server does not expose a Flash budget estimate.".into(),
+                    )
+                })?
+            } else {
+                result
+            };
             println!("{}", serde_json::to_string_pretty(&result)?);
             return Ok(());
         }
@@ -1891,6 +1949,26 @@ mod tests {
             crate::Cli::try_parse_from(["heterocloud", "flash", "logs", id, "--previous"]).is_err()
         );
         assert!(crate::Cli::try_parse_from(["heterocloud", "flow", "logs", id]).is_err());
+    }
+
+    #[test]
+    fn flash_budget_commands_are_available_only_under_flash() {
+        use clap::Parser;
+        for arguments in [
+            vec!["heterocloud", "flash", "budget", "get"],
+            vec![
+                "heterocloud",
+                "flash",
+                "budget",
+                "set",
+                "--file",
+                "budget.json",
+            ],
+            vec!["heterocloud", "flash", "budget", "delete", "--yes"],
+        ] {
+            assert!(crate::Cli::try_parse_from(arguments).is_ok());
+        }
+        assert!(crate::Cli::try_parse_from(["heterocloud", "flow", "budget", "get"]).is_err());
     }
 
     fn settings(endpoint: &str, allow_insecure_http: bool) -> ApiSettings {
