@@ -676,18 +676,21 @@ async fn flash_budget_administrator(
     state: &AppState,
     actor: &AuthenticatedActor,
     org: OrganizationId,
+    audit: bool,
 ) -> Result<(), ApiError> {
     let (_, context) = quota_human_context(state, actor, org).await?;
     let identity_center = matches!(actor, AuthenticatedActor::RoleSession { session, .. } if session.identity_center_user_id.is_some());
     if !identity_center && !matches!(context.role.as_str(), "owner" | "admin") {
         return Err(ApiError::Forbidden);
     }
-    authorize_actor(
+    authorize_actor_impl(
         state,
         actor,
         org,
         "billing:ManageBudget",
         &organization_resource(org.0, "billing/flash-weekly-budget"),
+        false,
+        audit,
     )
     .await?;
     Ok(())
@@ -702,7 +705,7 @@ async fn set_flash_weekly_budget(
 ) -> Result<Json<FlashWeeklyBudget>, ApiError> {
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     let org = OrganizationId(org);
-    flash_budget_administrator(&state, &actor, org).await?;
+    flash_budget_administrator(&state, &actor, org, true).await?;
     Ok(Json(
         state
             .store
@@ -720,7 +723,7 @@ async fn delete_flash_weekly_budget(
 ) -> Result<StatusCode, ApiError> {
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     let org = OrganizationId(org);
-    flash_budget_administrator(&state, &actor, org).await?;
+    flash_budget_administrator(&state, &actor, org, true).await?;
     state
         .store
         .delete_flash_weekly_budget(org)
@@ -4345,12 +4348,14 @@ async fn get_flash_usage(
         },
     )?;
     let estimate = flash_estimate(&usage, rate, budget);
-    let can_manage_budget = match flash_budget_administrator(&state, &actor, organization_id).await
-    {
-        Ok(()) => true,
-        Err(ApiError::Forbidden) => false,
-        Err(error) => return Err(error),
-    };
+    // Preserve the full IAM decision without a second audit write on each
+    // periodic usage refresh. Actual budget changes are always audited.
+    let can_manage_budget =
+        match flash_budget_administrator(&state, &actor, organization_id, false).await {
+            Ok(()) => true,
+            Err(ApiError::Forbidden) => false,
+            Err(error) => return Err(error),
+        };
     Ok(Json(FlashCostManagement {
         generated_at: snapshot.generated_at,
         week_started_at: snapshot.week_started_at,
@@ -7683,6 +7688,27 @@ async fn authorize_actor_with_implicit_allow(
     resource: &str,
     implicit_allow: bool,
 ) -> Result<AuthorizationContext, ApiError> {
+    authorize_actor_impl(
+        state,
+        actor,
+        organization_id,
+        action,
+        resource,
+        implicit_allow,
+        true,
+    )
+    .await
+}
+
+async fn authorize_actor_impl(
+    state: &AppState,
+    actor: &AuthenticatedActor,
+    organization_id: OrganizationId,
+    action: &str,
+    resource: &str,
+    implicit_allow: bool,
+    audit: bool,
+) -> Result<AuthorizationContext, ApiError> {
     let (context, user_id, metadata) = match actor {
         AuthenticatedActor::User(session) => {
             let context = state
@@ -7803,29 +7829,31 @@ async fn authorize_actor_with_implicit_allow(
     )
     .map_err(|_| ApiError::Internal)?;
     let (decision, reason) = (evaluation.decision, evaluation.reason);
-    let request_id = Uuid::now_v7().to_string();
-    state
-        .store
-        .append_audit(&AuditEvent {
-            organization_id: Some(organization_id),
-            principal_id: Some(context.principal_id),
-            user_id,
-            request_id: &request_id,
-            source_ip: None,
-            action,
-            resource,
-            decision: match decision {
-                Decision::Allow => "allow",
-                Decision::Deny => "deny",
-            },
-            reason,
-            metadata: json!({
-                "semantics_digest": semantics_digest(),
-                "authentication": metadata,
-            }),
-        })
-        .await
-        .map_err(ApiError::from_store)?;
+    if audit {
+        let request_id = Uuid::now_v7().to_string();
+        state
+            .store
+            .append_audit(&AuditEvent {
+                organization_id: Some(organization_id),
+                principal_id: Some(context.principal_id),
+                user_id,
+                request_id: &request_id,
+                source_ip: None,
+                action,
+                resource,
+                decision: match decision {
+                    Decision::Allow => "allow",
+                    Decision::Deny => "deny",
+                },
+                reason,
+                metadata: json!({
+                    "semantics_digest": semantics_digest(),
+                    "authentication": metadata,
+                }),
+            })
+            .await
+            .map_err(ApiError::from_store)?;
+    }
     if decision == Decision::Deny {
         return Err(ApiError::Forbidden);
     }

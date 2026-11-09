@@ -193,6 +193,14 @@ async fn budget_mutation_requires_admin_csrf_and_iam_permission() -> Result<(), 
     let other_path = format!("/api/v1/organizations/{other_org}/flash/weekly-budget");
     assert!(can_manage_budget(state.clone(), &usage_path, OWNER).await?);
     assert!(!can_manage_budget(state.clone(), &usage_path, MEMBER).await?);
+    let discovery_audits: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_events WHERE action='billing:ManageBudget'")
+            .fetch_one(store.pool())
+            .await?;
+    assert_eq!(
+        discovery_audits, 0,
+        "capability reads must not add budget mutation audit records"
+    );
     assert_eq!(
         mutate(state.clone(), "PUT", &path, OWNER, false).await?,
         StatusCode::FORBIDDEN
@@ -243,6 +251,14 @@ async fn budget_mutation_requires_admin_csrf_and_iam_permission() -> Result<(), 
     assert_eq!(
         mutate(state.clone(), "DELETE", &path, OWNER, true).await?,
         StatusCode::NO_CONTENT
+    );
+    let mutation_audits: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_events WHERE action='billing:ManageBudget'")
+            .fetch_one(store.pool())
+            .await?;
+    assert_eq!(
+        mutation_audits, 5,
+        "allowed and IAM-denied mutations must remain audited"
     );
     assert!(store.flash_weekly_budget(org).await?.is_none());
     server.abort();
