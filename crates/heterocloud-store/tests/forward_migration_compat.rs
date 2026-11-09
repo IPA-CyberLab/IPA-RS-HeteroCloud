@@ -1,4 +1,4 @@
-use std::{env, error::Error};
+use std::{env, error::Error, time::Duration};
 
 use heterocloud_store::Store;
 
@@ -50,6 +50,11 @@ async fn staged_release_survives_additive_upgrade_but_rejects_unknown_versions()
     sqlx::query("DELETE FROM _sqlx_migrations WHERE version=37")
         .execute(store.pool())
         .await?;
+    tokio::time::timeout(Duration::from_secs(5), store.migrate()).await??;
+    let original_checksum: Vec<u8> =
+        sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version=35")
+            .fetch_one(store.pool())
+            .await?;
     sqlx::query("UPDATE _sqlx_migrations SET checksum=decode('00','hex') WHERE version=35")
         .execute(store.pool())
         .await?;
@@ -57,5 +62,10 @@ async fn staged_release_survives_additive_upgrade_but_rejects_unknown_versions()
         store.migrate().await.is_err(),
         "modified historical migrations must fail closed"
     );
+    sqlx::query("UPDATE _sqlx_migrations SET checksum=$1 WHERE version=35")
+        .bind(original_checksum)
+        .execute(store.pool())
+        .await?;
+    tokio::time::timeout(Duration::from_secs(5), store.migrate()).await??;
     Ok(())
 }

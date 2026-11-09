@@ -155,7 +155,15 @@ impl Store {
         // apply it. During the next rollout these binaries can still restart
         // and serve while newer ones use the additive tables. Raise this
         // ceiling only after all API, owner and worker replicas have upgraded.
-        MIGRATOR.run_to(35, &self.pool).await?;
+        // SQLx's migrator can return while its session advisory lock is still
+        // held (for example on a checksum mismatch). Never return that session
+        // to the pool, including if the caller is cancelled during migration.
+        let mut connection = self.pool.acquire().await?;
+        connection.close_on_drop();
+        let result = MIGRATOR.run_to(35, &mut *connection).await;
+        let closed = connection.close().await;
+        result?;
+        closed?;
         Ok(())
     }
 
