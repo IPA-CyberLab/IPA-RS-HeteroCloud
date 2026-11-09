@@ -562,6 +562,7 @@ struct FlashCostManagement {
     current: FlashCurrentAllocation,
     services: Vec<FlashUsageItem>,
     estimate: FlashEstimate,
+    can_manage_budget: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -4344,6 +4345,12 @@ async fn get_flash_usage(
         },
     )?;
     let estimate = flash_estimate(&usage, rate, budget);
+    let can_manage_budget = match flash_budget_administrator(&state, &actor, organization_id).await
+    {
+        Ok(()) => true,
+        Err(ApiError::Forbidden) => false,
+        Err(error) => return Err(error),
+    };
     Ok(Json(FlashCostManagement {
         generated_at: snapshot.generated_at,
         week_started_at: snapshot.week_started_at,
@@ -4353,6 +4360,7 @@ async fn get_flash_usage(
         current,
         services,
         estimate,
+        can_manage_budget,
     }))
 }
 

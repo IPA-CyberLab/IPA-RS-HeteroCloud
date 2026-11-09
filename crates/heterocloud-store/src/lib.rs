@@ -153,16 +153,16 @@ impl Store {
     }
 
     pub async fn migrate(&self) -> Result<(), StoreError> {
-        // Stage migration 36 in every binary before allowing any binary to
-        // apply it. During the next rollout these binaries can still restart
-        // and serve while newer ones use the additive tables. Raise this
-        // ceiling only after all API, owner and worker replicas have upgraded.
+        // Migration 36 was staged in the preceding compatibility release.
+        // Never raise this ceiling until every API, owner and worker process
+        // recognizes the new migration and its rollback compatibility has
+        // been verified in an isolated environment.
         // SQLx's migrator can return while its session advisory lock is still
         // held (for example on a checksum mismatch). Never return that session
         // to the pool, including if the caller is cancelled during migration.
         let mut connection = self.pool.acquire().await?;
         connection.close_on_drop();
-        let result = MIGRATOR.run_to(35, &mut *connection).await;
+        let result = MIGRATOR.run_to(36, &mut *connection).await;
         let closed = connection.close().await;
         result?;
         closed?;

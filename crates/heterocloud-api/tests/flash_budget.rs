@@ -1,7 +1,7 @@
 use std::{env, error::Error, sync::Arc, time::Duration};
 
 use axum::{
-    body::Body,
+    body::{Body, to_bytes},
     http::{Request, StatusCode, header},
 };
 use chrono::Utc;
@@ -56,6 +56,28 @@ async fn mutate(
         .status())
 }
 
+async fn can_manage_budget(
+    state: Arc<AppState>,
+    path: &str,
+    token: &str,
+) -> Result<bool, Box<dyn Error>> {
+    let response = app(state, None)
+        .oneshot(
+            Request::get(path)
+                .header(header::COOKIE, format!("hc_session={token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    if response.status() != StatusCode::OK {
+        return Err(format!("unexpected usage response: {}", response.status()).into());
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await?)?;
+    value["can_manage_budget"]
+        .as_bool()
+        .ok_or_else(|| "missing budget permission".into())
+}
+
 #[tokio::test]
 async fn budget_mutation_requires_admin_csrf_and_iam_permission() -> Result<(), Box<dyn Error>> {
     let Ok(url) = env::var("HETEROCLOUD_TEST_DATABASE_URL") else {
@@ -107,6 +129,32 @@ async fn budget_mutation_requires_admin_csrf_and_iam_permission() -> Result<(), 
             )
             .await?;
     }
+    let usage_policy = PolicyDocument::from_aws_json(
+        json!({"Statement":{"Effect":"Allow", "Action":"flash:ListInstances", "Resource":"*"}}),
+    )?;
+    let usage_policy = store
+        .create_policy(org, "ViewFlashUsage", &usage_policy, &semantics_digest())
+        .await?;
+    store
+        .create_binding(org, PrincipalId(principal), usage_policy.id)
+        .await?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = Url::parse(&format!("http://{}/", listener.local_addr()?))?;
+    let provider_app = axum::Router::new().route(
+        "/internal/v1/usage",
+        axum::routing::get(|| async {
+            axum::Json(json!({"generated_at":345601, "week_started_at":345600, "items":[]}))
+        }),
+    );
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, provider_app).await;
+    });
+    let signer = heterocloud_provider::ProviderSigner::from_ed25519_pem("test", "flash", "budget-test", b"-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEICKoEEWPLg2OazcyTWzBEw/mMPPXatNOUcEUWDHo2y0Y\n-----END PRIVATE KEY-----\n")?;
+    let proxy = heterocloud_api::flash_provider::FlashProviderProxy::new(
+        endpoint,
+        signer,
+        reqwest::Client::builder().no_proxy().build()?,
+    );
     let state = Arc::new(AppState {
         workload_identity: None,
         ssh_gateway: None,
@@ -134,14 +182,17 @@ async fn budget_mutation_requires_admin_csrf_and_iam_permission() -> Result<(), 
             owner_allowed_networks: vec![],
         },
         flow_client: reqwest::Client::new(),
-        flash_provider: None,
+        flash_provider: Some(Arc::new(proxy)),
         vpc_provider: None,
         syouyu_provider: None,
         registry: None,
         registration_limiter: Arc::new(Semaphore::new(2)),
     });
     let path = format!("/api/v1/organizations/{org}/flash/weekly-budget");
+    let usage_path = format!("/api/v1/organizations/{org}/flash/usage");
     let other_path = format!("/api/v1/organizations/{other_org}/flash/weekly-budget");
+    assert!(can_manage_budget(state.clone(), &usage_path, OWNER).await?);
+    assert!(!can_manage_budget(state.clone(), &usage_path, MEMBER).await?);
     assert_eq!(
         mutate(state.clone(), "PUT", &path, OWNER, false).await?,
         StatusCode::FORBIDDEN
@@ -166,6 +217,7 @@ async fn budget_mutation_requires_admin_csrf_and_iam_permission() -> Result<(), 
     .bind(member)
     .execute(store.pool())
     .await?;
+    assert!(can_manage_budget(state.clone(), &usage_path, MEMBER).await?);
     assert_eq!(
         mutate(state.clone(), "PUT", &path, MEMBER, true).await?,
         StatusCode::OK
@@ -179,6 +231,7 @@ async fn budget_mutation_requires_admin_csrf_and_iam_permission() -> Result<(), 
     store
         .create_binding(org, PrincipalId(principal), deny.id)
         .await?;
+    assert!(!can_manage_budget(state.clone(), &usage_path, MEMBER).await?);
     assert_eq!(
         mutate(state.clone(), "PUT", &path, MEMBER, true).await?,
         StatusCode::FORBIDDEN
@@ -192,5 +245,6 @@ async fn budget_mutation_requires_admin_csrf_and_iam_permission() -> Result<(), 
         StatusCode::NO_CONTENT
     );
     assert!(store.flash_weekly_budget(org).await?.is_none());
+    server.abort();
     Ok(())
 }

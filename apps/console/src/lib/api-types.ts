@@ -109,6 +109,7 @@ export interface FlashCostManagement {
   current: FlashCurrentAllocation;
   services: FlashUsageService[];
   estimate?: FlashEstimate;
+  can_manage_budget?: boolean;
 }
 
 export interface FlashRateCardInput {

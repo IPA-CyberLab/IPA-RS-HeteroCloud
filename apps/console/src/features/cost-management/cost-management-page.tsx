@@ -214,7 +214,7 @@ function serviceColumns(): ColumnDef<FlashUsageService, unknown>[] {
 
 export function CostManagementPage() {
   const queryClient = useQueryClient();
-  const { activeOrganization, activeRole } = useActiveOrganization();
+  const { activeOrganization } = useActiveOrganization();
   const organizationId = activeOrganization.organization_id;
   const usage = useQuery(flashCostManagementQueryOptions(organizationId));
 
@@ -252,7 +252,7 @@ export function CostManagementPage() {
       />
       <RuntimeUsagePanel usage={data.usage} limits={data.limits} />
       <FlashBudgetPanel key={organizationId} organizationId={organizationId} estimate={data.estimate}
-        canEdit={activeOrganization.role === "owner" || activeOrganization.role === "admin" || Boolean(activeRole)} />
+        canEdit={data.can_manage_budget === true} />
       <CurrentAllocationPanel current={data.current} />
       <DataTable
         columns={serviceColumns()}

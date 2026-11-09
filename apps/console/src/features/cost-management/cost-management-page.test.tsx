@@ -37,6 +37,7 @@ const limits = {
 };
 
 const accountUsage: FlashCostManagement = {
+  can_manage_budget: true,
   generated_at: 345_720,
   week_started_at: 345_600,
   week_ends_at: 950_400,
@@ -166,5 +167,12 @@ describe("cost management pages", () => {
     expect(toMicrounits("0.000001")).toBe(1);
     expect(toMicrounits("0.0000001")).toBeNull();
     expect(toMicrounits("-1")).toBeNull();
+  });
+
+  it("hides budget editing when the server denies permission", async () => {
+    vi.mocked(api.flash.usage).mockResolvedValue({ ...accountUsage, can_manage_budget: false });
+    renderPage(<CostManagementPage />);
+    expect(await screen.findByText(/週間予算の警告率に達しました/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", {name: "予算を保存"})).not.toBeInTheDocument();
   });
 });

@@ -4,6 +4,18 @@ use heterocloud_store::Store;
 
 static NEXT: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
+// The preceding compatibility release embeds the same sources but stops at
+// 35. Exercise it before and after the current release activates 36.
+async fn compatibility_release(store: &Store) -> Result<(), Box<dyn Error>> {
+    let mut connection = store.pool().acquire().await?;
+    connection.close_on_drop();
+    let result = NEXT.run_to(35, &mut *connection).await;
+    let closed = connection.close().await;
+    result?;
+    closed?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn staged_release_survives_additive_upgrade_but_rejects_unknown_versions()
 -> Result<(), Box<dyn Error>> {
@@ -21,7 +33,7 @@ async fn staged_release_survives_additive_upgrade_but_rejects_unknown_versions()
         .execute(store.pool())
         .await?;
 
-    store.migrate().await?;
+    compatibility_release(&store).await?;
     let applied: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=36)")
             .fetch_one(store.pool())
@@ -30,8 +42,8 @@ async fn staged_release_survives_additive_upgrade_but_rejects_unknown_versions()
         !applied,
         "the compatibility release must not activate migration 36"
     );
-    NEXT.run(store.pool()).await?;
     store.migrate().await?;
+    compatibility_release(&store).await?;
     let applied: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=36)")
             .fetch_one(store.pool())
