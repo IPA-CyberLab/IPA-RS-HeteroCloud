@@ -1,0 +1,93 @@
+name: Promote verified stable release
+on:
+  push:
+    branches: [master, codex/stable-release-promotion]
+    paths:
+      - 'scripts/validate_stable_promotion.py'
+      - 'scripts/tests/test_validate_stable_promotion.py'
+      - '.github/workflows/promote-stable-release.yml'
+  pull_request:
+    paths:
+      - 'scripts/validate_stable_promotion.py'
+      - 'scripts/tests/test_validate_stable_promotion.py'
+      - '.github/workflows/promote-stable-release.yml'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published prerelease tag with a stable version, for example v0.1.116
+        required: true
+        type: string
+      release_run_id:
+        description: Successful Release workflow run for this exact tag
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  test-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s scripts/tests -p test_validate_stable_promotion.py -v
+  promote:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'
+    needs: test-guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: heterocloud-stable-release-promotion
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag }}
+      RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+      REPOSITORY: IPA-CyberLab/IPA-RS-HeteroCloud
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify release, run, image, and every CLI checksum
+        id: evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$RELEASE_RUN_ID" =~ ^[0-9]+$ ]]
+          mkdir "$RUNNER_TEMP/assets"
+          gh api "repos/$REPOSITORY/releases/tags/$TAG" > "$RUNNER_TEMP/release.json"
+          gh api "repos/$REPOSITORY/actions/runs/$RELEASE_RUN_ID" > "$RUNNER_TEMP/run.json"
+          gh api "repos/$REPOSITORY/commits/$TAG" > "$RUNNER_TEMP/tag.json"
+          gh api "repos/$REPOSITORY/releases/latest" > "$RUNNER_TEMP/latest.json"
+          gh release download "$TAG" --repo "$REPOSITORY" --dir "$RUNNER_TEMP/assets"
+          python3 scripts/validate_stable_promotion.py --tag "$TAG" \
+            --release "$RUNNER_TEMP/release.json" --run "$RUNNER_TEMP/run.json" \
+            --tag-commit "$RUNNER_TEMP/tag.json" --latest "$RUNNER_TEMP/latest.json" \
+            --assets "$RUNNER_TEMP/assets" > "$RUNNER_TEMP/evidence.json"
+          printf 'image=%s\n' "$(jq -r .image "$RUNNER_TEMP/evidence.json")" >> "$GITHUB_OUTPUT"
+          printf 'release_id=%s\n' "$(jq -r .release_id "$RUNNER_TEMP/evidence.json")" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish and verify the exact tested image as latest
+        env:
+          IMAGE: ${{ steps.evidence.outputs.image }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create --prefer-index=false -t ghcr.io/ipa-cyberlab/ipa-rs-heterocloud:latest "$IMAGE"
+          actual=$(docker buildx imagetools inspect ghcr.io/ipa-cyberlab/ipa-rs-heterocloud:latest --format '{{json .Manifest}}' | jq -r .digest)
+          test "$actual" = "${IMAGE##*@}"
+      - name: Promote the complete release and verify latest
+        env:
+          RELEASE_ID: ${{ steps.evidence.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          gh api --method PATCH "repos/$REPOSITORY/releases/$RELEASE_ID" -F prerelease=false -f make_latest=true > /dev/null
+          test "$(gh api "repos/$REPOSITORY/releases/latest" --jq .tag_name)" = "$TAG"
