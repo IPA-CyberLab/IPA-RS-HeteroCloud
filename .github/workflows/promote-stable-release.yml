@@ -1,7 +1,7 @@
 name: Promote verified stable release
 on:
   push:
-    branches: [master, codex/stable-release-promotion]
+    branches: [master, 'codex/**']
     paths:
       - 'scripts/validate_stable_promotion.py'
       - 'scripts/tests/test_validate_stable_promotion.py'
