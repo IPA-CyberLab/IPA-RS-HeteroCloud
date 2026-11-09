@@ -39,7 +39,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.96.1
-          components: rustfmt
+          components: rustfmt,clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo test --locked -p heterocloud-api --lib flash_estimate_uses_exact_units
@@ -50,6 +50,7 @@ jobs:
       - run: cargo test --locked -p heterocloud-api --test flash_budget
         env:
           HETEROCLOUD_TEST_DATABASE_URL: postgres://heterocloud:test-only@127.0.0.1:5432/heterocloud_test_budget
+      - run: cargo clippy --locked -p heterocloud-api -p heterocloud-cli -p heterocloud-store --all-targets -- -D warnings
       - uses: actions/setup-node@v7
         with:
           node-version: 24

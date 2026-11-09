@@ -605,7 +605,9 @@ fn estimate_flash_cost(usage: &FlashRuntimeUsage, rate: &FlashRateCard) -> Optio
         / DENOMINATOR;
     // JSON clients commonly use IEEE-754 numbers. Return unknown rather than
     // silently losing monetary precision beyond the safe integer range.
-    (amount <= 9_007_199_254_740_991).then(|| amount as u64)
+    u64::try_from(amount)
+        .ok()
+        .filter(|amount| *amount <= 9_007_199_254_740_991)
 }
 
 fn flash_estimate(
