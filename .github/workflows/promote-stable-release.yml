@@ -21,6 +21,11 @@ on:
         description: Successful Release workflow run for this exact tag
         required: true
         type: string
+      dry_run:
+        description: Verify release and checksums without publishing
+        required: true
+        default: true
+        type: boolean
 permissions:
   contents: read
 jobs:
@@ -71,12 +76,15 @@ jobs:
           printf 'image=%s\n' "$(jq -r .image "$RUNNER_TEMP/evidence.json")" >> "$GITHUB_OUTPUT"
           printf 'release_id=%s\n' "$(jq -r .release_id "$RUNNER_TEMP/evidence.json")" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
+        if: ${{ !inputs.dry_run }}
       - uses: docker/login-action@v3
+        if: ${{ !inputs.dry_run }}
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish and verify the exact tested image as latest
+        if: ${{ !inputs.dry_run }}
         env:
           IMAGE: ${{ steps.evidence.outputs.image }}
         run: |
@@ -85,6 +93,7 @@ jobs:
           actual=$(docker buildx imagetools inspect ghcr.io/ipa-cyberlab/ipa-rs-heterocloud:latest --format '{{json .Manifest}}' | jq -r .digest)
           test "$actual" = "${IMAGE##*@}"
       - name: Promote the complete release and verify latest
+        if: ${{ !inputs.dry_run }}
         env:
           RELEASE_ID: ${{ steps.evidence.outputs.release_id }}
         run: |
