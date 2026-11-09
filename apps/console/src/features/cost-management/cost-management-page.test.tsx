@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api-client";
 import type { FlashCostManagement, OwnerFlashCostManagement } from "@/lib/api-types";
 import { CostManagementPage, OwnerCostManagementPage } from "./cost-management-page";
-import { toMicrounits } from "./flash-billing-panels";
+import { decimalMicrounits, toMicrounits } from "./flash-billing-panels";
 
 vi.mock("@/features/organizations/organization-context", () => ({
   useActiveOrganization: () => ({
@@ -167,6 +167,8 @@ describe("cost management pages", () => {
     expect(toMicrounits("0.000001")).toBe(1);
     expect(toMicrounits("0.0000001")).toBeNull();
     expect(toMicrounits("-1")).toBeNull();
+    expect(decimalMicrounits(8_999_999_999_999_999)).toBe("8999999999.999999");
+    expect(toMicrounits(decimalMicrounits(8_999_999_999_999_999))).toBe(8_999_999_999_999_999);
   });
 
   it("hides budget editing when the server denies permission", async () => {

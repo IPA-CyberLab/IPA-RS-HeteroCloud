@@ -22,12 +22,19 @@ export function formatMicrounits(currency: string, amount: number) {
   return `${currency} ${whole.toLocaleString("ja-JP")}${fraction ? `.${fraction}` : ""}`;
 }
 
+export function decimalMicrounits(amount: number) {
+  const value = BigInt(amount);
+  const whole = value / 1_000_000n;
+  const fraction = (value % 1_000_000n).toString().padStart(6, "0").replace(/0+$/, "");
+  return `${whole}${fraction ? `.${fraction}` : ""}`;
+}
+
 export function FlashBudgetPanel({ organizationId, estimate, canEdit }: {
   organizationId: string; estimate?: FlashEstimate; canEdit: boolean;
 }) {
   const queryClient = useQueryClient();
   const [currency, setCurrency] = useState(estimate?.budget?.currency ?? estimate?.rate_card?.currency ?? "USD");
-  const [amount, setAmount] = useState(estimate?.budget ? String(estimate.budget.amount_microunits / 1_000_000) : "");
+  const [amount, setAmount] = useState(estimate?.budget ? decimalMicrounits(estimate.budget.amount_microunits) : "");
   const [warning, setWarning] = useState(String(estimate?.budget?.warning_percentage ?? 80));
   const amountMicros = toMicrounits(amount);
   const warningNumber = Number(warning);
