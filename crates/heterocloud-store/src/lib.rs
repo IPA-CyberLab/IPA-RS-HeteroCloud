@@ -151,7 +151,11 @@ impl Store {
     }
 
     pub async fn migrate(&self) -> Result<(), StoreError> {
-        MIGRATOR.run(&self.pool).await?;
+        // Stage migration 36 in every binary before allowing any binary to
+        // apply it. During the next rollout these binaries can still restart
+        // and serve while newer ones use the additive tables. Raise this
+        // ceiling only after all API, owner and worker replicas have upgraded.
+        MIGRATOR.run_to(35, &self.pool).await?;
         Ok(())
     }
 

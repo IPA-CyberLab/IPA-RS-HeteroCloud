@@ -1,0 +1,44 @@
+name: Database migration compatibility
+on:
+  push:
+    branches: [master, 'codex/migration-compat-ci']
+    paths:
+      - 'crates/heterocloud-store/**'
+      - 'migrations/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/migration-compatibility.yml'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  staged-upgrade:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17.6
+        env:
+          POSTGRES_USER: heterocloud
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: heterocloud_test_migration
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U heterocloud -d heterocloud_test_migration"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.1
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo test --locked -p heterocloud-store --test forward_migration_compat
+        env:
+          HETEROCLOUD_STORE_TEST_DATABASE_URL: postgres://heterocloud:test-only@127.0.0.1:5432/heterocloud_test_migration
