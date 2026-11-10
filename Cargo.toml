@@ -89,3 +89,8 @@ unsafe_code = "forbid"
 expect_used = "deny"
 panic = "deny"
 unwrap_used = "deny"
+
+# Remove non-runtime symbol tables from distributed release binaries while
+# retaining symbols in debug builds used for development and tests.
+[profile.release]
+strip = "symbols"
