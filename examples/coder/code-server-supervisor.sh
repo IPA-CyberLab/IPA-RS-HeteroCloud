@@ -3,7 +3,15 @@
 set -u
 umask 077
 runtime_dir="${CODE_SERVER_RUNTIME_DIR:-/tmp/coder-code-server-$(id -u)}"
-code_server="${CODE_SERVER_BIN:-/opt/code-server/bin/code-server}"
+if [ -n "${CODE_SERVER_BIN:-}" ]; then
+  code_server="$CODE_SERVER_BIN"
+elif [ -x /opt/code-server/bin/code-server ]; then
+  code_server=/opt/code-server/bin/code-server
+elif [ -x /app/code-server/bin/code-server ]; then
+  code_server=/app/code-server/bin/code-server
+else
+  code_server="$(command -v code-server 2>/dev/null || printf '%s' /opt/code-server/bin/code-server)"
+fi
 health_url="${CODE_SERVER_HEALTH_URL:-http://127.0.0.1:13337/healthz}"
 mkdir -p "$runtime_dir" || exit 1
 exec 9>"$runtime_dir/supervisor.lock" || exit 1

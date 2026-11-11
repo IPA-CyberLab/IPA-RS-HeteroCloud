@@ -253,6 +253,6 @@ resource "coder_metadata" "workspace" {
   }
   item {
     key   = "Docker"
-    value = "CLI installed; local DinD is unavailable on Flash"
+    value = "Local Docker-in-Docker is unavailable on Flash"
   }
 }
