@@ -1099,6 +1099,44 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
     let provider_session_id = provider_session["session_id"]
         .as_str()
         .ok_or("provider session id")?;
+    // Sessions issued before the rename retain their original database value,
+    // but both bearer and browser authentication expose the current name.
+    let session_uuid = uuid::Uuid::parse_str(provider_session_id)?;
+    let legacy_source = format!("arn:aws:iam::{source_number}:user/{}", source_robot.id);
+    sqlx::query("UPDATE iam_role_sessions SET source_arn=$1 WHERE id=$2")
+        .bind(&legacy_source)
+        .bind(session_uuid)
+        .execute(store.pool())
+        .await?;
+    let (status, identity) = request(
+        state.clone(),
+        "GET",
+        "/api/v1/auth/identity",
+        None,
+        None,
+        Some(provider_role_token),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    let branded_source = format!(
+        "arn:heterocloud:iam::{source_number}:user/{}",
+        source_robot.id
+    );
+    assert_eq!(identity["source_arn"], branded_source);
+    assert_eq!(
+        store
+            .authenticate_browser_role_session(session_uuid)
+            .await?
+            .ok_or("browser role session")?
+            .source_arn,
+        branded_source
+    );
+    let stored_source: String =
+        sqlx::query_scalar("SELECT source_arn FROM iam_role_sessions WHERE id=$1")
+            .bind(session_uuid)
+            .fetch_one(store.pool())
+            .await?;
+    assert_eq!(stored_source, legacy_source);
 
     let credential_project = store
         .create_project(member_account, "provider-tests", "Provider Tests")
