@@ -1,4 +1,4 @@
-# AWS-style account and IAM model
+# HeteroCloud account and IAM model
 
 The previous `organizations` database rows remain the isolated **accounts**.
 Their UUIDs, users, IAM bindings, service ownership and quotas are unchanged.
@@ -14,7 +14,7 @@ boundary limits identity-based permissions for a user or service account. An exp
 direct or group policy also applies to an account administrator. Member-account
 SCPs are evaluated at every ancestor OU, root, and account: every level must
 allow the request, and any explicit deny wins. Each entity initially has the
-managed `FullAWSAccess` policy, and the last attachment cannot be removed. SCPs
+managed `FullHeteroCloudAccess` policy, and the last attachment cannot be removed. SCPs
 do not apply to the management account. Existing HeteroCloud quota ownership
 and per-user quota extensions remain in force per account.
 

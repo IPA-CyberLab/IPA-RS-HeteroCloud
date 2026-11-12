@@ -124,23 +124,23 @@ function CurrentAllocationPanel({ current }: { current: FlashCurrentAllocation }
     <Container header={<Header variant="h2">現在の割当</Header>}>
       <ColumnLayout columns={5} variant="text-grid">
         <div>
-          <Box variant="awsui-key-label">サービス</Box>
+          <Box variant="field-label">サービス</Box>
           <Box>{formatNumber(current.active_services)}</Box>
         </div>
         <div>
-          <Box variant="awsui-key-label">Ready レプリカ</Box>
+          <Box variant="field-label">Ready レプリカ</Box>
           <Box>{formatNumber(current.ready_replicas)}</Box>
         </div>
         <div>
-          <Box variant="awsui-key-label">CPU</Box>
+          <Box variant="field-label">CPU</Box>
           <Box>{formatDecimal(current.cpu_millis / 1_000)} vCPU</Box>
         </div>
         <div>
-          <Box variant="awsui-key-label">メモリ</Box>
+          <Box variant="field-label">メモリ</Box>
           <Box>{formatDecimal(current.memory_mib / 1_024)} GiB</Box>
         </div>
         <div>
-          <Box variant="awsui-key-label">GPU</Box>
+          <Box variant="field-label">GPU</Box>
           <Box>{formatNumber(current.gpus)}</Box>
         </div>
       </ColumnLayout>
@@ -386,15 +386,15 @@ export function OwnerCostManagementPage() {
       <Container header={<Header variant="h2">全体使用量</Header>}>
         <ColumnLayout columns={3} variant="text-grid">
           <div>
-            <Box variant="awsui-key-label">CPU 実行時間</Box>
+            <Box variant="field-label">CPU 実行時間</Box>
             <Box fontSize="heading-l">{formatCpuHours(data.usage.cpu_millicore_seconds)}</Box>
           </div>
           <div>
-            <Box variant="awsui-key-label">メモリ実行時間</Box>
+            <Box variant="field-label">メモリ実行時間</Box>
             <Box fontSize="heading-l">{formatMemoryHours(data.usage.memory_mib_seconds)}</Box>
           </div>
           <div>
-            <Box variant="awsui-key-label">GPU 実行時間</Box>
+            <Box variant="field-label">GPU 実行時間</Box>
             <Box fontSize="heading-l">{formatGpuHours(data.usage.gpu_seconds)}</Box>
           </div>
         </ColumnLayout>

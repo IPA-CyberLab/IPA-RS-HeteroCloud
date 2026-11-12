@@ -328,8 +328,8 @@ export function FlashServiceDetailPage() {
             ["エンドポイント", endpoints.length],
           ].map(([label, value]) => (
             <div key={label}>
-              <Box variant="awsui-key-label">{label}</Box>
-              <Box variant="awsui-value-large">{value === null ? "-" : formatNumber(Number(value))}</Box>
+              <Box variant="field-label">{label}</Box>
+              <Box variant="metric-value">{value === null ? "-" : formatNumber(Number(value))}</Box>
             </div>
           ))}
         </ColumnLayout>
@@ -488,7 +488,7 @@ export function FlashServiceDetailPage() {
         <SpaceBetween size="m">
           <SpaceBetween direction="horizontal" size="xs" alignItems="end">
             <Box>
-              <Box variant="awsui-key-label">コンテナ</Box>
+              <Box variant="field-label">コンテナ</Box>
               <Select
                 ariaLabel="コンテナ"
                 selectedOption={

@@ -77,14 +77,10 @@ body {
   margin: 0;
 }
 
-.cloudscape-console__header {
+.heterocloud-console__header {
   position: sticky;
   top: 0;
   z-index: 1000;
-}
-
-.cloudscape-console [data-awsui-focus-visible] {
-  outline-offset: 2px;
 }
 
 .console-home__hero {

@@ -8,7 +8,7 @@ test("管理アカウントからOU、メンバーアカウントとSCPを設定
     current_account_number: "100000000000", root_id: "root" };
   const units = [{ id: "root", parent_id: null as string | null, name: "Root", created_at: createdAt }];
   const accounts = [{ id: accountId, account_number: "100000000000", name: "Example", slug: "example", parent_id: "root", is_management_account: true, created_at: createdAt }];
-  const policies = [{ id: "full", name: "FullAWSAccess", is_managed: true, document: { version: "2026-07-31", statements: [] }, created_at: createdAt }];
+  const policies = [{ id: "full", name: "FullHeteroCloudAccess", is_managed: true, document: { version: "2026-07-31", statements: [] }, created_at: createdAt }];
   const attachments: { target_type: string; target_id: string; policy_id: string }[] = [{ target_type: "unit", target_id: "root", policy_id: "full" }];
   let submittedPolicy: unknown;
   await page.route("**/api/v1/**", async (route) => {
@@ -43,6 +43,8 @@ test("管理アカウントからOU、メンバーアカウントとSCPを設定
     return route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } });
   });
   await page.goto("/organizations");
+  await expect(page.getByText("FullHeteroCloudAccess", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("FullAWSAccess", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "OUを作成" }).click();
   let dialog = page.getByRole("dialog", { name: "組織単位を作成" });
   await dialog.getByLabel("名前", { exact: true }).fill("Workloads");

@@ -153,10 +153,8 @@ impl Store {
     }
 
     pub async fn migrate(&self) -> Result<(), StoreError> {
-        // Migration 36 was staged in the preceding compatibility release.
-        // Never raise this ceiling until every API, owner and worker process
-        // recognizes the new migration and its rollback compatibility has
-        // been verified in an isolated environment.
+        // Migration 37 is staged in this release. Never raise this ceiling
+        // until every API, owner and worker process recognizes that version.
         // SQLx's migrator can return while its session advisory lock is still
         // held (for example on a checksum mismatch). Never return that session
         // to the pool, including if the caller is cancelled during migration.

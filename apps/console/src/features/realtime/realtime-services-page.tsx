@@ -224,8 +224,8 @@ export function RealtimeServicesPage() {
             ["同時接続", connections],
           ].map(([label, value]) => (
             <div key={label}>
-              <Box variant="awsui-key-label">{label}</Box>
-              <Box variant="awsui-value-large">{formatNumber(Number(value))}</Box>
+              <Box variant="field-label">{label}</Box>
+              <Box variant="metric-value">{formatNumber(Number(value))}</Box>
             </div>
           ))}
         </ColumnLayout>

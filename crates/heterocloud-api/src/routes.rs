@@ -3300,7 +3300,8 @@ async fn revoke_iam_role_session(
 
 fn parse_iam_role_arn(arn: &str) -> Result<(&str, &str), ApiError> {
     let rest = arn
-        .strip_prefix("arn:aws:iam::")
+        .strip_prefix("arn:heterocloud:iam::")
+        .or_else(|| arn.strip_prefix("arn:aws:iam::"))
         .ok_or_else(|| ApiError::BadRequest("Invalid role ARN.".into()))?;
     let (account, name) = rest
         .split_once(":role/")

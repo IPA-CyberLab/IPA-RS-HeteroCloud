@@ -35,7 +35,7 @@ function SharedOrganizationLimits({ group }: { group: NonNullable<OrganizationQu
     <SpaceBetween size="m">
       <Box color="text-body-secondary">サービスの割当上限: {group.service_quotas_enabled ? "適用中" : "未適用"} · Flash 週次上限: {group.flash_weekly_quotas_enabled ? "適用中" : "未適用"} · Registry 認証情報数: {group.registry_credentials_enabled ? "適用中" : "未適用"}</Box>
       <ColumnLayout columns={3} variant="text-grid">
-        {[...allocations, ...weekly].map(([label, value]) => <div key={label}><Box variant="awsui-key-label">{label}</Box><Box>{formatNumber(value)}</Box></div>)}
+        {[...allocations, ...weekly].map(([label, value]) => <div key={label}><Box variant="field-label">{label}</Box><Box>{formatNumber(value)}</Box></div>)}
       </ColumnLayout>
       <Box color="text-body-secondary">Flash Registry の保存容量はアカウント単位の上限です。</Box>
     </SpaceBetween>

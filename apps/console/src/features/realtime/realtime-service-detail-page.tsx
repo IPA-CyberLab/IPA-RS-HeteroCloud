@@ -252,8 +252,8 @@ export function RealtimeServiceDetailPage() {
         <ColumnLayout columns={5} variant="text-grid">
           {metricItems.map(([label, value]) => (
             <div key={label}>
-              <Box variant="awsui-key-label">{label}</Box>
-              <Box variant="awsui-value-large">{value}</Box>
+              <Box variant="field-label">{label}</Box>
+              <Box variant="metric-value">{value}</Box>
             </div>
           ))}
         </ColumnLayout>

@@ -103,7 +103,7 @@ function ResourceStatus({
         <StatusIndicator type="error">取得できません</StatusIndicator>
       ) : (
         <>
-          <Box variant="awsui-value-large">{formatNumber(value ?? 0)}</Box>
+          <Box variant="metric-value">{formatNumber(value ?? 0)}</Box>
           <Box color="text-body-secondary">{detail}</Box>
         </>
       )}

@@ -53,13 +53,32 @@ async fn staged_release_survives_additive_upgrade_but_rejects_unknown_versions()
         "a later release must be able to activate migration 36"
     );
 
-    sqlx::query("INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (37, 'unknown future migration', true, decode('00','hex'), 0)")
+    // Once this compatibility release is everywhere, a subsequent release
+    // may activate 37. A process that embeds 37 but stops at 36 can still
+    // start, including after an operational rollback to this release.
+    let mut connection = store.pool().acquire().await?;
+    connection.close_on_drop();
+    let result = NEXT.run_to(37, &mut *connection).await;
+    let closed = connection.close().await;
+    result?;
+    closed?;
+    store.migrate().await?;
+    let applied: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=37)")
+            .fetch_one(store.pool())
+            .await?;
+    assert!(
+        applied,
+        "a later release must be able to activate migration 37"
+    );
+
+    sqlx::query("INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (38, 'unknown future migration', true, decode('00','hex'), 0)")
         .execute(store.pool()).await?;
     assert!(
         store.migrate().await.is_err(),
         "unrecognized schema versions must fail closed"
     );
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version=37")
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version=38")
         .execute(store.pool())
         .await?;
     tokio::time::timeout(Duration::from_secs(5), store.migrate()).await??;

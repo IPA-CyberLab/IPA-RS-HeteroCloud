@@ -374,7 +374,7 @@ export function SyouyuCredentialsSection({
             </Alert>
             <ColumnLayout columns={2} variant="text-grid">
               <div>
-                <Box variant="awsui-key-label">アクセスキーID</Box>
+                <Box variant="field-label">アクセスキーID</Box>
                 <SpaceBetween direction="horizontal" size="xs">
                   <Box variant="code">{secret.credential.access_key_id}</Box>
                   <Button
@@ -388,7 +388,7 @@ export function SyouyuCredentialsSection({
                 </SpaceBetween>
               </div>
               <div>
-                <Box variant="awsui-key-label">シークレットアクセスキー</Box>
+                <Box variant="field-label">シークレットアクセスキー</Box>
                 <SpaceBetween direction="horizontal" size="xs">
                   <Box variant="code">{secret.secret_access_key}</Box>
                   <Button
@@ -400,15 +400,15 @@ export function SyouyuCredentialsSection({
                 </SpaceBetween>
               </div>
               <div>
-                <Box variant="awsui-key-label">エンドポイント</Box>
+                <Box variant="field-label">エンドポイント</Box>
                 <Box variant="code">{secret.endpoint}</Box>
               </div>
               <div>
-                <Box variant="awsui-key-label">リージョン</Box>
+                <Box variant="field-label">リージョン</Box>
                 <Box variant="code">{secret.region}</Box>
               </div>
               <div>
-                <Box variant="awsui-key-label">バケット</Box>
+                <Box variant="field-label">バケット</Box>
                 <Box variant="code">{secret.bucket}</Box>
               </div>
             </ColumnLayout>
@@ -420,11 +420,11 @@ export function SyouyuCredentialsSection({
                     iconName={copied === "setup" ? "check" : "copy"}
                     onClick={() => void copy("setup", setup)}
                   >
-                    {copied === "setup" ? "コピー済み" : "AWS CLI設定をコピー"}
+                    {copied === "setup" ? "コピー済み" : "接続設定をコピー"}
                   </Button>
                 }
               >
-                AWS CLI
+                接続コマンド
               </Header>
               <pre className="code-block"><code>{setup}</code></pre>
             </div>

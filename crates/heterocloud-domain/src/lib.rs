@@ -369,11 +369,12 @@ fn validate_policy_conditions(conditions: &PolicyConditions) -> Result<(), Domai
         }
         if keys.len() != 1 {
             return Err(DomainError::InvalidPolicy(
-                "date conditions require exactly aws:CurrentTime".into(),
+                "date conditions require exactly heterocloud:CurrentTime".into(),
             ));
         }
         for (key, values) in keys {
-            if !key.eq_ignore_ascii_case("aws:CurrentTime")
+            if !(key.eq_ignore_ascii_case("heterocloud:CurrentTime")
+                || key.eq_ignore_ascii_case("aws:CurrentTime"))
                 || values.is_empty()
                 || values.len() > 128
                 || values

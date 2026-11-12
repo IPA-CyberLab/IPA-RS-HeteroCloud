@@ -89,12 +89,12 @@ pub fn authorize(
                 statement
                     .resources
                     .iter()
-                    .any(|pattern| pattern_matches(pattern, request.resource))
+                    .any(|pattern| resource_pattern_matches(pattern, request.resource))
             } else {
                 !statement
                     .not_resources
                     .iter()
-                    .any(|pattern| pattern_matches(pattern, request.resource))
+                    .any(|pattern| resource_pattern_matches(pattern, request.resource))
             };
             if !action_matches || !resource_matches || !conditions_match(statement, request) {
                 continue;
@@ -252,6 +252,24 @@ pub fn enforce_session_policy(
     Ok(evaluation)
 }
 
+// The old and current identifiers represent the same HeteroCloud IAM
+// resource. Evaluate both spellings for every allow, deny and NotResource;
+// otherwise changing the output name could bypass a saved deny policy.
+fn resource_pattern_matches(pattern: &str, value: &str) -> bool {
+    if pattern_matches(pattern, value) {
+        return true;
+    }
+    let alternate = value
+        .strip_prefix("arn:heterocloud:iam::")
+        .map(|rest| format!("arn:aws:iam::{rest}"))
+        .or_else(|| {
+            value
+                .strip_prefix("arn:aws:iam::")
+                .map(|rest| format!("arn:heterocloud:iam::{rest}"))
+        });
+    alternate.is_some_and(|alternate| pattern_matches(pattern, &alternate))
+}
+
 fn pattern_matches(pattern: &str, value: &str) -> bool {
     let pattern: Vec<char> = pattern.chars().collect();
     let value: Vec<char> = value.chars().collect();
@@ -312,6 +330,53 @@ mod tests {
                 conditions: Default::default(),
             }],
         }
+    }
+
+    #[test]
+    fn legacy_and_branded_resource_names_share_allows_denies_and_exclusions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let account = OrganizationId::new();
+        let mut allow = policy(PolicyEffect::Allow);
+        allow.statements[0].actions = vec!["sts:AssumeRole".into()];
+        allow.statements[0].resources = vec!["arn:aws:*".into()];
+        let mut deny = allow.clone();
+        deny.statements[0].effect = PolicyEffect::Deny;
+        deny.statements[0].resources =
+            vec!["arn:heterocloud:iam::111111111111:role/Blocked".into()];
+        let request = |resource: &'static str| AuthorizationRequest {
+            principal_organization_id: account,
+            resource_organization_id: account,
+            evaluated_at: chrono::Utc::now(),
+            action: "sts:AssumeRole",
+            resource,
+        };
+        assert_eq!(
+            authorize(
+                &request("arn:heterocloud:iam::111111111111:role/Allowed"),
+                &[allow.clone()]
+            )?
+            .decision,
+            Decision::Allow
+        );
+        assert_eq!(
+            authorize(
+                &request("arn:aws:iam::111111111111:role/Blocked"),
+                &[allow.clone(), deny]
+            )?
+            .decision,
+            Decision::Deny
+        );
+        allow.statements[0].resources.clear();
+        allow.statements[0].not_resources = vec!["arn:aws:iam::111111111111:role/Blocked".into()];
+        assert_eq!(
+            authorize(
+                &request("arn:heterocloud:iam::111111111111:role/Blocked"),
+                &[allow]
+            )?
+            .decision,
+            Decision::Deny
+        );
+        Ok(())
     }
 
     #[test]
@@ -581,6 +646,31 @@ mod tests {
                 authorize(&request, &[document])?.decision == Decision::Allow,
                 expected,
                 "{operator}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn branded_time_condition_has_the_same_authorization_as_the_legacy_key()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let account = OrganizationId::new();
+        let request = AuthorizationRequest {
+            principal_organization_id: account,
+            resource_organization_id: account,
+            action: "project:read",
+            resource: "hc:org:example",
+            evaluated_at: chrono::DateTime::from_timestamp(1_700_000_000, 0)
+                .ok_or("invalid timestamp")?,
+        };
+        for key in ["aws:CurrentTime", "heterocloud:CurrentTime"] {
+            let policy = PolicyDocument::from_aws_json(serde_json::json!({
+                "Statement":{"Effect":"Deny","Action":"*","Resource":"*",
+                    "Condition":{"DateGreaterThanEquals":{key:"2023-11-14T22:13:20Z"}}}
+            }))?;
+            assert_eq!(
+                authorize_with_administrator(&request, &[policy], true)?.reason,
+                "explicit_deny"
             );
         }
         Ok(())

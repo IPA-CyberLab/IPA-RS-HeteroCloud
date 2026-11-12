@@ -163,15 +163,15 @@ export function RegistryPage() {
       <Container header={<Header variant="h2">Flash Registry</Header>}>
         <ColumnLayout columns={3} variant="text-grid">
           <div>
-            <Box variant="awsui-key-label">エンドポイント</Box>
+            <Box variant="field-label">エンドポイント</Box>
             <Box variant="code">{value.endpoint}</Box>
           </div>
           <div>
-            <Box variant="awsui-key-label">イメージPrefix</Box>
+            <Box variant="field-label">イメージPrefix</Box>
             <Box variant="code">{value.image_prefix}</Box>
           </div>
           <div>
-            <Box variant="awsui-key-label">認証情報</Box>
+            <Box variant="field-label">認証情報</Box>
             <Box>
               {activeCredentials} / {value.max_credentials}
             </Box>
@@ -429,11 +429,11 @@ export function RegistryPage() {
             </Alert>
             <ColumnLayout columns={2} variant="text-grid">
               <div>
-                <Box variant="awsui-key-label">ユーザー名</Box>
+                <Box variant="field-label">ユーザー名</Box>
                 <Box variant="code">{secret.username}</Box>
               </div>
               <div>
-                <Box variant="awsui-key-label">パスワード</Box>
+                <Box variant="field-label">パスワード</Box>
                 <Box variant="code">{secret.password}</Box>
               </div>
             </ColumnLayout>

@@ -212,18 +212,18 @@ export function SyouyuBucketsPage() {
       <Container>
         <ColumnLayout columns={3} variant="text-grid">
           <div>
-            <Box variant="awsui-key-label">バケット</Box>
-            <Box variant="awsui-value-large">
+            <Box variant="field-label">バケット</Box>
+            <Box variant="metric-value">
               {formatNumber(items.length)} / {formatNumber(quota.data.max_buckets)}
             </Box>
           </div>
           <div>
-            <Box variant="awsui-key-label">準備完了</Box>
-            <Box variant="awsui-value-large">{formatNumber(readyCount)}</Box>
+            <Box variant="field-label">準備完了</Box>
+            <Box variant="metric-value">{formatNumber(readyCount)}</Box>
           </div>
           <div>
-            <Box variant="awsui-key-label">割り当て容量</Box>
-            <Box variant="awsui-value-large">
+            <Box variant="field-label">割り当て容量</Box>
+            <Box variant="metric-value">
               {formatBytes(allocatedBytes)} / {formatBytes(quota.data.max_total_bytes)}
             </Box>
           </div>

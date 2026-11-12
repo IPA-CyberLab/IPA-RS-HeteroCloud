@@ -237,8 +237,8 @@ export function FlashServicesPage() {
             ["エンドポイント", endpointCount],
           ].map(([label, value]) => (
             <div key={label}>
-              <Box variant="awsui-key-label">{label}</Box>
-              <Box variant="awsui-value-large">{value === null ? "-" : formatNumber(Number(value))}</Box>
+              <Box variant="field-label">{label}</Box>
+              <Box variant="metric-value">{value === null ? "-" : formatNumber(Number(value))}</Box>
             </div>
           ))}
         </ColumnLayout>

@@ -37,7 +37,7 @@ export function QuotaSummary({ limits, member = false }: { limits: ResourceQuota
         {Object.entries(limits[key]).map(([field, value]) => {
           const shared = member && (key === "registry" || (key === "syouyu" && ["max_credentials_per_bucket", "max_total_credentials"].includes(field)));
           return <div key={field}>
-            <Box variant="awsui-key-label">{descriptions[key][field] ?? field}{shared ? "（組織共通）" : ""}</Box>
+            <Box variant="field-label">{descriptions[key][field] ?? field}{shared ? "（組織共通）" : ""}</Box>
             <Box>{formatNumber(value)}</Box>
           </div>;
         })}

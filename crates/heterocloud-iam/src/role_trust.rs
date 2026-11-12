@@ -29,8 +29,8 @@ enum TrustPrincipal {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct TrustAccounts {
-    #[serde(rename = "AWS")]
-    aws: OneOrMany<String>,
+    #[serde(rename = "HeteroCloud", alias = "AWS")]
+    accounts: OneOrMany<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -46,7 +46,7 @@ struct TrustStatement {
     principal: TrustPrincipal,
 }
 
-/// A deliberately restricted AWS role trust-policy grammar. Unsupported
+/// A deliberately restricted role trust-policy grammar. Unsupported
 /// fields are rejected, never ignored. The authenticated caller must also have
 /// an identity-based sts:AssumeRole grant in the source account.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -92,13 +92,13 @@ impl RoleTrustDocument {
                 TrustPrincipal::Wildcard(_) => {
                     return Err(RoleTrustError::Invalid("Principal string must be *"));
                 }
-                TrustPrincipal::Accounts(accounts) => accounts.aws.items(),
+                TrustPrincipal::Accounts(accounts) => accounts.accounts.items(),
             };
             if principals.is_empty()
                 || principals.len() > 128
                 || principals.iter().any(|p| !valid_principal(p))
             {
-                return Err(RoleTrustError::Invalid("unsupported AWS Principal"));
+                return Err(RoleTrustError::Invalid("unsupported account Principal"));
             }
         }
         Ok(())
@@ -120,12 +120,17 @@ impl RoleTrustDocument {
             }
             let matches = match &statement.principal {
                 TrustPrincipal::Wildcard(value) => value == "*",
-                TrustPrincipal::Accounts(accounts) => accounts.aws.items().iter().any(|value| {
-                    value == "*"
-                        || value == caller_arn
-                        || value == caller_account
-                        || value == &format!("arn:aws:iam::{caller_account}:root")
-                }),
+                TrustPrincipal::Accounts(accounts) => {
+                    accounts.accounts.items().iter().any(|value| {
+                        value == "*"
+                            || value == caller_arn
+                            || value == caller_account
+                            || principal_suffix(value).is_some_and(|principal| {
+                                principal == format!("{caller_account}:root")
+                                    || principal_suffix(caller_arn) == Some(principal)
+                            })
+                    })
+                }
             };
             if matches {
                 match statement.effect {
@@ -138,6 +143,12 @@ impl RoleTrustDocument {
     }
 }
 
+fn principal_suffix(value: &str) -> Option<&str> {
+    value
+        .strip_prefix("arn:heterocloud:iam::")
+        .or_else(|| value.strip_prefix("arn:aws:iam::"))
+}
+
 fn valid_principal(value: &str) -> bool {
     if value == "*" {
         return true;
@@ -145,7 +156,7 @@ fn valid_principal(value: &str) -> bool {
     if value.len() == 12 && value.bytes().all(|b| b.is_ascii_digit()) {
         return true;
     }
-    let Some(rest) = value.strip_prefix("arn:aws:iam::") else {
+    let Some(rest) = principal_suffix(value) else {
         return false;
     };
     let Some((account, path)) = rest.split_once(':') else {
@@ -186,6 +197,28 @@ mod tests {
         assert!(trust.permits("111111111111", "arn:aws:iam::111111111111:user/allowed")?);
         assert!(!trust.permits("111111111111", "arn:aws:iam::111111111111:user/blocked")?);
         assert!(!trust.permits("222222222222", "arn:aws:iam::222222222222:user/allowed")?);
+        assert!(trust.permits(
+            "111111111111",
+            "arn:heterocloud:iam::111111111111:user/allowed"
+        )?);
+        assert!(!trust.permits(
+            "111111111111",
+            "arn:heterocloud:iam::111111111111:user/blocked"
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn branded_trust_accepts_legacy_callers_without_weakening_denies()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let trust: RoleTrustDocument = serde_json::from_value(json!({"Statement":[
+            {"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"HeteroCloud":"arn:heterocloud:iam::111111111111:root"}},
+            {"Effect":"Deny","Action":"sts:AssumeRole","Principal":{"HeteroCloud":"arn:heterocloud:iam::111111111111:user/blocked"}}
+        ]}))?;
+        assert!(trust.permits("111111111111", "arn:aws:iam::111111111111:user/allowed")?);
+        assert!(!trust.permits("111111111111", "arn:aws:iam::111111111111:user/blocked")?);
+        assert!(!trust.permits("222222222222", "arn:aws:iam::222222222222:user/allowed")?);
+        assert!(serde_json::from_value::<RoleTrustDocument>(json!({"Statement":{"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"AWS":"*","HeteroCloud":"*"}}})).is_err());
         Ok(())
     }
 

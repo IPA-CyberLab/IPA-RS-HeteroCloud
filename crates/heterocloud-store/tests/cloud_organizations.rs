@@ -76,6 +76,24 @@ async fn migration_and_organization_controls_preserve_isolation() -> Result<(), 
     .execute(store.pool())
     .await?;
     assert!(!store.browser_roles_enabled().await?);
+    // Exercise migration 37 against a real pre-upgrade managed policy, including
+    // a user-owned policy whose name must never be overwritten.
+    let (managed_id, managed_org, managed_document): (Uuid, Uuid, serde_json::Value) =
+        sqlx::query_as("SELECT id, organization_id, document FROM cloud_service_control_policies WHERE is_managed")
+            .fetch_one(store.pool()).await?;
+    let unit_attachments: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM cloud_scp_unit_attachments WHERE policy_id=$1")
+            .bind(managed_id)
+            .fetch_one(store.pool())
+            .await?;
+    let account_attachments: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM cloud_scp_account_attachments WHERE policy_id=$1")
+            .bind(managed_id)
+            .fetch_one(store.pool())
+            .await?;
+    let custom_id = Uuid::now_v7();
+    sqlx::query("INSERT INTO cloud_service_control_policies(id,organization_id,name,document,is_managed) VALUES ($1,$2,'FullHeteroCloudAccess','{}',false)")
+        .bind(custom_id).bind(managed_org).execute(store.pool()).await?;
     // The current store queries require the latest schema. Preserve the
     // pre-organization fixtures above, then complete every later migration
     // before checking that existing sessions and keys still work.
@@ -88,6 +106,62 @@ async fn migration_and_organization_controls_preserve_isolation() -> Result<(), 
             .execute(store.pool())
             .await?;
     }
+    let (name, document): (String, serde_json::Value) = sqlx::query_as(
+        "SELECT name,document FROM cloud_service_control_policies WHERE id=$1 AND is_managed",
+    )
+    .bind(managed_id)
+    .fetch_one(store.pool())
+    .await?;
+    assert!(name.starts_with("FullHeteroCloudAccess-"));
+    assert_eq!(document, managed_document);
+    assert_eq!(
+        unit_attachments,
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM cloud_scp_unit_attachments WHERE policy_id=$1"
+        )
+        .bind(managed_id)
+        .fetch_one(store.pool())
+        .await?
+    );
+    assert_eq!(
+        account_attachments,
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM cloud_scp_account_attachments WHERE policy_id=$1"
+        )
+        .bind(managed_id)
+        .fetch_one(store.pool())
+        .await?
+    );
+    let custom_name: String = sqlx::query_scalar(
+        "SELECT name FROM cloud_service_control_policies WHERE id=$1 AND NOT is_managed",
+    )
+    .bind(custom_id)
+    .fetch_one(store.pool())
+    .await?;
+    assert_eq!(custom_name, "FullHeteroCloudAccess");
+    // The same idempotent SQL can be used for the staged live rollout before
+    // SQLx records it, then safely executed again as the versioned migration.
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/0037_heterocloud_policy_names.sql"
+    ))
+    .execute(store.pool())
+    .await?;
+    let still_named: String =
+        sqlx::query_scalar("SELECT name FROM cloud_service_control_policies WHERE id=$1")
+            .bind(managed_id)
+            .fetch_one(store.pool())
+            .await?;
+    assert_eq!(still_named, name);
+    sqlx::query("DELETE FROM cloud_service_control_policies WHERE id=$1")
+        .bind(custom_id)
+        .execute(store.pool())
+        .await?;
+    let new_account = Uuid::now_v7();
+    sqlx::query("INSERT INTO organizations(id,slug,name) VALUES ($1,'new-brand-account','New Brand Account')")
+        .bind(new_account).execute(store.pool()).await?;
+    let new_default: String = sqlx::query_scalar("SELECT p.name FROM cloud_service_control_policies p JOIN cloud_organizations o ON o.id=p.organization_id WHERE o.management_account_id=$1 AND p.is_managed")
+        .bind(new_account).fetch_one(store.pool()).await?;
+    assert_eq!(new_default, "FullHeteroCloudAccess");
     assert!(
         store
             .session_user_by_token_hash(&existing_session_hash)

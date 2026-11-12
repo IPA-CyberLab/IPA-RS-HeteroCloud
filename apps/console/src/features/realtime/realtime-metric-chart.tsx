@@ -30,7 +30,7 @@ export function RealtimeMetricChart({
       header={
         <Header
           variant="h2"
-          actions={<Box variant="awsui-value-large">{loading && !data.length ? "-" : formatValue(latest)}</Box>}
+          actions={<Box variant="metric-value">{loading && !data.length ? "-" : formatValue(latest)}</Box>}
         >
           {label}
         </Header>

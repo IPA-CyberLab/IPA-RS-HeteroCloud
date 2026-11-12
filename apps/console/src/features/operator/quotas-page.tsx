@@ -124,7 +124,7 @@ function QuotaUsageMetric({
   if (used === null) {
     return (
       <SpaceBetween size="xxs">
-        <Box variant="awsui-key-label">{label}</Box>
+        <Box variant="field-label">{label}</Box>
         <Box color="text-status-inactive">
           取得できません / {formatValue(limit)}
         </Box>
@@ -164,7 +164,7 @@ function QuotaUsagePanel({
           <QuotaUsageMetric label="IPあたりバースト（最大）" used={usage.flow_max_rate_limit_burst} limit={limits.flow.max_rate_limit_burst} />
           <QuotaUsageMetric label="開発者認証情報 / サービス（最大）" used={usage.flow_max_developer_credentials_per_service} limit={limits.flow.max_developer_credentials_per_service} />
           <div>
-            <Box variant="awsui-key-label">有効な開発者認証情報</Box>
+            <Box variant="field-label">有効な開発者認証情報</Box>
             <Box>{formatNumber(usage.flow_developer_credentials)}</Box>
           </div>
         </ColumnLayout>
@@ -407,7 +407,7 @@ export function QuotaEditor({
       <Container header={<Header variant="h3">Flow</Header>}>
         <SpaceBetween size="m">
           <SpaceBetween size="xs">
-            <Box variant="awsui-key-label">サービスとルーム</Box>
+            <Box variant="field-label">サービスとルーム</Box>
             <ColumnLayout columns={3}>
               <NumberField label="サービス数" value={value.flow.max_services} max={QUOTA_BOUNDS.flow.maxServices} onChange={(next) => flow("max_services", next)} />
               <NumberField label="ルーム / サービス" value={value.flow.max_rooms_per_service} max={QUOTA_BOUNDS.flow.maxRoomsPerService} onChange={(next) => flow("max_rooms_per_service", next)} />
@@ -415,14 +415,14 @@ export function QuotaEditor({
             </ColumnLayout>
           </SpaceBetween>
           <SpaceBetween size="xs">
-            <Box variant="awsui-key-label">接続と認証情報</Box>
+            <Box variant="field-label">接続と認証情報</Box>
             <ColumnLayout columns={2}>
               <NumberField label="同時参加者 / サービス" value={value.flow.max_participants_per_service} max={QUOTA_BOUNDS.flow.maxParticipantsPerService} onChange={(next) => flow("max_participants_per_service", next)} />
               <NumberField label="開発者認証情報 / サービス" value={value.flow.max_developer_credentials_per_service} max={QUOTA_BOUNDS.flow.maxDeveloperCredentialsPerService} onChange={(next) => flow("max_developer_credentials_per_service", next)} />
             </ColumnLayout>
           </SpaceBetween>
           <SpaceBetween size="xs">
-            <Box variant="awsui-key-label">APIレート制限</Box>
+            <Box variant="field-label">APIレート制限</Box>
             <ColumnLayout columns={2}>
               <NumberField label="IPあたりRPS" value={value.flow.max_rate_limit_requests_per_second} max={QUOTA_BOUNDS.flow.maxRequestsPerSecond} onChange={(next) => flow("max_rate_limit_requests_per_second", next)} />
               <NumberField label="IPあたりバースト" value={value.flow.max_rate_limit_burst} min={value.flow.max_rate_limit_requests_per_second} max={QUOTA_BOUNDS.flow.maxBurst} onChange={(next) => flow("max_rate_limit_burst", next)} />
@@ -433,7 +433,7 @@ export function QuotaEditor({
       <Container header={<Header variant="h3">Flash</Header>}>
         <SpaceBetween size="m">
           <SpaceBetween size="xs">
-            <Box variant="awsui-key-label">サービスとレプリカ</Box>
+            <Box variant="field-label">サービスとレプリカ</Box>
             <ColumnLayout columns={3}>
               <NumberField label="サービス数" value={value.flash.max_services} max={QUOTA_BOUNDS.flash.maxServices} onChange={(next) => flash("max_services", next)} />
               <NumberField label="レプリカ / サービス" value={value.flash.max_replicas_per_service} min={QUOTA_BOUNDS.flash.minReplicasPerService} max={QUOTA_BOUNDS.flash.maxReplicasPerService} onChange={(next) => flash("max_replicas_per_service", next)} />
@@ -441,28 +441,28 @@ export function QuotaEditor({
             </ColumnLayout>
           </SpaceBetween>
           <SpaceBetween size="xs">
-            <Box variant="awsui-key-label">CPU</Box>
+            <Box variant="field-label">CPU</Box>
             <ColumnLayout columns={2}>
               <NumberField label="CPU / VM (millicores)" value={value.flash.max_cpu_millis_per_vm} min={QUOTA_BOUNDS.flash.minCpuMillisPerVm} max={QUOTA_BOUNDS.flash.maxCpuMillisPerVm} onChange={(next) => flash("max_cpu_millis_per_vm", next)} />
               <NumberField label="合計CPU (millicores)" value={value.flash.max_total_cpu_millis} min={value.flash.max_cpu_millis_per_vm} max={QUOTA_BOUNDS.flash.maxTotalCpuMillis} onChange={(next) => flash("max_total_cpu_millis", next)} />
             </ColumnLayout>
           </SpaceBetween>
           <SpaceBetween size="xs">
-            <Box variant="awsui-key-label">メモリ</Box>
+            <Box variant="field-label">メモリ</Box>
             <ColumnLayout columns={2}>
               <NumberField label="メモリ / VM (MiB)" value={value.flash.max_memory_mib_per_vm} min={QUOTA_BOUNDS.flash.minMemoryMibPerVm} max={QUOTA_BOUNDS.flash.maxMemoryMibPerVm} onChange={(next) => flash("max_memory_mib_per_vm", next)} />
               <NumberField label="合計メモリ (MiB)" value={value.flash.max_total_memory_mib} min={value.flash.max_memory_mib_per_vm} max={QUOTA_BOUNDS.flash.maxTotalMemoryMib} onChange={(next) => flash("max_total_memory_mib", next)} />
             </ColumnLayout>
           </SpaceBetween>
           <SpaceBetween size="xs">
-            <Box variant="awsui-key-label">ディスク</Box>
+            <Box variant="field-label">ディスク</Box>
             <ColumnLayout columns={2}>
               <NumberField label="ディスク / VM (GiB)" value={value.flash.max_disk_gib_per_vm} min={QUOTA_BOUNDS.flash.minDiskGibPerVm} max={QUOTA_BOUNDS.flash.maxDiskGibPerVm} onChange={(next) => flash("max_disk_gib_per_vm", next)} />
               <NumberField label="合計ディスク (GiB)" value={value.flash.max_total_disk_gib} min={value.flash.max_disk_gib_per_vm} max={QUOTA_BOUNDS.flash.maxTotalDiskGib} onChange={(next) => flash("max_total_disk_gib", next)} />
             </ColumnLayout>
           </SpaceBetween>
           <SpaceBetween size="xs">
-            <Box variant="awsui-key-label">週次ランタイム</Box>
+            <Box variant="field-label">週次ランタイム</Box>
             <ColumnLayout columns={3}>
               <NumberField
                 label="CPU 上限 (millicore-seconds)"
@@ -515,7 +515,7 @@ export function QuotaEditor({
       <Container header={<Header variant="h3">Syouyu Object Storage</Header>}>
         <SpaceBetween size="m">
           <SpaceBetween size="xs">
-            <Box variant="awsui-key-label">バケットと容量</Box>
+            <Box variant="field-label">バケットと容量</Box>
             <ColumnLayout columns={3}>
               <NumberField label="バケット数" value={value.syouyu.max_buckets} max={QUOTA_BOUNDS.syouyu.maxBuckets} onChange={(next) => syouyu("max_buckets", next)} />
               <NumberField label="容量 / バケット (bytes)" value={value.syouyu.max_bytes_per_bucket} min={QUOTA_BOUNDS.syouyu.minBytesPerBucket} max={QUOTA_BOUNDS.syouyu.maxBytesPerBucket} onChange={(next) => syouyu("max_bytes_per_bucket", next)} />
@@ -523,7 +523,7 @@ export function QuotaEditor({
             </ColumnLayout>
           </SpaceBetween>
           <SpaceBetween size="xs">
-            <Box variant="awsui-key-label">オブジェクトと認証情報</Box>
+            <Box variant="field-label">オブジェクトと認証情報</Box>
             <ColumnLayout columns={3}>
               <NumberField label="オブジェクト / バケット" value={value.syouyu.max_objects_per_bucket} max={QUOTA_BOUNDS.syouyu.maxObjectsPerBucket} onChange={(next) => syouyu("max_objects_per_bucket", next)} />
               {!member ? <NumberField label="認証情報 / バケット" value={value.syouyu.max_credentials_per_bucket} max={QUOTA_BOUNDS.syouyu.maxCredentialsPerBucket} onChange={(next) => syouyu("max_credentials_per_bucket", next)} /> : null}
@@ -872,8 +872,8 @@ export function OwnerQuotasPage() {
             ["Syouyu割当 (GiB)", Math.ceil(aggregate.syouyuBytes / GIB_BYTES)],
           ] as const).map(([label, value]) => (
             <div key={label}>
-              <Box variant="awsui-key-label">{label}</Box>
-              <Box variant="awsui-value-large">{formatNumber(value)}</Box>
+              <Box variant="field-label">{label}</Box>
+              <Box variant="metric-value">{formatNumber(value)}</Box>
             </div>
           ))}
         </ColumnLayout>
@@ -996,29 +996,29 @@ export function OwnerQuotasPage() {
             <Header variant="h3">登録情報</Header>
             <ColumnLayout columns={3} variant="text-grid">
               <div>
-                <Box variant="awsui-key-label">ユーザーID</Box>
+                <Box variant="field-label">ユーザーID</Box>
                 <Box>{selectedAccount.user.id}</Box>
               </div>
               <div>
-                <Box variant="awsui-key-label">氏名</Box>
+                <Box variant="field-label">氏名</Box>
                 <Box>{selectedAccount.user.display_name}</Box>
               </div>
               <div>
-                <Box variant="awsui-key-label">メールアドレス</Box>
+                <Box variant="field-label">メールアドレス</Box>
                 <Box>{selectedAccount.user.email}</Box>
               </div>
               <div>
-                <Box variant="awsui-key-label">状態</Box>
+                <Box variant="field-label">状態</Box>
                 <Box>
                   {selectedAccount.user.status === "active" ? "有効" : "停止中"}
                 </Box>
               </div>
               <div>
-                <Box variant="awsui-key-label">登録日時</Box>
+                <Box variant="field-label">登録日時</Box>
                 <Box>{formatDateTime(selectedAccount.user.created_at)}</Box>
               </div>
               <div>
-                <Box variant="awsui-key-label">記録済みログイン</Box>
+                <Box variant="field-label">記録済みログイン</Box>
                 <Box>{formatNumber(selectedAccount.login_count)} 件</Box>
               </div>
             </ColumnLayout>
@@ -1026,7 +1026,7 @@ export function OwnerQuotasPage() {
             <Header variant="h3">認証情報</Header>
             <ColumnLayout columns={2} variant="text-grid">
               <div>
-                <Box variant="awsui-key-label">ローカル資格情報</Box>
+                <Box variant="field-label">ローカル資格情報</Box>
                 <Box>
                   {selectedAccount.has_local_password ? "登録あり" : "登録なし"}
                 </Box>
@@ -1034,7 +1034,7 @@ export function OwnerQuotasPage() {
               {selectedAccount.external_identities.map((identity) => (
                 <div key={`${identity.issuer}:${identity.subject}`}>
                   <SpaceBetween size="xxs">
-                    <Box variant="awsui-key-label">外部認証のID</Box>
+                    <Box variant="field-label">外部認証のID</Box>
                     <Box>{identity.issuer}</Box>
                     <Box color="text-body-secondary">Subject: {identity.subject}</Box>
                     <Box color="text-body-secondary">
@@ -1055,7 +1055,7 @@ export function OwnerQuotasPage() {
               <ColumnLayout columns={2} variant="text-grid">
                 {selectedAccount.memberships.map((membership) => (
                   <div key={membership.organization_id}>
-                    <Box variant="awsui-key-label">
+                    <Box variant="field-label">
                       {membership.organization_name}
                     </Box>
                     <Box>{membership.organization_slug}</Box>

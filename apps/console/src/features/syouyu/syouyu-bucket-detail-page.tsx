@@ -216,16 +216,16 @@ export function SyouyuBucketDetailPage() {
       <Container>
         <ColumnLayout columns={3} variant="text-grid">
           <div>
-            <Box variant="awsui-key-label">使用容量</Box>
-            <Box variant="awsui-value-large">{formatBytes(usedBytes)}</Box>
+            <Box variant="field-label">使用容量</Box>
+            <Box variant="metric-value">{formatBytes(usedBytes)}</Box>
           </div>
           <div>
-            <Box variant="awsui-key-label">オブジェクト</Box>
-            <Box variant="awsui-value-large">{formatNumber(objectCount)}</Box>
+            <Box variant="field-label">オブジェクト</Box>
+            <Box variant="metric-value">{formatNumber(objectCount)}</Box>
           </div>
           <div>
-            <Box variant="awsui-key-label">有効な認証情報</Box>
-            <Box variant="awsui-value-large">{formatNumber(credentialCount)}</Box>
+            <Box variant="field-label">有効な認証情報</Box>
+            <Box variant="metric-value">{formatNumber(credentialCount)}</Box>
           </div>
         </ColumnLayout>
       </Container>
@@ -253,7 +253,7 @@ export function SyouyuBucketDetailPage() {
               description={`${formatNumber(objectCount)} / ${formatNumber(objectLimit)}`}
             />
             <div>
-              <Box variant="awsui-key-label">未完了アップロード</Box>
+              <Box variant="field-label">未完了アップロード</Box>
               <Box>{formatBytes(unfinishedUploadBytes)}</Box>
             </div>
           </SpaceBetween>

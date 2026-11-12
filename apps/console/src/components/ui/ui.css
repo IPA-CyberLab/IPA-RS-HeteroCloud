@@ -337,11 +337,11 @@ summary {
 .ui-columns[data-columns="4"] {
   --ui-columns: 4;
 }
-.ui-box--awsui-value-large {
+.ui-box--metric-value {
   font-size: 25px;
   font-weight: 700;
 }
-.ui-box--awsui-key-label {
+.ui-box--field-label {
   font-size: 12px;
   font-weight: 600;
   opacity: 0.65;

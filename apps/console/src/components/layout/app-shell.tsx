@@ -157,8 +157,8 @@ export function AppShell() {
   };
 
   return (
-    <div className="cloudscape-console">
-      <header id="hcloud-header" className="cloudscape-console__header">
+    <div className="heterocloud-console">
+      <header id="hcloud-header" className="heterocloud-console__header">
         <TopNavigation
           identity={{
             href: "/overview",
