@@ -87,7 +87,7 @@ test("a user configures container secrets in the Flash service edit screen", asy
   await page.getByRole("button", { name: "編集" }).click();
   const editor = page.getByRole("dialog", { name: "Flashサービスを編集" });
   await expect(editor.getByRole("heading", { name: "コンテナのシークレット" })).toBeVisible();
-  await editor.getByRole("textbox", { name: "名前" }).fill("api-key");
+  await editor.getByRole("textbox", { name: "名前", exact: true }).fill("api-key");
   await editor.getByLabel("値").fill("e2e-value");
   await editor.getByRole("button", { name: "登録・更新" }).click();
   await expect.poll(() => writes).toEqual([{ value: "e2e-value" }]);
