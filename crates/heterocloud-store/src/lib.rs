@@ -153,14 +153,14 @@ impl Store {
     }
 
     pub async fn migrate(&self) -> Result<(), StoreError> {
-        // Migration 37 is staged in this release. Never raise this ceiling
-        // until every API, owner and worker process recognizes that version.
+        // Migration 37 was staged in the preceding compatibility release.
+        // Do not raise this ceiling until every process recognizes the new version.
         // SQLx's migrator can return while its session advisory lock is still
         // held (for example on a checksum mismatch). Never return that session
         // to the pool, including if the caller is cancelled during migration.
         let mut connection = self.pool.acquire().await?;
         connection.close_on_drop();
-        let result = MIGRATOR.run_to(36, &mut *connection).await;
+        let result = MIGRATOR.run_to(37, &mut *connection).await;
         let closed = connection.close().await;
         result?;
         closed?;

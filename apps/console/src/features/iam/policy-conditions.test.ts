@@ -4,8 +4,8 @@ import { policyTimeConditions } from "./policy-conditions";
 describe("policy time conditions", () => {
   it("limits a statement to the specified interval", () => {
     expect(policyTimeConditions("2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z")).toEqual({
-      DateGreaterThanEquals: { "aws:CurrentTime": ["2026-11-01T00:00:00.000Z"] },
-      DateLessThan: { "aws:CurrentTime": ["2026-11-02T00:00:00.000Z"] },
+      DateGreaterThanEquals: { "heterocloud:CurrentTime": ["2026-11-01T00:00:00.000Z"] },
+      DateLessThan: { "heterocloud:CurrentTime": ["2026-11-02T00:00:00.000Z"] },
     });
     expect(policyTimeConditions("", "")).toBeUndefined();
   });

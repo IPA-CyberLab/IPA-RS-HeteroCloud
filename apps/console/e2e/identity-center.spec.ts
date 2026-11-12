@@ -32,11 +32,11 @@ test("権限セットとグループをアカウントに割り当てて切り�
     if (path.endsWith("/identity-center/groups")) return items(groups);
     if (path.endsWith("/identity-center/assignments") && method === "POST") {
       const body = route.request().postDataJSON();
-      const assignment = { id: "assignment", ...body, permission_set_name: "Readers", account_name: "Development", account_number: "100000000001", role_principal_id: "role", role_arn: "arn:aws:iam::100000000001:role/Readers", session_duration_seconds: 3600, created_at: date };
+      const assignment = { id: "assignment", ...body, permission_set_name: "Readers", account_name: "Development", account_number: "100000000001", role_principal_id: "role", role_arn: "arn:heterocloud:iam::100000000001:role/Readers", session_duration_seconds: 3600, created_at: date };
       assignments.push(assignment); return route.fulfill({ status: 201, json: assignment });
     }
     if (path.endsWith("/identity-center/my-assignments/assignment/session") && method === "POST") {
-      activeRole = { session_id: "session", organization_id: "target", account_number: "100000000001", account_name: "Development", principal_id: "role", role_arn: "arn:aws:iam::100000000001:role/Readers", session_name: "identity-center", expires_at: new Date(Date.now() + 3_600_000).toISOString(), active: true };
+      activeRole = { session_id: "session", organization_id: "target", account_number: "100000000001", account_name: "Development", principal_id: "role", role_arn: "arn:heterocloud:iam::100000000001:role/Readers", session_name: "identity-center", expires_at: new Date(Date.now() + 3_600_000).toISOString(), active: true };
       return route.fulfill({ json: { switched: true } });
     }
     if (path.endsWith("/identity-center/assignments") || path.endsWith("/identity-center/my-assignments")) return items(assignments);

@@ -12,7 +12,7 @@ vi.mock("@/features/organizations/organization-context", () => ({
 }));
 const org = { id: "cloud", name: "Cloud", management_account_id: "management", management_account_number: "123456789012", root_id: "root", current_account_id: "management", current_account_number: "123456789012" };
 const set = { id: "set-1", name: "Read", document: { version: "2026-07-31", statements: [{ effect: "Allow", actions: ["project:List"], resources: ["*"] }] }, session_duration_seconds: 3600, created_at: "2026-01-01", updated_at: "2026-01-01" };
-const assignment = { id: "assignment-1", permission_set_id: "set-1", permission_set_name: "Read", account_id: "account-1", account_number: "123456789013", account_name: "Target", role_principal_id: "role-1", role_arn: "arn:aws:iam::123456789013:role/Read", subject_type: "user" as const, subject_id: "user-1", session_duration_seconds: 3600, created_at: "2026-01-01" };
+const assignment = { id: "assignment-1", permission_set_id: "set-1", permission_set_name: "Read", account_id: "account-1", account_number: "123456789013", account_name: "Target", role_principal_id: "role-1", role_arn: "arn:heterocloud:iam::123456789013:role/Read", subject_type: "user" as const, subject_id: "user-1", session_duration_seconds: 3600, created_at: "2026-01-01" };
 function show() { return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><IdentityCenterPage /></MemoryRouter></QueryClientProvider>); }
 
 describe("Identity Center", () => {

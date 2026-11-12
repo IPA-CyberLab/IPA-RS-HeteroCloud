@@ -225,7 +225,7 @@ export function AppShell() {
         footer={<Box float="right"><SpaceBetween direction="horizontal" size="xs">
           <Button onClick={() => setRoleDialogOpen(false)}>キャンセル</Button>
           <Button variant="primary" disabled={!/^\d{12}$/.test(targetAccount.trim()) || !/^[A-Za-z0-9+=,.@_-]{1,64}$/.test(targetRole.trim())}
-            onClick={() => void switchRole({ role_arn: `arn:aws:iam::${targetAccount.trim()}:role/${targetRole.trim()}`,
+            onClick={() => void switchRole({ role_arn: `arn:heterocloud:iam::${targetAccount.trim()}:role/${targetRole.trim()}`,
               session_name: "console-session", duration_seconds: 3600 }).then(() => navigate("/overview")).catch(() => undefined)}>
             切り替え
           </Button>

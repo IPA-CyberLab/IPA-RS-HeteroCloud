@@ -28,7 +28,7 @@ const baseNavigationItems: SideNavigationProps.Item[] = [
     items: [
       { type: "link", text: "アカウントと組織", href: "/organizations" },
       { type: "link", text: "リソース上限", href: "/organizations/quotas" },
-      { type: "link", text: "Identity Center", href: "/identity-center" },
+      { type: "link", text: "アカウントアクセス", href: "/identity-center" },
       { type: "link", text: "プロジェクト", href: "/projects" },
       { type: "link", text: "IAMプリンシパル", href: "/iam/principals" },
       { type: "link", text: "IAMポリシー", href: "/iam/policies" },
@@ -53,7 +53,7 @@ export const routeTitles: Record<string, string> = {
   "/overview": "コンソールホーム",
   "/organizations": "アカウントと組織",
   "/organizations/quotas": "リソース上限",
-  "/identity-center": "Identity Center",
+  "/identity-center": "アカウントアクセス",
   "/projects": "プロジェクト",
   "/iam/principals": "プリンシパル",
   "/iam/policies": "ポリシー",

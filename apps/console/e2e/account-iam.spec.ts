@@ -105,19 +105,19 @@ test("IAMグループ、アクセス許可の境界とロールを設定する",
     }
     if (path.endsWith("/iam/roles") && method === "POST") {
       const body = route.request().postDataJSON();
-      roles.push({ principal_id: "role", organization_id: "account", name: body.name, arn: "arn:aws:iam::100000000000:role/Reader", trust_policy: body.trust_policy, max_session_seconds: body.max_session_seconds, created_at: createdAt });
+      roles.push({ principal_id: "role", organization_id: "account", name: body.name, arn: "arn:heterocloud:iam::100000000000:role/Reader", trust_policy: body.trust_policy, max_session_seconds: body.max_session_seconds, created_at: createdAt });
       return route.fulfill({ status: 201, json: roles[0] });
     }
     if (path.endsWith("/iam/roles")) return route.fulfill({ json: { enabled: true, browser_switch_enabled: true, items: roles } });
     if (path.endsWith("/iam/roles/role/sessions")) return route.fulfill({ json: { items: roleSessions } });
     if (path.endsWith("/iam/roles/role/sessions/session") && method === "DELETE") { roleSessions[0].revoked_at = createdAt; return route.fulfill({ status: 204 }); }
-    if (path.endsWith("/sts/caller-identity")) return route.fulfill({ json: { account_id: "100000000000", arn: "arn:aws:iam::100000000000:user/principal", principal_id: "principal" } });
+    if (path.endsWith("/sts/caller-identity")) return route.fulfill({ json: { account_id: "100000000000", arn: "arn:heterocloud:iam::100000000000:user/principal", principal_id: "principal" } });
     if (path.endsWith("/sts/assume-role") && method === "POST") {
       if (route.request().postDataJSON().switch_console) {
-        activeRole = { session_id: "browser-session", organization_id: "account", account_number: "100000000000", account_name: "Example", principal_id: "role", role_arn: "arn:aws:iam::100000000000:role/Reader", session_name: "console-session", expires_at: new Date(Date.now() + 3_600_000).toISOString(), active: true };
+        activeRole = { session_id: "browser-session", organization_id: "account", account_number: "100000000000", account_name: "Example", principal_id: "role", role_arn: "arn:heterocloud:iam::100000000000:role/Reader", session_name: "console-session", expires_at: new Date(Date.now() + 3_600_000).toISOString(), active: true };
         return route.fulfill({ json: { switched: true, session_id: "browser-session", role_arn: activeRole.role_arn, account_id: "account", principal_id: "role", expires_at: activeRole.expires_at } });
       }
-      roleSessions.push({ id: "session", source_arn: "arn:aws:iam::100000000000:user/principal", session_name: "console-session", expires_at: createdAt, revoked_at: null, created_at: createdAt });
+      roleSessions.push({ id: "session", source_arn: "arn:heterocloud:iam::100000000000:user/principal", session_name: "console-session", expires_at: createdAt, revoked_at: null, created_at: createdAt });
       return route.fulfill({ json: { access_token: "hcr_fixture", token_type: "Bearer", session_id: "session", role_arn: route.request().postDataJSON().role_arn, account_id: "account", principal_id: "role", expires_at: createdAt } });
     }
     return route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } });
@@ -142,10 +142,11 @@ test("IAMグループ、アクセス許可の境界とロールを設定する",
   await page.getByLabel("信頼するアカウントID").fill("100000000000");
   await page.getByRole("button", { name: "ロールを作成" }).click();
   await expect(page.getByRole("cell", { name: "Reader", exact: true })).toBeVisible();
+  expect(roles[0].trust_policy).toMatchObject({ Statement: [{ Principal: { HeteroCloud: "arn:heterocloud:iam::100000000000:root" } }] });
   await page.getByLabel("ポリシーを付与するロール").selectOption("role");
   await page.getByLabel("ロールに付与するポリシー").selectOption("policy");
   await page.getByRole("button", { name: "ロールにポリシーを付与" }).click();
-  await page.getByLabel("引き受けるロールARN").fill("arn:aws:iam::100000000000:role/Reader");
+  await page.getByLabel("引き受けるロールARN").fill("arn:heterocloud:iam::100000000000:role/Reader");
   await page.getByRole("button", { name: "一時認証情報を発行" }).click();
   const credentials = page.getByRole("dialog", { name: "一時認証情報" });
   await expect(credentials.getByText("hcr_fixture")).toBeVisible();
@@ -193,5 +194,5 @@ test("IAM一覧の権限がなくても別アカウントのロールに切り�
   await dialog.getByRole("button", { name: "切り替え", exact: true }).click();
   await expect(page.locator('summary[aria-label="操作対象のアカウント"]')).toContainText("Target / Reader");
   expect(submittedPath).toBe("/api/v1/organizations/source/sts/assume-role");
-  expect(submittedArn).toBe("arn:aws:iam::100000000001:role/Reader");
+  expect(submittedArn).toBe("arn:heterocloud:iam::100000000001:role/Reader");
 });

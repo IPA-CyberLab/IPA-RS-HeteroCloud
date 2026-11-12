@@ -4,12 +4,12 @@ use heterocloud_store::Store;
 
 static NEXT: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
-// The preceding compatibility release embeds the same sources but stops at
-// 35. Exercise it before and after the current release activates 36.
-async fn compatibility_release(store: &Store) -> Result<(), Box<dyn Error>> {
+// A staged release embeds later migration sources but applies only its own
+// ceiling, and can still restart after the next compatible release is live.
+async fn compatibility_release(store: &Store, ceiling: i64) -> Result<(), Box<dyn Error>> {
     let mut connection = store.pool().acquire().await?;
     connection.close_on_drop();
-    let result = NEXT.run_to(35, &mut *connection).await;
+    let result = NEXT.run_to(ceiling, &mut *connection).await;
     let closed = connection.close().await;
     result?;
     closed?;
@@ -33,7 +33,7 @@ async fn staged_release_survives_additive_upgrade_but_rejects_unknown_versions()
         .execute(store.pool())
         .await?;
 
-    compatibility_release(&store).await?;
+    compatibility_release(&store, 35).await?;
     let applied: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=36)")
             .fetch_one(store.pool())
@@ -42,8 +42,8 @@ async fn staged_release_survives_additive_upgrade_but_rejects_unknown_versions()
         !applied,
         "the compatibility release must not activate migration 36"
     );
-    store.migrate().await?;
-    compatibility_release(&store).await?;
+    compatibility_release(&store, 36).await?;
+    compatibility_release(&store, 35).await?;
     let applied: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=36)")
             .fetch_one(store.pool())
@@ -53,16 +53,10 @@ async fn staged_release_survives_additive_upgrade_but_rejects_unknown_versions()
         "a later release must be able to activate migration 36"
     );
 
-    // Once this compatibility release is everywhere, a subsequent release
-    // may activate 37. A process that embeds 37 but stops at 36 can still
-    // start, including after an operational rollback to this release.
-    let mut connection = store.pool().acquire().await?;
-    connection.close_on_drop();
-    let result = NEXT.run_to(37, &mut *connection).await;
-    let closed = connection.close().await;
-    result?;
-    closed?;
+    // The 36-ceiling compatibility release embeds migration 37. Check that
+    // it can restart after the current release has activated that migration.
     store.migrate().await?;
+    compatibility_release(&store, 36).await?;
     let applied: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=37)")
             .fetch_one(store.pool())

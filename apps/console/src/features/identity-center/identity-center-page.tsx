@@ -90,7 +90,7 @@ export function IdentityCenterPage() {
       execute(() => editing ? api.identityCenter.updatePermissionSet(management, editing.id, value) : api.identityCenter.createPermissionSet(management, { ...value, name: setName.trim() }), () => setSetOpen(false));
     } catch (error) { setFormError(error instanceof Error ? error.message : "ポリシーを確認してください。"); }
   };
-  if (activeRole) return <SpaceBetween size="l"><PageHeader title="Identity Center" description="アカウントアクセスを管理します。" /><section className="card border border-base-300 bg-base-100 p-5"><p>現在はロールを使用しています。割り当て一覧に戻るには元のアカウントへ戻ってください。</p><Button onClick={() => void exitRole()}>ロールを終了</Button></section></SpaceBetween>;
+  if (activeRole) return <SpaceBetween size="l"><PageHeader title="アカウントアクセス" description="アカウントアクセスを管理します。" /><section className="card border border-base-300 bg-base-100 p-5"><p>現在はロールを使用しています。割り当て一覧に戻るには元のアカウントへ戻ってください。</p><Button onClick={() => void exitRole()}>ロールを終了</Button></section></SpaceBetween>;
   if (organization.isPending) return <PageLoading label="組織を読み込んでいます" />;
   if (organization.isError || !management) return <FormError message="組織情報を取得できませんでした。" />;
   const groupOptions = (groups.data?.items ?? []).map((group) => ({ value: group.id, label: group.name }));
@@ -100,7 +100,7 @@ export function IdentityCenterPage() {
   const setOptions = (sets.data?.items ?? []).map((set) => ({ value: set.id, label: set.name }));
   const actorOptions = subjectType === "user" ? userOptions : groupOptions;
   return <SpaceBetween size="l">
-    <PageHeader title="Identity Center" description="組織内のアカウントに、ユーザーやグループごとの権限セットを割り当てます。" />
+    <PageHeader title="アカウントアクセス" description="組織内のアカウントに、ユーザーやグループごとの権限セットを割り当てます。" />
     {activeRole ? <section className="card border border-base-300 bg-base-100 p-5"><p>現在はロールを使用しています。割り当て一覧に戻るには元のアカウントへ戻ってください。</p><Button onClick={() => void exitRole()}>ロールを終了</Button></section> : <>
       <section className="card border border-base-300 bg-base-100 p-5"><SpaceBetween size="m">
         <Header variant="h2" description="利用できる権限セットを選ぶと、対象アカウントへ切り替わります。">自分のアカウントアクセス</Header>

@@ -193,7 +193,7 @@ export function IamPoliciesPage() {
           <SpaceBetween direction="horizontal" size="xs"><Button variant={mode === "visual" ? "primary" : "normal"} onClick={() => setMode("visual")}>ビジュアル</Button>
             <Button variant={mode === "json" ? "primary" : "normal"} onClick={() => setMode("json")}>JSON</Button></SpaceBetween>
           {mode === "json" ? <SpaceBetween size="m"><FormField label="ポリシー名"><Input value={name} onChange={({ detail }) => setName(detail.value.slice(0, 120))} /></FormField>
-            <FormField label="ポリシーJSON" description="Action、NotAction、Resource、NotResourceと、現在時刻を使った日付条件に対応しています。その他の条件とPrincipalは使用できません。">
+            <FormField label="ポリシーJSON" description="Action、NotAction、Resource、NotResourceと、heterocloud:CurrentTime の日付条件に対応しています。その他の条件とPrincipalは使用できません。">
               <Textarea rows={14} value={policyJson} onChange={({ detail }) => setPolicyJson(detail.value)} />
             </FormField><FormError message={jsonError || null} /></SpaceBetween> : <>
           <ColumnLayout columns={2}>

@@ -962,6 +962,16 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
     .await?;
     assert_eq!(status, StatusCode::CREATED);
     let role_arn = role["arn"].as_str().ok_or("role arn")?;
+    assert!(role_arn.starts_with("arn:heterocloud:iam::"));
+    assert_eq!(
+        role["trust_policy"]["Statement"]["Principal"]["HeteroCloud"],
+        format!("arn:heterocloud:iam::{source_number}:root")
+    );
+    assert!(
+        role["trust_policy"]["Statement"]["Principal"]
+            .get("AWS")
+            .is_none()
+    );
     let role_principal = heterocloud_domain::PrincipalId(uuid::Uuid::parse_str(
         role["principal_id"].as_str().ok_or("role principal")?,
     )?);
@@ -1076,12 +1086,13 @@ async fn organization_api_enforces_iam_and_inherited_scp_for_all_credentials()
         state.clone(),
         "POST",
         &assume_path,
-        Some(json!({"role_arn":role_arn,"session_name":"provider-credentials"})),
+        Some(json!({"role_arn":role_arn.replace("arn:heterocloud:iam::", "arn:aws:iam::"),"session_name":"provider-credentials"})),
         None,
         Some(source_key),
     )
     .await?;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(provider_session["role_arn"], role_arn);
     let provider_role_token = provider_session["access_token"]
         .as_str()
         .ok_or("provider role token")?;

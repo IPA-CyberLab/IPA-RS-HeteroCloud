@@ -98,6 +98,7 @@ async fn assignments_provision_managed_roles_and_revocation_never_revives_sessio
             &semantics_digest(),
         )
         .await?;
+    assert!(assignment.role_arn.starts_with("arn:heterocloud:iam::"));
     assert!(
         store
             .is_identity_center_role(account.id, PrincipalId(assignment.role_principal_id))

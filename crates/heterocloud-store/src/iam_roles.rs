@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use heterocloud_domain::{OrganizationId, PolicyDocument, PrincipalId, UserId};
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -12,6 +12,7 @@ pub struct IamRole {
     pub organization_id: Uuid,
     pub name: String,
     pub arn: String,
+    #[serde(serialize_with = "serialize_trust_policy")]
     pub trust_policy: Value,
     pub max_session_seconds: i32,
     pub managed_by_identity_center: bool,
@@ -35,6 +36,7 @@ pub struct IamRoleSession {
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
 pub struct IamRoleSessionInfo {
     pub id: Uuid,
+    #[serde(serialize_with = "serialize_principal_identifier")]
     pub source_arn: String,
     pub session_name: String,
     pub expires_at: DateTime<Utc>,
@@ -84,10 +86,71 @@ pub struct NewIamRoleSession<'a> {
 }
 
 const ROLE_SELECT: &str = "SELECT r.principal_id, r.organization_id, r.name,
-    ('arn:aws:iam::' || a.account_number::text || ':role/' || r.name) AS arn,
+    ('arn:heterocloud:iam::' || a.account_number::text || ':role/' || r.name) AS arn,
     r.trust_policy, r.max_session_seconds, r.created_at,
     EXISTS(SELECT 1 FROM identity_center_account_roles ic WHERE ic.account_id=r.organization_id AND ic.role_principal_id=r.principal_id) AS managed_by_identity_center
     FROM iam_roles r JOIN organizations a ON a.id = r.organization_id";
+
+// Preserve the stored policy (including the value checked in the role-session
+// transaction), while presenting older platform-generated identifiers under
+// the platform's own namespace. Unsupported or ambiguous documents are not
+// rewritten: validation continues to reject them.
+fn branded_principal(value: &str) -> String {
+    value.strip_prefix("arn:aws:iam::").map_or_else(
+        || value.to_owned(),
+        |suffix| format!("arn:heterocloud:iam::{suffix}"),
+    )
+}
+
+fn serialize_principal_identifier<S: Serializer>(
+    value: &str,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    branded_principal(value).serialize(serializer)
+}
+
+fn branded_trust_policy(value: &Value) -> Value {
+    fn rewrite_statement(statement: &mut Value) {
+        let Some(principal) = statement
+            .get_mut("Principal")
+            .and_then(Value::as_object_mut)
+        else {
+            return;
+        };
+        if principal.contains_key("AWS") && principal.contains_key("HeteroCloud") {
+            return;
+        }
+        if let Some(old) = principal.remove("AWS") {
+            principal.insert("HeteroCloud".into(), old);
+        }
+        if let Some(accounts) = principal.get_mut("HeteroCloud") {
+            match accounts {
+                Value::String(account) => *account = branded_principal(account),
+                Value::Array(values) => {
+                    for value in values {
+                        if let Value::String(account) = value {
+                            *account = branded_principal(account);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut output = value.clone();
+    if let Some(statements) = output.get_mut("Statement") {
+        match statements {
+            Value::Array(statements) => statements.iter_mut().for_each(rewrite_statement),
+            statement => rewrite_statement(statement),
+        }
+    }
+    output
+}
+
+fn serialize_trust_policy<S: Serializer>(value: &Value, serializer: S) -> Result<S::Ok, S::Error> {
+    branded_trust_policy(value).serialize(serializer)
+}
 
 impl Store {
     pub async fn browser_roles_enabled(&self) -> Result<bool, StoreError> {
@@ -104,7 +167,7 @@ impl Store {
     ) -> Result<Option<BrowserRoleSession>, StoreError> {
         Ok(sqlx::query_as::<_, BrowserRoleSession>("SELECT rs.id AS session_id, rs.organization_id,
             a.account_number::text AS account_number, a.name AS account_name, rs.role_principal_id AS principal_id,
-            ('arn:aws:iam::' || a.account_number::text || ':role/' || r.name) AS role_arn,
+            ('arn:heterocloud:iam::' || a.account_number::text || ':role/' || r.name) AS role_arn,
             rs.session_name, rs.expires_at, (rs.revoked_at IS NULL AND rs.expires_at > now() AND p.enabled AND identity_center_session_is_active(rs.id)) AS active
             FROM sessions s JOIN iam_role_sessions rs ON rs.id = s.active_role_session_id
             JOIN iam_roles r ON r.principal_id = rs.role_principal_id AND r.organization_id = rs.organization_id
@@ -283,7 +346,7 @@ impl Store {
         }
         if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM identity_center_account_roles WHERE account_id=$1 AND role_principal_id=$2)")
             .bind(account.0).bind(role.0).fetch_one(&mut *tx).await? {
-            return Err(StoreError::RequestRejected("Identity Center roles are managed by their permission sets.".into()));
+            return Err(StoreError::RequestRejected("Account access roles are managed by their permission sets.".into()));
         }
         let in_use = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM iam_bindings WHERE organization_id = $1 AND principal_id = $2) OR
             EXISTS(SELECT 1 FROM iam_role_sessions WHERE organization_id = $1 AND role_principal_id = $2 AND revoked_at IS NULL AND expires_at > now()) OR
@@ -312,8 +375,8 @@ impl Store {
         Ok(sqlx::query_as::<_, (String, String)>(
             "SELECT a.account_number::text,
                 CASE WHEN r.principal_id IS NOT NULL
-                    THEN 'arn:aws:iam::' || a.account_number::text || ':role/' || r.name
-                    ELSE 'arn:aws:iam::' || a.account_number::text || ':user/' || p.id::text END
+                    THEN 'arn:heterocloud:iam::' || a.account_number::text || ':role/' || r.name
+                    ELSE 'arn:heterocloud:iam::' || a.account_number::text || ':user/' || p.id::text END
              FROM principals p JOIN organizations a ON a.id = p.organization_id
              LEFT JOIN iam_roles r ON r.principal_id = p.id AND r.organization_id = p.organization_id
              WHERE p.organization_id = $1 AND p.id = $2 AND p.enabled")
@@ -442,5 +505,42 @@ impl Store {
         Ok(sqlx::query_as::<_, IamRoleSessionInfo>("SELECT id, source_arn, session_name, expires_at, revoked_at, created_at
             FROM iam_role_sessions WHERE organization_id = $1 AND role_principal_id = $2 ORDER BY created_at DESC LIMIT 1000")
             .bind(account.0).bind(role.0).fetch_all(&self.pool).await?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{branded_principal, branded_trust_policy};
+    use serde_json::json;
+
+    #[test]
+    fn legacy_trust_is_presented_with_platform_names_without_mutating_the_source() {
+        let original = json!({"Version":"2012-10-17","Statement":[
+            {"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"AWS":["arn:aws:iam::111111111111:root","222222222222"]}},
+            {"Effect":"Deny","Action":"sts:AssumeRole","Principal":{"AWS":"arn:aws:iam::111111111111:user/blocked"}},
+            {"Effect":"Deny","Action":"sts:AssumeRole","Principal":"*"}
+        ]});
+        let shown = branded_trust_policy(&original);
+        assert_eq!(
+            shown["Statement"][0]["Principal"]["HeteroCloud"][0],
+            "arn:heterocloud:iam::111111111111:root"
+        );
+        assert_eq!(
+            shown["Statement"][0]["Principal"]["HeteroCloud"][1],
+            "222222222222"
+        );
+        assert_eq!(
+            shown["Statement"][1]["Principal"]["HeteroCloud"],
+            "arn:heterocloud:iam::111111111111:user/blocked"
+        );
+        assert_eq!(shown["Statement"][2]["Principal"], "*");
+        assert!(shown["Statement"][0]["Principal"].get("AWS").is_none());
+        assert!(original["Statement"][0]["Principal"].get("AWS").is_some());
+        assert_eq!(
+            branded_principal("arn:aws:iam::111111111111:user/alice"),
+            "arn:heterocloud:iam::111111111111:user/alice"
+        );
+        let ambiguous = json!({"Statement":{"Principal":{"AWS":"*","HeteroCloud":"*"}}});
+        assert_eq!(branded_trust_policy(&ambiguous), ambiguous);
     }
 }

@@ -71,7 +71,7 @@ struct SessionAssignment {
 
 const ASSIGNMENT_SELECT: &str = "SELECT a.id, a.permission_set_id, ps.name AS permission_set_name,
     a.account_id, account.account_number::text AS account_number, account.name AS account_name,
-    a.role_principal_id, ('arn:aws:iam::' || account.account_number::text || ':role/' || r.name) AS role_arn,
+    a.role_principal_id, ('arn:heterocloud:iam::' || account.account_number::text || ':role/' || r.name) AS role_arn,
     a.subject_type, a.subject_id, ps.session_duration_seconds, a.created_at
     FROM identity_center_assignments a
     JOIN identity_center_permission_sets ps ON ps.id=a.permission_set_id AND ps.organization_id=a.organization_id
@@ -420,7 +420,7 @@ impl Store {
             let policy = Uuid::now_v7();
             let name = format!("HCIdentityCenter_{}", permission_set.simple());
             let trust = json!({"Version":"2012-10-17","Statement":{"Effect":"Allow","Action":"sts:AssumeRole",
-                "Principal":{"AWS":format!("arn:aws:iam::{management_number}:root")}}});
+                "Principal":{"HeteroCloud":format!("arn:heterocloud:iam::{management_number}:root")}}});
             sqlx::query("INSERT INTO principals(id,organization_id,kind,name,enabled) VALUES($1,$2,'service_account',$3,true)")
                 .bind(role).bind(account.0).bind(&name).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO iam_roles(principal_id,organization_id,name,trust_policy,max_session_seconds) VALUES($1,$2,$3,$4,43200)")
@@ -505,7 +505,7 @@ impl Store {
         }
         let id = Uuid::now_v7();
         let expires_at = Utc::now() + Duration::seconds(i64::from(row.session_duration_seconds));
-        let source_arn = format!("arn:aws:iam::{source_number}:user/{source}");
+        let source_arn = format!("arn:heterocloud:iam::{source_number}:user/{source}");
         let session_name = format!("identity-center-{}", user.0.simple());
         sqlx::query("INSERT INTO iam_role_sessions(id,organization_id,role_principal_id,source_organization_id,source_principal_id,source_arn,session_name,token_hash,expires_at,
             identity_center_assignment_id,identity_center_assignment_generation,identity_center_user_id,identity_center_group_membership_id,identity_center_target_principal_id,identity_center_source_membership_id,identity_center_target_membership_id)
@@ -517,7 +517,10 @@ impl Store {
             session_id: id,
             account_id: row.account_id,
             principal_id: row.role_principal_id,
-            role_arn: format!("arn:aws:iam::{}:role/{}", row.account_number, row.role_name),
+            role_arn: format!(
+                "arn:heterocloud:iam::{}:role/{}",
+                row.account_number, row.role_name
+            ),
             expires_at,
         })
     }

@@ -35,7 +35,7 @@ export function IamRoles({ accountId, policies }: { accountId: string; policies:
     client.invalidateQueries({ queryKey: ["organizations", accountId, "iam", "bindings"] }),
   ]);
   const create = useMutation({ mutationFn: () => api.iam.roles.create(accountId, { name: name.trim(), max_session_seconds: Number(maxHours) * 3600,
-    trust_policy: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: "sts:AssumeRole", Principal: { AWS: `arn:aws:iam::${trustedAccount}:root` } }] } }),
+    trust_policy: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: "sts:AssumeRole", Principal: { HeteroCloud: `arn:heterocloud:iam::${trustedAccount}:root` } }] } }),
     onSuccess: async () => { setName(""); setTrustedAccount(""); await refresh(); } });
   const parseJson = (text: string): Record<string, unknown> => {
     const value: unknown = JSON.parse(text);
@@ -67,7 +67,7 @@ export function IamRoles({ accountId, policies }: { accountId: string; policies:
       <Button disabled={!roles.data?.enabled || !name.trim() || !/^\d{12}$/.test(trustedAccount) || !Number.isInteger(Number(maxHours)) || Number(maxHours) < 1 || Number(maxHours) > 12 || create.isPending} onClick={() => create.mutate()}>ロールを作成</Button>
     </SpaceBetween>
     <div className="overflow-x-auto"><table className="table"><thead><tr><th>ロール</th><th>ARN</th><th>操作</th></tr></thead><tbody>
-      {roles.data?.items.map((role) => <tr key={role.principal_id}><td>{role.name}{role.managed_by_identity_center ? " · Identity Center 管理" : ""}</td><td><code>{role.arn}</code></td><td><SpaceBetween direction="horizontal" size="xs"><Button disabled={!roles.data?.enabled || role.managed_by_identity_center} onClick={() => { update.reset(); setTrustText(JSON.stringify(role.trust_policy, null, 2)); setEditing(role); }}>信頼を編集</Button><Button disabled={!roles.data?.enabled || role.managed_by_identity_center || remove.isPending} onClick={() => remove.mutate(role.principal_id)}>削除</Button></SpaceBetween></td></tr>)}
+      {roles.data?.items.map((role) => <tr key={role.principal_id}><td>{role.name}{role.managed_by_identity_center ? " · アカウントアクセス 管理" : ""}</td><td><code>{role.arn}</code></td><td><SpaceBetween direction="horizontal" size="xs"><Button disabled={!roles.data?.enabled || role.managed_by_identity_center} onClick={() => { update.reset(); setTrustText(JSON.stringify(role.trust_policy, null, 2)); setEditing(role); }}>信頼を編集</Button><Button disabled={!roles.data?.enabled || role.managed_by_identity_center || remove.isPending} onClick={() => remove.mutate(role.principal_id)}>削除</Button></SpaceBetween></td></tr>)}
     </tbody></table></div>
     <SpaceBetween direction="horizontal" size="xs">
       <Select ariaLabel="ポリシーを付与するロール" options={roleOptions} selectedOption={roleOptions.find((item) => item.value === roleId) ?? null} onChange={({ detail }) => setRoleId(detail.selectedOption.value ?? "")} />

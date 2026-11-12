@@ -7,7 +7,7 @@ export function policyTimeConditions(start: string, end: string): Record<string,
   }
   if (from === undefined && until === undefined) return undefined;
   return {
-    ...(from === undefined ? {} : { DateGreaterThanEquals: { "aws:CurrentTime": [new Date(from).toISOString()] } }),
-    ...(until === undefined ? {} : { DateLessThan: { "aws:CurrentTime": [new Date(until).toISOString()] } }),
+    ...(from === undefined ? {} : { DateGreaterThanEquals: { "heterocloud:CurrentTime": [new Date(from).toISOString()] } }),
+    ...(until === undefined ? {} : { DateLessThan: { "heterocloud:CurrentTime": [new Date(until).toISOString()] } }),
   };
 }

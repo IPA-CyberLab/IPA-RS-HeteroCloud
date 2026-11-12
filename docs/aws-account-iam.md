@@ -43,12 +43,13 @@ enforced; its account-specific limits are shown separately. Ordinary members
 see only their own allocation rather than other members' quota details.
 
 Identity policies, permissions boundaries, SCPs, and role session policies
-support AWS date comparisons on the always-present `aws:CurrentTime` key:
+support date comparisons on the always-present `heterocloud:CurrentTime` key:
 `DateEquals`, `DateNotEquals`, `DateLessThan`, `DateLessThanEquals`,
 `DateGreaterThan`, and `DateGreaterThanEquals`. Values may be RFC 3339 timestamps
 or whole Unix seconds. A request uses one captured timestamp throughout all
 layers. Other condition keys and operators are rejected; in particular client
-IP headers are not trusted as a source for `aws:SourceIp`.
+IP headers are not trusted as a source for `aws:SourceIp`. The legacy
+`aws:CurrentTime` spelling remains accepted for saved policies.
 
 Registry storage and direct provider credential usage remain account-scoped.
 Do not assume those are organization-wide.
@@ -65,6 +66,10 @@ expired or disabled browser role fails closed until the user explicitly exits
 the role, rather than silently reverting to the original identity.
 The account menu accepts a destination account number and role name, including
 roles in accounts where the user has no direct membership or IAM list access.
+New role and principal identifiers use `arn:heterocloud:iam::` and trust
+policies use the `HeteroCloud` principal key. Older identifiers and trust keys
+remain accepted and are matched to the same resource, including explicit
+denies. Existing policy documents do not need to be rewritten.
 
 ## Deployment and activation
 
@@ -132,7 +137,7 @@ operators or keys beyond the time subset above, general AWS service ARNs, AWS SD
 or direct enforcement on previously issued data-plane credentials. Unsupported
 policy fields are rejected. AWS resource and action names cannot be assumed to
 map to HeteroCloud resources. Provider-specific controls must remain in place.
-Role trust supports AWS account IDs, root ARNs and explicit HeteroCloud IAM
+Role trust supports HeteroCloud account IDs, root identifiers and explicit HeteroCloud IAM
 user/role ARNs; HeteroCloud user ARNs use the stable principal UUID. It always
 requires an identity-based `sts:AssumeRole` allow, including for same-account
 callers, which is stricter than some AWS resource-policy grants. The token is a
