@@ -640,6 +640,7 @@ export interface FlashServiceSpec {
   image: string;
   replicas: number;
   stopped?: boolean;
+  ssh_enabled?: boolean;
   autoscaling?: FlashAutoscaling;
   cpu_millis: number;
   memory_mib: number;

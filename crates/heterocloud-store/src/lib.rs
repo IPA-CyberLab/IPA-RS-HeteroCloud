@@ -3647,6 +3647,30 @@ impl Store {
             validate_vpc_attachment(&mut transaction, organization_id, project_id, id, &spec)
                 .await?;
         }
+        // Gateway access is a control-plane setting. Changing only this flag
+        // must not create a new workload generation or restart a container.
+        if provider == "flash" && existing.name == name && existing.project_id == project_id.0 {
+            let mut current: FlashSpec = serde_json::from_value(existing.spec.clone())?;
+            let desired: FlashSpec = serde_json::from_value(spec.clone())?;
+            let ssh_changed = current.ssh_enabled != desired.ssh_enabled;
+            current.ssh_enabled = desired.ssh_enabled;
+            if ssh_changed && desired.ssh_enabled.is_some() && current == desired {
+                let row = sqlx::query_as::<_, ServiceRow>(
+                    "UPDATE service_instances SET spec = jsonb_set(spec, '{ssh_enabled}', to_jsonb($4::boolean)), updated_at = now()
+                     WHERE id = $1 AND organization_id = $2 AND provider = $3
+                     RETURNING id, organization_id, project_id, provider, name, generation,
+                               state, spec, status, created_at, updated_at",
+                )
+                .bind(id.0)
+                .bind(organization_id.0)
+                .bind(provider)
+                .bind(desired.ssh_enabled)
+                .fetch_one(&mut *transaction)
+                .await?;
+                transaction.commit().await?;
+                return ServiceInstance::try_from(row);
+            }
+        }
         if provider == "flash"
             && (existing.spec.get("task_role") != spec.get("task_role")
                 || project_id.0 != existing.project_id

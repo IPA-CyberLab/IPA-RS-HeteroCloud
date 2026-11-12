@@ -24,7 +24,7 @@ const phases: Record<FlashBackup["phase"], string> = {
   pending: "受付済み", creating: "保存中", ready: "復元可能", error: "保存失敗", deleting: "削除中",
 };
 
-export function FlashBackupsPanel({ organizationId, serviceId }: { organizationId: string; serviceId?: string }) {
+export function FlashBackupsPanel({ organizationId, serviceId, editable = true }: { organizationId: string; serviceId?: string; editable?: boolean }) {
   const navigate = useNavigate();
   const client = useQueryClient();
   const key = ["organizations", organizationId, "flash", "backups", serviceId ?? "all"];
@@ -68,11 +68,11 @@ export function FlashBackupsPanel({ organizationId, serviceId }: { organizationI
       const state=row.original.status.restore_verification?.phase;
       return state==="passed"?"検証済み":state==="failed"?"検証失敗":state?"検証中":"未検証";
     }},
-    { id: "actions", header: "操作", cell: ({ row }) => <SpaceBetween direction="horizontal" size="s">
+    ...(editable ? [{ id: "actions", header: "操作", cell: ({ row }: {row: import("@tanstack/react-table").Row<FlashBackup>}) => <SpaceBetween direction="horizontal" size="s">
       <Button disabled={row.original.phase !== "ready" || row.original.delete_requested} onClick={() => choose(row.original, "restore")}>復元</Button>
       <Button disabled={row.original.phase!=="ready"||row.original.delete_requested||verify.isPending||["queued","restoring","cleaning"].includes(row.original.status.restore_verification?.phase??"")} onClick={()=>verify.mutate(row.original.id)}>復元を検証</Button>
       <Button disabled={row.original.delete_requested} onClick={() => choose(row.original, "delete")}>削除</Button>
-    </SpaceBetween> },
+    </SpaceBetween> }] : []),
   ];
   const error = create.error || query.error || verify.error;
   const modalError = restore.error || remove.error;
@@ -83,8 +83,8 @@ export function FlashBackupsPanel({ organizationId, serviceId }: { organizationI
     <SpaceBetween size="m">
       <Box>/root の内容を保存します。サービスを削除してもバックアップは残ります。環境変数、シークレット接続、追加マウントは復元対象に含みません。</Box>
       {destinations.isError && <Alert type="warning">組織の保存先を取得できません。Syouyuは引き続き選択できます。</Alert>}
-      {destinations.data && <FlashBackupDestinations organizationId={organizationId} items={destinations.data.items}/>}
-      {serviceId && <>
+      {destinations.data && <FlashBackupDestinations organizationId={organizationId} items={destinations.data.items} editable={editable}/>}
+      {serviceId && editable && <>
         <Box>稼働中の保存はクラッシュ整合性です。データベースなど、アプリケーション側で書き込みの停止が必要なデータは、サービスを停止してから保存してください。</Box>
         <SpaceBetween direction="horizontal" size="s">
           <FormField label="バックアップ名">
@@ -98,7 +98,7 @@ export function FlashBackupsPanel({ organizationId, serviceId }: { organizationI
       {create.isSuccess && <Alert type="success">バックアップを受け付けました。「復元可能」になるまでお待ちください。</Alert>}
       {verify.isSuccess&&<Alert type="success">別ディスクへ復元して読み取りを検証します。保存元のコンテナはそのまま稼働します。</Alert>}
       {query.isPending && <StatusIndicator type="loading">バックアップを読み込み中</StatusIndicator>}
-      {query.data && <DataTable columns={columns} data={query.data.items} getRowId={row => row.id} emptyTitle="バックアップはありません" emptyDescription="サービス詳細からバックアップを作成できます。" />}
+      {query.data && <DataTable columns={columns} data={query.data.items} getRowId={row => row.id} emptyTitle="バックアップはありません" emptyDescription="編集画面からバックアップを作成できます。" />}
       {query.data?.items.some(b => b.status.provider_unavailable) && <Alert type="warning">バックアップ保存先の状態を確認できません。表示は最後に取得した状態です。復元時には保存先への接続を再確認します。</Alert>}
       {query.data?.items.some(b => b.phase === "error") && <Alert type="error">保存に失敗したバックアップがあります。失敗したバックアップは削除し、保存元と容量を確認して再作成してください。</Alert>}
       <Modal visible={Boolean(selected)} onDismiss={() => !busy && setSelected(null)} header={operation === "restore" ? "バックアップから復元" : "バックアップを削除"}

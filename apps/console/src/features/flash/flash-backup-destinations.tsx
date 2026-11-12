@@ -11,7 +11,7 @@ export function useBackupDestinations(organizationId: string) {
 
 const empty = (): FlashBackupDestinationInput => ({ name: "", request_id: crypto.randomUUID(), endpoint: "", bucket: "", region: "", prefix: "", virtual_hosted: false, access_key: "", secret_key: "" });
 
-export function FlashBackupDestinations({organizationId, items}: {organizationId: string; items: FlashBackupDestination[]}) {
+export function FlashBackupDestinations({organizationId, items, editable = true}: {organizationId: string; items: FlashBackupDestination[]; editable?: boolean}) {
   const client = useQueryClient();
   const [open, setOpen] = useState(false);
   const [rotation, setRotation] = useState<FlashBackupDestination | null>(null);
@@ -26,8 +26,8 @@ export function FlashBackupDestinations({organizationId, items}: {organizationId
   const field = (key: keyof FlashBackupDestinationInput, value: string | boolean) => setInput(current => ({ ...current, [key]: value, ...(!["access_key", "secret_key"].includes(key) ? {request_id: crypto.randomUUID()} : {}) }));
   return <SpaceBetween size="s">
     <Box>保存先: Syouyu（既定）</Box>
-    {items.map(item => <Box key={item.id}>{item.name} — {item.bucket} / {item.state === "ready" ? "前回接続可能" : "接続確認中"} <Button onClick={() => { setRotation(item); setInput(empty()); setOpen(true); }}>認証情報を更新</Button></Box>)}
-    <Button onClick={() => { setRotation(null); setInput(empty()); setOpen(true); }}>S3の保存先を追加</Button>
+    {items.map(item => <Box key={item.id}>{item.name} — {item.bucket} / {item.state === "ready" ? "前回接続可能" : "接続確認中"} {editable && <Button onClick={() => { setRotation(item); setInput(empty()); setOpen(true); }}>認証情報を更新</Button>}</Box>)}
+    {editable && <Button onClick={() => { setRotation(null); setInput(empty()); setOpen(true); }}>S3の保存先を追加</Button>}
     <Modal visible={open} onDismiss={dismiss} header={rotation ? "S3の認証情報を更新" : "S3の保存先を追加"} footer={<SpaceBetween direction="horizontal" size="s"><Button disabled={save.isPending} onClick={dismiss}>キャンセル</Button><Button variant="primary" loading={save.isPending} disabled={!input.access_key || !input.secret_key || (!rotation && (!input.name || !input.endpoint || !input.bucket || !input.region))} onClick={() => save.mutate()}>保存</Button></SpaceBetween>}>
       <SpaceBetween size="m">
         <Box>認証情報はシークレットとして保存し、再表示しません。S3には指定プレフィックス以下の組織専用領域を使用します。</Box>

@@ -39,6 +39,14 @@ class FlashSshChart(unittest.TestCase):
         self.assertEqual(svc["spec"]["type"], "ClusterIP")
         self.assertNotIn("externalIPs", svc["spec"])
 
+    def test_public_listener_is_explicit(self):
+        docs = render({"flashSsh":{"enabled":True,"hostKeySecretName":"test-host-key","tcp":{
+            "enabled":True,"listenAddress":"0.0.0.0","advertisedHost":"ssh.example.com"}}})
+        api = next(x for x in docs if x["kind"] == "Deployment" and x["metadata"]["name"] == "test-heterocloud")
+        args = api["spec"]["template"]["spec"]["containers"][0]["args"]
+        self.assertIn("--flash-ssh-listen=0.0.0.0:2222", args)
+        self.assertIn("--flash-ssh-advertised-host=ssh.example.com", args)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1038,6 +1038,10 @@ pub struct FlashSpec {
     /// Explicit operator stop; preserves the service and its persistent home.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stopped: bool,
+    /// SSH is denied unless explicitly enabled. None preserves compatibility
+    /// with older clients that do not send this field when updating a service.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub autoscaling: Option<FlashAutoscaling>,
     pub cpu_millis: u32,
@@ -1804,6 +1808,7 @@ mod tests {
     fn flash_spec() -> FlashSpec {
         FlashSpec {
             stopped: false,
+            ssh_enabled: None,
             region: "heteronet-global".into(),
             image: "ghcr.io/example/game-server:v1".into(),
             task_role: None,

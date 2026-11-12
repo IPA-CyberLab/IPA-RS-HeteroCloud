@@ -5,7 +5,10 @@ on:
     paths:
       - 'crates/heterocloud-api/**'
       - 'crates/heterocloud-cli/**'
+      - 'crates/heterocloud-domain/**'
       - 'crates/heterocloud-store/**'
+      - 'crates/heterocloud-worker/**'
+      - 'deploy/helm/heterocloud/**'
       - 'apps/console/**'
       - 'migrations/**'
       - 'Cargo.toml'
@@ -50,6 +53,7 @@ jobs:
         run: cargo test --locked -p heterocloud-api --test flash_ssh -- --nocapture
       - run: 'cargo test --locked -p heterocloud-api --lib ssh_routes::tests'
       - run: 'cargo test --locked -p heterocloud-cli --lib ssh::tests'
+      - run: 'cargo test --locked -p heterocloud-worker --bin heterocloud-worker syouyu_provider_payload_excludes_management_metadata'
       - uses: actions/setup-node@v7
         with:
           node-version: 24

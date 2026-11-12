@@ -4726,6 +4726,9 @@ async fn update_flash_service(
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     let existing = flash_service(&state, organization_id, service_instance_id).await?;
     let prior: FlashSpec = serde_json::from_value(existing.spec).map_err(|_| ApiError::Internal)?;
+    if request.spec.ssh_enabled.is_none() {
+        request.spec.ssh_enabled = prior.ssh_enabled;
+    }
     if request.spec.restore_from_backup_id.is_some()
         && request.spec.restore_from_backup_id != prior.restore_from_backup_id
     {
@@ -8441,6 +8444,7 @@ mod tests {
         );
         let spec = FlashSpec {
             stopped: false,
+            ssh_enabled: None,
             region: "heteronet-global".into(),
             image: "ghcr.io/example/udp-server:v1".into(),
             task_role: None,

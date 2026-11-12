@@ -203,6 +203,7 @@ pub(super) fn restored_spec(value: Value, id: Uuid) -> Result<FlashSpec, ApiErro
     let mut spec: FlashSpec = serde_json::from_value(value).map_err(|_| ApiError::Internal)?;
     spec.restore_from_backup_id = Some(id);
     spec.stopped = true;
+    spec.ssh_enabled = Some(false);
     spec.replicas = 1;
     spec.autoscaling = None;
     spec.task_role = None;
@@ -318,12 +319,13 @@ mod tests {
     fn restored_workload_cannot_start_with_old_network_or_identity()
     -> Result<(), Box<dyn std::error::Error>> {
         let input = json!({"region":"test","image":"nginx:stable","replicas":2,"cpu_millis":100,"memory_mib":128,
-            "task_role":Uuid::now_v7(),"ports":[{"name":"http","protocol":"tcp","container_port":80,"service_port":32123}],
+            "task_role":Uuid::now_v7(),"ssh_enabled":true,"ports":[{"name":"http","protocol":"tcp","container_port":80,"service_port":32123}],
             "exposure":{"type":"public","traffic_mode":"forwarded","endpoint_mode":"web"},
             "secret_env":{"PASSWORD":"old-service-password"},"env":{},"command":[],"args":[],"metadata":{}});
         let id = Uuid::now_v7();
         let spec = restored_spec(input, id)?;
         assert!(spec.stopped);
+        assert_eq!(spec.ssh_enabled, Some(false));
         assert_eq!(spec.restore_from_backup_id, Some(id));
         assert_eq!(
             spec.exposure.exposure_type,

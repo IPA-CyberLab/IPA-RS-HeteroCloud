@@ -546,7 +546,15 @@ struct SyouyuProviderSpec {
     quota_objects: u64,
 }
 
-fn provider_reconcile_spec(provider: &str, spec: Value) -> Result<Value, WorkerError> {
+fn provider_reconcile_spec(provider: &str, mut spec: Value) -> Result<Value, WorkerError> {
+    // SSH is enforced by the control-plane gateway; the Flash provider has a
+    // strict, separate workload schema and must not receive this setting.
+    if provider == "flash" {
+        if let Some(object) = spec.as_object_mut() {
+            object.remove("ssh_enabled");
+        }
+        return Ok(spec);
+    }
     if provider != "syouyu" {
         return Ok(spec);
     }
@@ -1391,6 +1399,10 @@ MC4CAQAwBQYDK2VwBCIEIG45L/crBYvUcHKXo1ZbNr3YBSD3wPhsGq7IKyuU2+ei\n\
         assert_eq!(
             provider_reconcile_spec("flash", json!({"metadata": {"key": "value"}}))?,
             json!({"metadata": {"key": "value"}})
+        );
+        assert_eq!(
+            provider_reconcile_spec("flash", json!({"ssh_enabled":true,"image":"test"}))?,
+            json!({"image":"test"})
         );
         Ok(())
     }

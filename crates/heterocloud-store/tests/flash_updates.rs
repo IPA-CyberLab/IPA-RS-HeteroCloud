@@ -44,7 +44,57 @@ async fn flash_replacement_updates_change_creation_settings_and_preserve_identit
         "ports":[], "exposure":{"type":"internal", "traffic_mode":"forwarded"},
         "env":{"HOME":"/root"}, "command":["sh"], "args":["-c","sleep infinity"], "metadata":{}
     })).await?;
-    let mut spec = original.spec.clone();
+    let before_ssh: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM outbox_events WHERE aggregate_id=$1")
+            .bind(original.id.0)
+            .fetch_one(store.pool())
+            .await?;
+    let mut ssh_spec = original.spec.clone();
+    ssh_spec["ssh_enabled"] = json!(true);
+    let ssh_enabled = store
+        .update_service_instance(
+            org,
+            original.id,
+            "flash",
+            membership.principal_id,
+            "workspace",
+            ssh_spec,
+        )
+        .await?;
+    assert_eq!(ssh_enabled.spec["ssh_enabled"], true);
+    assert_eq!(ssh_enabled.generation, original.generation);
+    assert_eq!(ssh_enabled.state, original.state);
+    assert_eq!(ssh_enabled.status, original.status);
+    assert_eq!(
+        before_ssh,
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM outbox_events WHERE aggregate_id=$1")
+            .bind(original.id.0)
+            .fetch_one(store.pool())
+            .await?
+    );
+    let mut disabled_spec = ssh_enabled.spec.clone();
+    disabled_spec["ssh_enabled"] = json!(false);
+    let ssh_disabled = store
+        .update_service_instance(
+            org,
+            original.id,
+            "flash",
+            membership.principal_id,
+            "workspace",
+            disabled_spec,
+        )
+        .await?;
+    assert_eq!(ssh_disabled.spec["ssh_enabled"], false);
+    assert_eq!(ssh_disabled.generation, original.generation);
+    assert_eq!(
+        before_ssh,
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM outbox_events WHERE aggregate_id=$1")
+            .bind(original.id.0)
+            .fetch_one(store.pool())
+            .await?
+    );
+    let mut spec = ssh_disabled.spec.clone();
+    spec["ssh_enabled"] = json!(true);
     spec["region"] = json!("updated-region");
     spec["image"] = json!("example/workspace:v2");
     spec["replicas"] = json!(2);

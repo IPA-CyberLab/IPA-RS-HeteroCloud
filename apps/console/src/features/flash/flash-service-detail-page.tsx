@@ -461,9 +461,9 @@ export function FlashServiceDetailPage() {
         />
       </Container>
       <FlashDomainsPanel organizationId={organizationId} serviceId={serviceId} oidc={Boolean(item.spec.exposure.authentication)} />
-      <FlashSshPanel organizationId={organizationId} serviceId={serviceId} />
+      <FlashSshPanel organizationId={organizationId} serviceId={serviceId} sshEnabled={item.spec.ssh_enabled === true} />
       <FlashOperationsPanel organizationId={organizationId} service={item} />
-      <FlashBackupsPanel key={`${organizationId}/${serviceId}`} organizationId={organizationId} serviceId={serviceId} />
+      <FlashBackupsPanel key={`${organizationId}/${serviceId}`} organizationId={organizationId} serviceId={serviceId} editable={false} />
       <Modal
         visible={shellOpen}
         onDismiss={() => {
@@ -574,6 +574,7 @@ export function FlashServiceDetailPage() {
       >
         {editOpen && editForm ? (
           <SpaceBetween size="l">
+            <Alert type="info">公開鍵・独自ドメイン・シークレット・バックアップの操作は、それぞれのボタンで直ちに反映されます。</Alert>
             <FlashServiceForm
             vpcs={vpcs.data?.items ?? []}
             principals={taskPrincipals.data?.items ?? []}
@@ -610,6 +611,9 @@ export function FlashServiceDetailPage() {
               />
             </FlashServiceForm>
             <FlashDomainsPanel organizationId={organizationId} serviceId={serviceId} editable oidc={editForm.authenticationMode === "oidc"} />
+            <FlashSshPanel organizationId={organizationId} serviceId={serviceId} sshEnabled={item.spec.ssh_enabled === true} editable />
+            <FlashOperationsPanel organizationId={organizationId} service={item} editable />
+            <FlashBackupsPanel organizationId={organizationId} serviceId={serviceId} editable />
             <FlashSecretsPanel
               organizationId={organizationId}
               service={item}

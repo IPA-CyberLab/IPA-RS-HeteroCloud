@@ -86,6 +86,7 @@ pub fn rollback_spec(target: &Value, current: &Value) -> Value {
         "exposure",
         "egress",
         "stopped",
+        "ssh_enabled",
         "restore_from_backup_id",
         "metadata",
         "region",
@@ -341,8 +342,8 @@ mod tests {
     use super::*;
     #[test]
     fn rollback_keeps_current_security_and_never_shrinks_a_disk() {
-        let old = json!({"image":"old","memory_mib":256,"ephemeral_storage_gib":8,"persistent_storage_gib":5,"env":{"OLD":"secret"},"task_role":"revoked","exposure":{"type":"public"},"metadata":{"old":true}});
-        let current = json!({"image":"broken","memory_mib":512,"ephemeral_storage_gib":32,"persistent_storage_gib":24,"env":{"CURRENT":"keep"},"exposure":{"type":"internal"},"stopped":true,"metadata":{"new":true}});
+        let old = json!({"image":"old","memory_mib":256,"ephemeral_storage_gib":8,"persistent_storage_gib":5,"env":{"OLD":"secret"},"task_role":"revoked","exposure":{"type":"public"},"ssh_enabled":true,"metadata":{"old":true}});
+        let current = json!({"image":"broken","memory_mib":512,"ephemeral_storage_gib":32,"persistent_storage_gib":24,"env":{"CURRENT":"keep"},"exposure":{"type":"internal"},"ssh_enabled":false,"stopped":true,"metadata":{"new":true}});
         let next = rollback_spec(&old, &current);
         assert_eq!(next["image"], "old");
         assert_eq!(next["memory_mib"], 256);
@@ -352,5 +353,6 @@ mod tests {
         assert_eq!(next["exposure"], current["exposure"]);
         assert!(next.get("task_role").is_none());
         assert_eq!(next["stopped"], true);
+        assert_eq!(next["ssh_enabled"], false);
     }
 }

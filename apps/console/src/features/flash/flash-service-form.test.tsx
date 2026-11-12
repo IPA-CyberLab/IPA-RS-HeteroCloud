@@ -58,6 +58,18 @@ function FormHarness({
   );
 }
 
+describe("Flash SSH setting", () => {
+  it("defaults to disabled and preserves an explicit setting when editing", () => {
+    const disabled = flashSpecFromForm(defaultFlashServiceFormValue);
+    expect(disabled.ssh_enabled).toBe(false);
+    const enabled = flashSpecFromForm({...defaultFlashServiceFormValue, sshEnabled: true});
+    expect(enabled.ssh_enabled).toBe(true);
+    const edited = flashFormFromService({project_id: "p", name: "n", spec: {...enabled, ports: enabled.ports.map(port => ({...port, service_port: 0}))}});
+    expect(edited.sshEnabled).toBe(true);
+    expect(flashSpecFromForm({...edited, sshEnabled: false}).ssh_enabled).toBe(false);
+  });
+});
+
 const registryImage: RegistryImage = {
   reference: "registry.example.com/hc-tenant/game/server:v2",
   repository: "game/server",

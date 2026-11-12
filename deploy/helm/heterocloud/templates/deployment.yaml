@@ -100,7 +100,9 @@ spec:
             {{- if .Values.flashSsh.tcp.advertisedHost }}
             - {{ printf "--flash-ssh-advertised-host=%s" .Values.flashSsh.tcp.advertisedHost | quote }}
             {{- end }}
-            {{- if .Values.hostNetwork }}
+            {{- if .Values.flashSsh.tcp.listenAddress }}
+            - {{ printf "--flash-ssh-listen=%s:%v" .Values.flashSsh.tcp.listenAddress .Values.flashSsh.tcp.port | quote }}
+            {{- else if .Values.hostNetwork }}
             - --flash-ssh-listen=$(HOST_IP):{{ .Values.flashSsh.tcp.port }}
             {{- else }}
             - --flash-ssh-listen=0.0.0.0:{{ .Values.flashSsh.tcp.port }}

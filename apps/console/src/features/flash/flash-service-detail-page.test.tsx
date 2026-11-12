@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -176,8 +176,13 @@ describe("FlashServiceDetailPage", () => {
     expect(screen.queryByText("世代")).not.toBeInTheDocument();
 
     expect(screen.queryByRole("button", { name: "エンドポイントを編集" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "公開鍵を登録" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "バックアップを作成" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "編集" }));
-    expect(screen.getByRole("dialog", { name: "Flashサービスを編集" })).toBeInTheDocument();
+    const editor = screen.getByRole("dialog", { name: "Flashサービスを編集" });
+    expect(within(editor).getByRole("checkbox", {name: "SSH を有効にする"})).not.toBeChecked();
+    expect(within(editor).getByRole("button", {name: "公開鍵を登録"})).toBeInTheDocument();
+    expect(within(editor).getByRole("button", {name: "バックアップを作成"})).toBeInTheDocument();
     expect(screen.queryByText(/gVisor/)).not.toBeInTheDocument();
     expect(screen.getByDisplayValue("ghcr.io/example/game-server:v1")).toBeInTheDocument();
   });

@@ -5,7 +5,7 @@ import { api, getApiErrorMessage } from "@/lib/api-client";
 import type { FlashSshKeyPreview } from "@/lib/api-types";
 import { useSession } from "@/features/auth/session";
 
-export function FlashSshPanel({organizationId, serviceId}: {organizationId: string; serviceId: string}) {
+export function FlashSshPanel({organizationId, serviceId, sshEnabled, editable = false}: {organizationId: string; serviceId: string; sshEnabled: boolean; editable?: boolean}) {
   const client = useQueryClient();
   const userId = useSession().data?.user.id;
   const keysKey = ["flash", organizationId, "ssh-keys"];
@@ -40,29 +40,30 @@ export function FlashSshPanel({organizationId, serviceId}: {organizationId: stri
   const error = keys.error || bindings.error || register.error || preview.error || assign.error || removeKey.error;
   return <Container header={<Header variant="h2">SSH 接続</Header>}>
     <SpaceBetween size="m">
-      <Box>公開鍵を登録し、このサービスへの接続を許可する鍵を選択してください。鍵の所有者は、登録したユーザーの権限でこのサービスに接続します。</Box>
-      {info.data?.enabled && <>
+      <Box>SSH: {sshEnabled ? "有効" : "無効"}</Box>
+      {editable && <Box>公開鍵を登録し、このサービスへの接続を許可する鍵を選択してください。鍵の所有者は、登録したユーザーの権限でこのサービスに接続します。</Box>}
+      {sshEnabled && info.data?.enabled && <>
         <Box>接続: <code>{`heterocloud --endpoint ${window.location.origin} --organization-id ${organizationId} flash ssh ${serviceId}`}</code></Box>
         {info.data.tcp && <Box>直接接続: <code>{`ssh -p ${info.data.tcp.port} -l ${organizationId}+${serviceId} ${info.data.tcp.host}`}</code></Box>}
         <Box>初回接続時のホスト鍵: <code>{info.data.host_key_fingerprint}</code></Box>
       </>}
-      {info.data && !info.data.enabled && <Alert type="warning">SSH 接続の準備ができていません。</Alert>}
+      {sshEnabled && info.data && !info.data.enabled && <Alert type="warning">SSH 接続の準備ができていません。</Alert>}
       {error && <Alert type="error">{getApiErrorMessage(error)}</Alert>}
-      <FormField label="登録済みの公開鍵">
+      {editable && <><FormField label="登録済みの公開鍵">
         <Select ariaLabel="接続を許可する公開鍵" selectedOption={selectedKey ? {value: selectedKey.id, label: selectedKey.name} : null}
           options={available.map((key) => ({value: key.id, label: `${key.name} · ${key.fingerprint}`}))}
           placeholder="公開鍵を選択" onChange={({detail}) => setSelected(detail.selectedOption.value ?? null)} />
       </FormField>
-      <Button formAction="none" disabled={!selected || bindings.isPending || assign.isPending} loading={assign.isPending} onClick={() => selected && assign.mutate({id: selected, enabled: true})}>この鍵で接続を許可</Button>
+      <Button formAction="none" disabled={!selected || bindings.isPending || assign.isPending} loading={assign.isPending} onClick={() => selected && assign.mutate({id: selected, enabled: true})}>この鍵で接続を許可</Button></>}
       {assigned.length === 0 && !bindings.isPending && <Box>このサービスに許可された鍵はありません。</Box>}
       {assigned.map((id) => {
         const key = keys.data?.items.find((item) => item.id === id);
         return <SpaceBetween key={id} direction="horizontal" size="s">
           <Box>{key ? `${key.name} · ${key.fingerprint}` : id}</Box>
-          <Button formAction="none" disabled={assign.isPending} onClick={() => assign.mutate({id, enabled: false})}>接続許可を解除</Button>
+          {editable && <Button formAction="none" disabled={assign.isPending} onClick={() => assign.mutate({id, enabled: false})}>接続許可を解除</Button>}
         </SpaceBetween>;
       })}
-      <Header variant="h3">公開鍵を貼り付けて登録</Header>
+      {editable && <><Header variant="h3">公開鍵を貼り付けて登録</Header>
       <FormField label="鍵の名前"><Input ariaLabel="鍵の名前" value={name} onChange={({detail}) => setName(detail.value)} placeholder="自分の PC" /></FormField>
       <FormField label="公開鍵" description=".pub ファイルの内容を貼り付けてください。秘密鍵は入力しないでください。"><Textarea ariaLabel="公開鍵" value={publicKey} onChange={({detail}) => setPublicKey(detail.value)} placeholder="ssh-ed25519 ..." /></FormField>
       <Button formAction="none" disabled={!name.trim() || !publicKey.trim()} loading={register.isPending} onClick={() => register.mutate({name: name.trim(), public_key: publicKey.trim()})}>公開鍵を登録</Button>
@@ -77,7 +78,7 @@ export function FlashSshPanel({organizationId, serviceId}: {organizationId: stri
       {(keys.data?.items ?? []).map((key) => <SpaceBetween key={key.id} direction="horizontal" size="s">
         <Box>{key.name} · {key.fingerprint}</Box>
         {key.user_id === userId && <Button formAction="none" loading={removeKey.isPending} onClick={() => removeKey.mutate(key.id)}>登録を削除</Button>}
-      </SpaceBetween>)}
+      </SpaceBetween>)}</>}
     </SpaceBetween>
   </Container>;
 }

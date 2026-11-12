@@ -36,6 +36,7 @@ export interface FlashServiceFormValue {
   imageSource: FlashImageSource;
   image: string;
   replicas: number;
+  sshEnabled: boolean;
   scaleMode: "fixed" | "auto";
   minReplicas: number;
   maxReplicas: number;
@@ -83,6 +84,7 @@ export const defaultFlashServiceFormValue: FlashServiceFormValue = {
   imageSource: "registry",
   image: "",
   replicas: 1,
+  sshEnabled: false,
   scaleMode: "fixed",
   minReplicas: 1,
   maxReplicas: 2,
@@ -514,6 +516,7 @@ export function flashSpecFromForm(
     ...(value.taskRoleId ? {task_role:value.taskRoleId} : {}),
     image: value.image.trim(),
     replicas: value.replicas,
+    ssh_enabled: value.sshEnabled,
     ...(value.scaleMode === "auto" ? { autoscaling: {
       min_replicas: value.minReplicas,
       max_replicas: value.maxReplicas,
@@ -593,6 +596,7 @@ export function flashFormFromService(
       : "manual",
     image: service.spec.image,
     replicas: service.spec.replicas,
+    sshEnabled: service.spec.ssh_enabled === true,
     scaleMode: service.spec.autoscaling ? "auto" : "fixed",
     minReplicas: service.spec.autoscaling?.min_replicas ?? service.spec.replicas,
     maxReplicas: service.spec.autoscaling?.max_replicas ?? service.spec.replicas,
@@ -1105,6 +1109,9 @@ export function FlashServiceForm({
               }} />
           </FormField>
         ) : null}
+        <FormField label="SSH 接続" description="有効にすると、接続を許可した公開鍵を使ってインターネットから接続できます。">
+          <Toggle ariaLabel="SSH を有効にする" checked={value.sshEnabled} disabled={disabled} onChange={({detail})=>update("sshEnabled",detail.checked)}>SSH を有効にする</Toggle>
+        </FormField>
         <FormField label="タスクIAM" description="このコンテナがHeteroCloud APIを呼び出すサービスアカウントです。固定キーや個人用トークンを渡さず、一時認証情報を自動取得・更新します。">
           <Select ariaLabel="タスクIAM" disabled={disabled}
             selectedOption={value.taskRoleId ? {value:value.taskRoleId,label:principals.find(p=>p.id===value.taskRoleId)?.name ?? value.taskRoleId} : {value:"",label:"なし"}}

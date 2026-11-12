@@ -168,6 +168,17 @@ async fn check_identity(
     if key.id != identity.key_id || key.user_id != identity.user.0 {
         return Err(ApiError::Forbidden);
     }
+    let instance = flash_service(state, identity.org, identity.service).await?;
+    // Fail closed for legacy, disabled, or malformed settings. This check is
+    // shared by TCP, HTTPS tunnelling, new channels and periodic revalidation.
+    if instance
+        .spec
+        .get("ssh_enabled")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return Err(ApiError::Forbidden);
+    }
     let context = state
         .store
         .authorization_context(identity.user, org)
@@ -210,10 +221,7 @@ async fn check_identity(
     if evaluation.decision != Decision::Allow {
         return Err(ApiError::Forbidden);
     }
-    Ok((
-        flash_service(state, identity.org, identity.service).await?,
-        context.principal_id,
-    ))
+    Ok((instance, context.principal_id))
 }
 
 struct Handler {

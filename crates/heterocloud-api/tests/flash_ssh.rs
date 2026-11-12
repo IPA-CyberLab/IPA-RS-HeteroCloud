@@ -307,6 +307,18 @@ async fn real_openssh_requires_assigned_key_and_preserves_output_and_exit_status
     store
         .set_flash_service_ssh_key(org, ServiceInstanceId(instance.id.0), key.id, true)
         .await?;
+    let disabled = tokio::time::timeout(
+        Duration::from_secs(20),
+        ssh("printf expected", &user_key).output(),
+    )
+    .await??;
+    assert!(
+        !disabled.status.success(),
+        "a selected key must not enable SSH"
+    );
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+    sqlx::query("UPDATE service_instances SET spec=jsonb_set(spec,'{ssh_enabled}','true'::jsonb) WHERE id=$1")
+        .bind(instance.id.0).execute(store.pool()).await?;
     let allowed = tokio::time::timeout(
         Duration::from_secs(20),
         ssh("printf expected", &user_key).output(),
@@ -414,6 +426,35 @@ async fn real_openssh_requires_assigned_key_and_preserves_output_and_exit_status
         }
     })
     .await?;
+    sqlx::query("UPDATE service_instances SET spec=jsonb_set(spec,'{ssh_enabled}','false'::jsonb) WHERE id=$1")
+        .bind(instance.id.0).execute(store.pool()).await?;
+    let stopped = tokio::time::timeout(Duration::from_secs(40), hold.wait()).await??;
+    assert!(
+        !stopped.success(),
+        "disabling SSH must close an existing session"
+    );
+    let disabled = tokio::time::timeout(
+        Duration::from_secs(20),
+        ssh("printf expected", &user_key).output(),
+    )
+    .await??;
+    assert!(
+        !disabled.status.success(),
+        "a disabled service must reject new sessions"
+    );
+    sqlx::query("UPDATE service_instances SET spec=jsonb_set(spec,'{ssh_enabled}','true'::jsonb) WHERE id=$1")
+        .bind(instance.id.0).execute(store.pool()).await?;
+    let mut hold = ssh("hold-open", &user_key);
+    hold.kill_on_drop(true)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut hold = hold.spawn()?;
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while count.load(Ordering::SeqCst) < 3 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await?;
     store
         .set_flash_service_ssh_key(org, ServiceInstanceId(instance.id.0), key.id, false)
         .await?;
@@ -442,7 +483,7 @@ async fn real_openssh_requires_assigned_key_and_preserves_output_and_exit_status
         fs::write(&known_hosts, hosts)?;
         let output = tokio::time::timeout(
             Duration::from_secs(30),
-            tokio::process::Command::new(cli_path)
+            tokio::process::Command::new(&cli_path)
                 .arg("--endpoint")
                 .arg(format!("http://{api_address}"))
                 .arg("--organization-id")
@@ -466,7 +507,35 @@ async fn real_openssh_requires_assigned_key_and_preserves_output_and_exit_status
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(output.stdout, b"expected\n");
-        assert_eq!(count.load(Ordering::SeqCst), 3);
+        assert_eq!(count.load(Ordering::SeqCst), 4);
+        sqlx::query("UPDATE service_instances SET spec=jsonb_set(spec,'{ssh_enabled}','false'::jsonb) WHERE id=$1")
+            .bind(instance.id.0).execute(store.pool()).await?;
+        let disabled_cli = tokio::time::timeout(
+            Duration::from_secs(30),
+            tokio::process::Command::new(&cli_path)
+                .arg("--endpoint")
+                .arg(format!("http://{api_address}"))
+                .arg("--organization-id")
+                .arg(org.to_string())
+                .arg("--allow-insecure-http")
+                .arg("flash")
+                .arg("ssh")
+                .arg(instance.id.to_string())
+                .arg("-i")
+                .arg(&user_key)
+                .arg("--known-hosts-file")
+                .arg(&known_hosts)
+                .args(["--", "printf expected"])
+                .output(),
+        )
+        .await??;
+        assert!(
+            !disabled_cli.status.success(),
+            "disabled SSH must reject the HTTPS tunnel"
+        );
+        assert_eq!(count.load(Ordering::SeqCst), 4);
+        sqlx::query("UPDATE service_instances SET spec=jsonb_set(spec,'{ssh_enabled}','true'::jsonb) WHERE id=$1")
+            .bind(instance.id.0).execute(store.pool()).await?;
         api_task.abort();
     }
     store
@@ -481,9 +550,9 @@ async fn real_openssh_requires_assigned_key_and_preserves_output_and_exit_status
     assert_eq!(
         count.load(Ordering::SeqCst),
         if env::var("HETEROCLOUD_TEST_CLI").is_ok() {
-            3
+            4
         } else {
-            2
+            3
         }
     );
     provider_task.abort();

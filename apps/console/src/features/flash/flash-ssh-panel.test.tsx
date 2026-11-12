@@ -8,9 +8,9 @@ import {FlashSshPanel} from "./flash-ssh-panel";
 vi.mock("@/features/auth/session", () => ({useSession: () => ({data: {user: {id: "user-a"}}})}));
 
 const key = {id:"key-a", organization_id:"org", user_id:"user-a", name:"Laptop", public_key:"ssh-ed25519 AAAA", fingerprint:"SHA256:key-a", github_username:null, created_at:"2026-01-01T00:00:00Z"};
-function panel() {
+function panel(editable = true, sshEnabled = true) {
   const client = new QueryClient({defaultOptions:{queries:{retry:false}, mutations:{retry:false}}});
-  return render(<QueryClientProvider client={client}><FlashSshPanel organizationId="org" serviceId="service" /></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><FlashSshPanel organizationId="org" serviceId="service" editable={editable} sshEnabled={sshEnabled} /></QueryClientProvider>);
 }
 
 describe("Flash SSH keys", () => {
@@ -45,5 +45,14 @@ describe("Flash SSH keys", () => {
     expect(await screen.findByText("SHA256:github")).toBeVisible();
     await user.click(screen.getByRole("button", {name:"この鍵を登録"}));
     expect(create).toHaveBeenLastCalledWith("org", {name:"alice · 6:github",public_key:"ssh-ed25519 GithubKey",github_username:"alice"});
+  });
+  it("shows status and assigned keys without editing controls in the details view", async () => {
+    vi.mocked(api.flash.sshKeys.forService).mockResolvedValue({key_ids:[key.id]});
+    panel(false, false);
+    expect(await screen.findByText("SSH: 無効")).toBeVisible();
+    expect(await screen.findByText(/Laptop · SHA256:key-a/)).toBeVisible();
+    expect(screen.queryByRole("button", {name:"接続許可を解除"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", {name:"公開鍵を登録"})).not.toBeInTheDocument();
+    expect(screen.queryByText(/直接接続:/)).not.toBeInTheDocument();
   });
 });

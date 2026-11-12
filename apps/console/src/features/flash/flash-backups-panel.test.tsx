@@ -8,10 +8,10 @@ import type { FlashBackup } from "@/lib/api-types";
 import { FlashBackupsPanel } from "./flash-backups-panel";
 
 const backup: FlashBackup = { id: "backup-1", organization_id: "org-1", project_id: "project-1", service_instance_id: "source-1", source_name: "source", name: "before-update", volume_size_bytes: 1024 ** 3, phase: "ready", status: {}, delete_requested: false, created_at: "2026-10-19T00:00:00Z", updated_at: "2026-10-19T00:00:01Z" };
-function show(serviceId?: string) {
+function show(serviceId?: string, editable = true) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}>
     <MemoryRouter><Routes>
-      <Route path="/" element={<FlashBackupsPanel organizationId="org-1" serviceId={serviceId} />} />
+      <Route path="/" element={<FlashBackupsPanel organizationId="org-1" serviceId={serviceId} editable={editable} />} />
       <Route path="/flash/services/:id" element={<div>復元先のサービス</div>} />
     </Routes></MemoryRouter>
   </QueryClientProvider>);
@@ -21,6 +21,13 @@ describe("FlashBackupsPanel", () => {
     vi.spyOn(api.flash.backups, "list").mockResolvedValue({ items: [backup] });
     vi.spyOn(api.flash.backupDestinations, "list").mockResolvedValue({ items: [] });
     vi.spyOn(api.projects, "list").mockResolvedValue({ items: [{ id: "project-1", organization_id: "org-1", slug: "test", name: "Test", created_at: "2026-10-19T00:00:00Z" }] });
+  });
+  it("shows backup information without changes in the detail view", async () => {
+    show("source-1", false);
+    expect(await screen.findByText("before-update")).toBeVisible();
+    expect(screen.queryByRole("button", {name:"復元"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", {name:"バックアップを作成"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", {name:"S3の保存先を追加"})).not.toBeInTheDocument();
   });
   it("復元先を選んでから復元を要求し新サービスへ移動する", async () => {
     const restore = vi.spyOn(api.flash.backups, "restore").mockResolvedValue({ id: "restored-1" } as Awaited<ReturnType<typeof api.flash.backups.restore>>);

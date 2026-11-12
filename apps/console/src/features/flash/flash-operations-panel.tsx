@@ -40,8 +40,8 @@ const reasonLabels: Record<string,string> = {
 };
 export const diagnosticText = (code: string, fallback: string) => reasonLabels[code] ?? fallback;
 
-export function FlashOperationsPanel({organizationId,service}:{organizationId:string;service:FlashService}) {
-  const [tab,setTab]=useState("health");
+export function FlashOperationsPanel({organizationId,service,editable=false}:{organizationId:string;service:FlashService;editable?:boolean}) {
+  const [tab,setTab]=useState(editable ? "backup-policy" : "health");
   const [rollback,setRollback]=useState<number|null>(null);
   const [draft,setDraft]=useState<FlashBackupPolicyInput|null>(null);
   const client=useQueryClient();
@@ -77,14 +77,14 @@ export function FlashOperationsPanel({organizationId,service}:{organizationId:st
       {id:"revisions",label:"更新履歴",content:<SpaceBetween size="m">
         {history.isError&&<Alert type="error">{getApiErrorMessage(history.error)}</Alert>}
         {history.isPending&&<Box>更新履歴を取得しています。</Box>}
-        {history.data?.items.map(r=><Box key={r.generation}>世代 {r.generation}・{r.phase==="ready"?"正常確認済み":r.phase==="rolled_back"?"切り戻し済み":r.phase==="failed"?"失敗":"確認中"}・{formatDateTime(r.created_at)} {r.phase==="ready"&&r.generation<service.generation&&<Button onClick={()=>setRollback(r.generation)}>世代 {r.generation} に切り戻す</Button>}</Box>)}
+        {history.data?.items.map(r=><Box key={r.generation}>世代 {r.generation}・{r.phase==="ready"?"正常確認済み":r.phase==="rolled_back"?"切り戻し済み":r.phase==="failed"?"失敗":"確認中"}・{formatDateTime(r.created_at)} {editable&&r.phase==="ready"&&r.generation<service.generation&&<Button onClick={()=>setRollback(r.generation)}>世代 {r.generation} に切り戻す</Button>}</Box>)}
         <Modal visible={rollback!==null} onDismiss={()=>!revert.isPending&&setRollback(null)} header="正常な世代へ切り戻す" footer={<Button variant="primary" loading={revert.isPending} onClick={()=>rollback!==null&&revert.mutate(rollback)}>切り戻す</Button>}>
           <SpaceBetween size="m"><Box>世代 {rollback} の実行設定へ戻します。現在のアクセス制御・シークレット設定と永続ディスクの内容は保持します。永続データは過去の状態に戻りません。</Box>{revert.isError&&<Alert type="error">{getApiErrorMessage(revert.error)}</Alert>}</SpaceBetween>
         </Modal>
       </SpaceBetween>},
       {id:"backup-policy",label:"定期バックアップ",content:<SpaceBetween size="m">
         {policy.isError&&<Alert type="error">{getApiErrorMessage(policy.error)}</Alert>}
-        <Toggle checked={settings.enabled} disabled={policy.isPending||save.isPending} onChange={({detail})=>change("enabled",detail.checked)}>定期バックアップを有効にする</Toggle>
+        {editable ? <><Toggle checked={settings.enabled} disabled={policy.isPending||save.isPending} onChange={({detail})=>change("enabled",detail.checked)}>定期バックアップを有効にする</Toggle>
         <FormField label="保存先"><Select ariaLabel="定期バックアップ保存先" selectedOption={destinationOptions.find(d=>d.value===(settings.destination_id??""))??{label:settings.destination_id??"Syouyu（既定）",value:settings.destination_id??""}} options={destinationOptions} onChange={({detail})=>change("destination_id",detail.selectedOption.value||null)}/></FormField>
         <FormField label="取得間隔（時間）" description="1〜168時間"><Input ariaLabel="バックアップ取得間隔" type="number" value={String(settings.interval_seconds/3600)} onChange={({detail})=>change("interval_seconds",Number(detail.value)*3600)}/></FormField>
         <FormField label="保存世代数" description="1〜8世代。手動バックアップは世代整理の対象になりません。"><Input ariaLabel="バックアップ保存世代数" type="number" value={String(settings.retention_count)} onChange={({detail})=>change("retention_count",Number(detail.value))}/></FormField>
@@ -93,7 +93,12 @@ export function FlashOperationsPanel({organizationId,service}:{organizationId:st
         {policy.data?.enabled&&<Box>次回予定: {formatDateTime(policy.data.next_run_at)}</Box>}
         <Box>古い世代は新しいバックアップの保存・検証が完了してから整理します。バックアップの容量上限は手動分と共有します。</Box>
         <Button variant="primary" loading={save.isPending} disabled={policy.isPending||policy.isError||settings.interval_seconds<3600||settings.interval_seconds>604800||!Number.isInteger(settings.interval_seconds)||settings.retention_count<1||settings.retention_count>8||!Number.isInteger(settings.retention_count)} onClick={()=>save.mutate(settings)}>バックアップ設定を保存</Button>
-        {save.isSuccess&&<Alert type="success">バックアップ設定を保存しました。</Alert>}{save.isError&&<Alert type="error">{getApiErrorMessage(save.error)}</Alert>}
+        {save.isSuccess&&<Alert type="success">バックアップ設定を保存しました。</Alert>}{save.isError&&<Alert type="error">{getApiErrorMessage(save.error)}</Alert>}</> : <Box>
+          定期バックアップ: {policy.isPending ? "取得中" : settings.enabled ? "有効" : "無効"}<br/>
+          保存先: {destinationOptions.find(d=>d.value===(settings.destination_id??""))?.label ?? settings.destination_id}<br/>
+          取得間隔: {settings.interval_seconds/3600} 時間 / 保存世代数: {settings.retention_count}<br/>
+          復元検証: {settings.verify_restore ? "有効" : "無効"}
+        </Box>}
       </SpaceBetween>},
     ]}/>
   </Container>;
