@@ -4,7 +4,7 @@ test("diagnostics, revision rollback and scheduled backups share the service con
   const time="2026-10-20T00:00:00Z";
   const errors:string[]=[];
   const mutations:string[]=[];
-  const service={id:"service-1",organization_id:"org-1",project_id:"project-1",provider:"flash",name:"workspace",generation:3,state:"updating",created_at:time,updated_at:time,
+  let service={id:"service-1",organization_id:"org-1",project_id:"project-1",provider:"flash",name:"workspace",generation:3,state:"updating",created_at:time,updated_at:time,
     spec:{region:"test",image:"example/workspace:bad",replicas:1,cpu_millis:100,memory_mib:128,ephemeral_storage_gib:2,env:{},command:[],args:[],metadata:{},ports:[],exposure:{type:"internal",traffic_mode:"forwarded"}},
     status:{status:{runtime_class:"gvisor",ready_replicas:0,desired_replicas:1,diagnostics:[{code:"disk_usage_critical",severity:"error",message:"disk usage"}],disk_usage:{capacity_bytes:100*2**30,used_bytes:90*2**30,available_bytes:10*2**30,measured_at:time}}}};
   let policy:unknown=null;
@@ -30,9 +30,20 @@ test("diagnostics, revision rollback and scheduled backups share the service con
       const pod = query.get("pod");
       body = {items:[{name:"pod-a",phase:"Running",ready:true},{name:"pod-b",phase:"Failed",ready:false}],pod,previous:query.get("previous")==="true",text:pod?`<script>${pod}</script>`:null,truncated:query.get("previous")==="true"};
     }
-    else if(path.endsWith("/flash/services/service-1"))body=service;
-    else if(path.endsWith("/flash/quota"))body={};
-    else if(path.endsWith("/domains")||path.endsWith("/flash/backups")||path.endsWith("/vpc/networks")||path.endsWith("/events"))body={items:[]};
+    else if(path.endsWith("/flash/services/service-1/ssh-keys"))body={key_ids:[]};
+    else if(path.endsWith("/flash/ssh-keys"))body={items:[]};
+    else if(path.endsWith("/flash/ssh-info"))body={enabled:true,host_key_fingerprint:"SHA256:test",tcp:{host:"ssh.example.test",port:2222}};
+    else if(path.endsWith("/flash/services/service-1")){
+      if(request.method()==="PUT"){
+        const input=request.postDataJSON();
+        expect(input.spec.ssh_enabled).toBe(true);
+        mutations.push("ssh-enabled");
+        service={...service,spec:input.spec};
+      }
+      body=service;
+    }
+    else if(path.endsWith("/flash/quota"))body={max_services:100,max_replicas_per_service:100,max_cpu_millis_per_vm:4000,max_memory_mib_per_vm:8128,max_disk_gib_per_vm:10,max_total_replicas:100,max_total_cpu_millis:20000,max_total_memory_mib:32768,max_total_disk_gib:100,max_weekly_cpu_millicore_seconds:3245760000,max_weekly_memory_mib_seconds:2836280317,max_weekly_gpu_seconds:40320};
+    else if(path.endsWith("/domains")||path.endsWith("/flash/backups")||path.endsWith("/flash/backup-destinations")||path.endsWith("/vpc/networks")||path.endsWith("/events"))body={items:[]};
     else return route.fulfill({status:404,json:{error:{code:"not_found",message:path}}});
     return route.fulfill({contentType:"application/json",body:JSON.stringify(body)});
   });
@@ -48,15 +59,27 @@ test("diagnostics, revision rollback and scheduled backups share the service con
   await page.getByLabel("前回終了したコンテナのログ").check();
   await expect(page.getByText("ログの一部のみを表示しています。")).toBeVisible();
   await page.getByRole("tab",{name:"更新履歴",exact:true}).click();
-  await page.getByRole("button",{name:"世代 1 に切り戻す"}).click();
-  expect(mutations).toEqual([]);
+  await expect(page.getByRole("button",{name:"世代 1 に切り戻す"})).toHaveCount(0);
+  await expect(page.getByRole("button",{name:"公開鍵を登録"})).toHaveCount(0);
+  await page.getByRole("button",{name:"編集",exact:true}).click();
+  let editor=page.getByRole("dialog",{name:"Flashサービスを編集"});
+  await expect(editor.getByRole("button",{name:"公開鍵を登録"})).toBeVisible();
+  await editor.getByRole("checkbox",{name:"SSH を有効にする"}).check();
+  await editor.getByRole("button",{name:"変更を保存"}).click();
+  await expect.poll(()=>mutations).toEqual(["ssh-enabled"]);
+  await expect(page.getByText(/ssh -p 2222 .*ssh.example.test/)).toBeVisible();
+  await page.getByRole("button",{name:"編集",exact:true}).click();
+  editor=page.getByRole("dialog",{name:"Flashサービスを編集"});
+  await editor.getByRole("tab",{name:"更新履歴",exact:true}).click();
+  await editor.getByRole("button",{name:"世代 1 に切り戻す"}).click();
+  expect(mutations).toEqual(["ssh-enabled"]);
   await expect(page.getByText(/永続データは過去の状態に戻りません/)).toBeVisible();
   await page.getByRole("button",{name:"切り戻す",exact:true}).click();
-  await expect.poll(()=>mutations).toEqual(["rollback"]);
-  await page.getByRole("tab",{name:"定期バックアップ",exact:true}).click();
-  await page.getByRole("checkbox",{name:"定期バックアップを有効にする"}).check();
-  await page.getByRole("button",{name:"バックアップ設定を保存"}).click();
+  await expect.poll(()=>mutations).toEqual(["ssh-enabled","rollback"]);
+  await editor.getByRole("tab",{name:"定期バックアップ",exact:true}).click();
+  await editor.getByRole("checkbox",{name:"定期バックアップを有効にする"}).check();
+  await editor.getByRole("button",{name:"バックアップ設定を保存"}).click();
   await expect(page.getByText("バックアップ設定を保存しました。")).toBeVisible();
-  expect(mutations).toEqual(["rollback","backup-policy"]);
+  expect(mutations).toEqual(["ssh-enabled","rollback","backup-policy"]);
   expect(errors).toEqual([]);
 });
