@@ -93,8 +93,8 @@ export function FlashOperationsPanel({organizationId,service,editable=false}:{or
         {policy.data?.enabled&&<Box>次回予定: {formatDateTime(policy.data.next_run_at)}</Box>}
         <Box>古い世代は新しいバックアップの保存・検証が完了してから整理します。バックアップの容量上限は手動分と共有します。</Box>
         <Button variant="primary" loading={save.isPending} disabled={policy.isPending||policy.isError||settings.interval_seconds<3600||settings.interval_seconds>604800||!Number.isInteger(settings.interval_seconds)||settings.retention_count<1||settings.retention_count>8||!Number.isInteger(settings.retention_count)} onClick={()=>save.mutate(settings)}>バックアップ設定を保存</Button>
-        {save.isSuccess&&<Alert type="success">バックアップ設定を保存しました。</Alert>}{save.isError&&<Alert type="error">{getApiErrorMessage(save.error)}</Alert>}</> : <Box>
-          定期バックアップ: {policy.isPending ? "取得中" : settings.enabled ? "有効" : "無効"}<br/>
+        {save.isSuccess&&<Alert type="success">バックアップ設定を保存しました。</Alert>}{save.isError&&<Alert type="error">{getApiErrorMessage(save.error)}</Alert>}</> : policy.isPending ? <Box>定期バックアップ設定を取得しています。</Box> : policy.isError ? <Box>定期バックアップ設定を取得できません。</Box> : <Box>
+          定期バックアップ: {settings.enabled ? "有効" : "無効"}<br/>
           保存先: {destinationOptions.find(d=>d.value===(settings.destination_id??""))?.label ?? settings.destination_id}<br/>
           取得間隔: {settings.interval_seconds/3600} 時間 / 保存世代数: {settings.retention_count}<br/>
           復元検証: {settings.verify_restore ? "有効" : "無効"}

@@ -52,4 +52,12 @@ describe("FlashOperationsPanel",()=>{
    expect(await screen.findByText(/定期バックアップ:/)).toBeVisible();
    expect(screen.queryByRole("button",{name:"バックアップ設定を保存"})).not.toBeInTheDocument();
  });
+ it("does not report a disabled policy when it cannot be retrieved",async()=>{
+   vi.mocked(api.flash.operations.backupPolicy).mockRejectedValue(new Error("unavailable"));
+   const user=userEvent.setup();
+   show();
+   await user.click(screen.getByRole("tab",{name:"定期バックアップ"}));
+   expect(await screen.findByText("定期バックアップ設定を取得できません。")).toBeVisible();
+   expect(screen.queryByText(/定期バックアップ: 無効/)).not.toBeInTheDocument();
+ });
 });
