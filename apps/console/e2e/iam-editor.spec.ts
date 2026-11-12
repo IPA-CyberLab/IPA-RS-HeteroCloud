@@ -78,8 +78,8 @@ test("IAM policy actions and resources are added individually and saved", async 
       actions: ["flow:ListInstances"],
       resources: ["hc:org:*:flow/*"],
       conditions: {
-        DateGreaterThanEquals: { "aws:CurrentTime": [startUtc] },
-        DateLessThan: { "aws:CurrentTime": [endUtc] },
+        DateGreaterThanEquals: { "heterocloud:CurrentTime": [startUtc] },
+        DateLessThan: { "heterocloud:CurrentTime": [endUtc] },
       },
     },
   ]);
