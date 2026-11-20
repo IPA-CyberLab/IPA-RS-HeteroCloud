@@ -1,0 +1,24 @@
+name: Public identity separation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths: &identity_paths
+      - '.github/workflows/identity-separation.yml'
+      - 'deploy/environments/heteronet/reconcile-keycloak.sh'
+      - 'deploy/environments/heteronet/test_reconcile_keycloak.py'
+  pull_request:
+    paths: *identity_paths
+
+permissions:
+  contents: read
+
+jobs:
+  reconciliation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: bash -n deploy/environments/heteronet/reconcile-keycloak.sh
+      - run: sudo python3 -B -m unittest discover -s deploy/environments/heteronet -p test_reconcile_keycloak.py -v
