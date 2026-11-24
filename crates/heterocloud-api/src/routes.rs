@@ -29,6 +29,7 @@ use std::{
 
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::{
         ConnectInfo, DefaultBodyLimit, FromRequestParts, Path, Query, State, ws::WebSocketUpgrade,
     },
@@ -4800,7 +4801,7 @@ async fn preflight_existing_flash_service(
     Path((organization_id, id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
     jar: CookieJar,
-    request: Option<Json<UpdateFlashService>>,
+    body: Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     let org = OrganizationId(organization_id);
@@ -4814,7 +4815,13 @@ async fn preflight_existing_flash_service(
     .await?;
     let existing = flash_service(&state, organization_id, id).await?;
     let prior: FlashSpec = serde_json::from_value(existing.spec).map_err(|_| ApiError::Internal)?;
-    let (name, project_id, mut spec) = if let Some(Json(mut request)) = request {
+    // Some clients send Content-Type: application/json on every POST, including
+    // requests that deliberately have no manifest.
+    let (name, project_id, mut spec) = if body.is_empty() {
+        (existing.name, existing.project_id, prior)
+    } else {
+        let mut request: UpdateFlashService = serde_json::from_slice(&body)
+            .map_err(|_| ApiError::BadRequest("Invalid Flash placement manifest.".into()))?;
         validate_name(&request.name)?;
         prepare_flash_replacement(&mut request.spec, &prior)?;
         authorize_vpc_attachment(&state, &actor, organization_id, &request.spec).await?;
@@ -4827,8 +4834,6 @@ async fn preflight_existing_flash_service(
                 .unwrap_or(existing.project_id),
             request.spec,
         )
-    } else {
-        (existing.name, existing.project_id, prior)
     };
     spec.stopped = false;
     let input = FlashPlacementInput {

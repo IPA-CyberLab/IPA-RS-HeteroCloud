@@ -203,11 +203,10 @@ async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
         let request = Request::builder()
             .method(method)
             .uri(path)
-            .header(header::AUTHORIZATION, format!("Bearer {auth_key}"));
+            .header(header::AUTHORIZATION, format!("Bearer {auth_key}"))
+            .header(header::CONTENT_TYPE, "application/json");
         if let Some(body) = body {
-            request
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(body.to_string()))
+            request.body(Body::from(body.to_string()))
         } else {
             request.body(Body::empty())
         }
