@@ -208,6 +208,8 @@ pub struct DnsRecord {
 
 #[derive(Debug, Error)]
 pub enum CliError {
+    #[error("Flash placement {0}")]
+    FlashPlacement(String),
     #[error("SSH exited with status {0}")]
     SshExit(u8),
     #[error("CLI update failed: {0}")]

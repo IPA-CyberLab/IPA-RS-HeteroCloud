@@ -436,6 +436,40 @@ impl FlashProviderProxy {
         Ok(status)
     }
 
+    pub async fn preflight(
+        &self,
+        context: FlashProviderContext,
+        name: &str,
+        spec: &Value,
+        existing: bool,
+    ) -> Result<FlashPlacementResult, FlashProviderError> {
+        let url = self.endpoint.join(&format!(
+            "internal/v1/service-instances/{}/preflight",
+            context.service_instance_id
+        ))?;
+        let mut response = self
+            .client
+            .post(url)
+            .bearer_auth(self.sign(&context, "flash.placement.check")?)
+            .json(&json!({"name": name, "spec": spec, "existing": existing}))
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(FlashProviderError::ProviderStatus(
+                response.status().as_u16(),
+            ));
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if chunk.len() > 1024 - body.len() {
+                return Err(FlashProviderError::InvalidPlacementResult);
+            }
+            body.extend_from_slice(&chunk);
+        }
+        serde_json::from_slice(&body).map_err(|_| FlashProviderError::InvalidPlacementResult)
+    }
+
     pub async fn connect_exec(
         &self,
         context: FlashProviderContext,
@@ -697,6 +731,86 @@ pub struct FlashProviderContext {
     pub generation: i64,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum FlashPlacementResult {
+    Feasible,
+    Blocked { reason: FlashPlacementBlock },
+    Unavailable { reason: FlashPlacementUnavailable },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FlashPlacementBlock {
+    InsufficientComputeCapacity,
+    InsufficientPodCapacity,
+    InsufficientDiskCapacity,
+    InsufficientInodes,
+    InsufficientReplicatedStorage,
+    InsufficientTopologyCapacity,
+    NoEligibleNode,
+    ImageExceedsDiskBudget,
+    ImageUnavailable,
+    InvalidDiskLayout,
+    InvalidDeployment,
+    PersistentDiskCannotShrink,
+    PersistentStorageUnavailable,
+    GpuUnavailable,
+}
+
+impl FlashPlacementBlock {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::InsufficientComputeCapacity => {
+                "No eligible host has enough CPU or memory for the requested Flash deployment."
+            }
+            Self::InsufficientPodCapacity => {
+                "The eligible Flash hosts have too few free container slots."
+            }
+            Self::InsufficientDiskCapacity => {
+                "The eligible Flash hosts have too little disk space for the image and writable storage."
+            }
+            Self::InsufficientInodes => {
+                "The eligible Flash hosts have too few free filesystem inodes."
+            }
+            Self::InsufficientReplicatedStorage => {
+                "There is insufficient free storage for the required Flash disk replicas."
+            }
+            Self::InsufficientTopologyCapacity => {
+                "The eligible Flash hosts cannot satisfy the configured replica spread."
+            }
+            Self::NoEligibleNode => "No host is eligible for the requested Flash deployment.",
+            Self::ImageExceedsDiskBudget => "The Flash image exceeds the requested disk budget.",
+            Self::ImageUnavailable => {
+                "The Flash image could not be read. Check the image reference and registry access."
+            }
+            Self::InvalidDiskLayout => {
+                "The Flash disk budget cannot fit the image, writable storage and retained persistent disk."
+            }
+            Self::InvalidDeployment => {
+                "The requested update strategy is incompatible with this Flash workload."
+            }
+            Self::PersistentDiskCannotShrink => {
+                "The existing Flash persistent disk cannot be shrunk."
+            }
+            Self::PersistentStorageUnavailable => {
+                "Persistent disk storage is unavailable for this Flash workload."
+            }
+            Self::GpuUnavailable => {
+                "No GPU of the requested type is currently available to this principal."
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FlashPlacementUnavailable {
+    CapacityMetricsUnavailable,
+    ImageCapacityUnknown,
+    StorageReplicaPolicyUnavailable,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FlashContainerList {
     pub items: Vec<FlashContainer>,
@@ -774,6 +888,8 @@ pub enum FlashProviderError {
     ProviderStatus(u16),
     #[error("Flash provider live status is malformed or has a different observed generation")]
     InvalidLiveStatus,
+    #[error("Flash provider placement result is malformed or too large")]
+    InvalidPlacementResult,
     #[error("Flash provider GPU catalog is malformed or too large")]
     InvalidGpuCatalog,
     #[error("Flash provider log response is malformed or too large")]

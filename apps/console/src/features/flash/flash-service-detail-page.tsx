@@ -131,21 +131,22 @@ export function FlashServiceDetailPage() {
       Boolean(serviceId) && shellOpen && Boolean(service.data) && service.data?.state !== "deleting",
     refetchInterval: shellOpen ? 10_000 : false,
   });
+  const updateInput = (value: FlashServiceFormValue) => ({
+    project_id: value.projectId,
+    name: value.name.trim(),
+    spec: {
+      ...flashSpecFromForm(value, service.data?.spec.metadata ?? {}),
+      ...(service.data?.spec.stopped ? { stopped: true } : {}),
+      secret_env: editSecretEnv,
+      secret_files: {},
+    },
+  });
   const updateService = useMutation({
     mutationFn: async (value: FlashServiceFormValue) => {
       if (value.authenticationMode === "oidc" && value.oidcClientSecret) {
         await api.flash.services.putLoadBalancerSecret(organizationId,serviceId,value.oidcSecretRef,value.oidcClientSecret);
       }
-      return api.flash.services.update(organizationId, serviceId, {
-        project_id: value.projectId,
-        name: value.name.trim(),
-        spec: {
-          ...flashSpecFromForm(value, service.data?.spec.metadata ?? {}),
-          ...(service.data?.spec.stopped ? { stopped: true } : {}),
-          secret_env: editSecretEnv,
-          secret_files: {},
-        },
-      });
+      return api.flash.services.update(organizationId, serviceId, updateInput(value));
     },
     onSuccess: async (updated) => {
       queryClient.setQueryData(
@@ -581,6 +582,8 @@ export function FlashServiceDetailPage() {
               value={editForm}
               onChange={setEditForm}
               onSubmit={submitEdit}
+              onPreflight={(value) => api.flash.services.preflight(organizationId, serviceId, updateInput(value))}
+              preflightDisabled={Boolean(validationError) || secretBusy}
               disabled={updateService.isPending}
               editing
               oidcCallbackUrl={providerStatus.oidc_callback_url}

@@ -4,6 +4,7 @@ test("diagnostics, revision rollback and scheduled backups share the service con
   const time="2026-10-20T00:00:00Z";
   const errors:string[]=[];
   const mutations:string[]=[];
+  let previews=0;
   let service={id:"service-1",organization_id:"org-1",project_id:"project-1",provider:"flash",name:"workspace",generation:3,state:"updating",created_at:time,updated_at:time,
     spec:{region:"test",image:"example/workspace:bad",replicas:1,cpu_millis:100,memory_mib:128,ephemeral_storage_gib:2,env:{},command:[],args:[],metadata:{},ports:[],exposure:{type:"internal",traffic_mode:"forwarded"}},
     status:{status:{runtime_class:"gvisor",ready_replicas:0,desired_replicas:1,diagnostics:[{code:"disk_usage_critical",severity:"error",message:"disk usage"}],disk_usage:{capacity_bytes:100*2**30,used_bytes:90*2**30,available_bytes:10*2**30,measured_at:time}}}};
@@ -15,6 +16,12 @@ test("diagnostics, revision rollback and scheduled backups share the service con
     if(request.method()!=="GET")expect(request.headers()["x-heterocloud-csrf"]).toBe("operations-test-csrf");
     if(path.endsWith("/auth/session"))body={user:{id:"user-1",email:"test@example.test",display_name:"Test",status:"active",created_at:time},memberships:[{organization_id:"org-1",organization_slug:"test",organization_name:"Test",principal_id:"principal-1",role:"owner"}],csrf_token:"operations-test-csrf"};
     else if(path.endsWith("/projects"))body={items:[{id:"project-1",organization_id:"org-1",name:"Test",slug:"test",created_at:time}]};
+    else if(path.endsWith("/flash/services/service-1/preflight")){
+      expect(request.method()).toBe("POST");
+      expect(request.postDataJSON().spec.memory_mib).toBe(128);
+      previews++;
+      body={status:"blocked",reason:"insufficient_compute_capacity"};
+    }
     else if(path.endsWith("/revisions"))body={items:[{generation:1,name:"workspace",phase:"ready",created_at:time,ready_at:time},{generation:3,name:"workspace",phase:"pending",created_at:time,ready_at:null}]};
     else if(path.endsWith("/rollback")){
       expect(request.postDataJSON()).toEqual({generation:1,expected_generation:3});
@@ -64,6 +71,10 @@ test("diagnostics, revision rollback and scheduled backups share the service con
   await page.getByRole("button",{name:"編集",exact:true}).click();
   let editor=page.getByRole("dialog",{name:"Flashサービスを編集"});
   await expect(editor.getByRole("button",{name:"公開鍵を登録"})).toBeVisible();
+  await editor.getByRole("button",{name:"配置を確認"}).click();
+  await expect(editor.getByText("利用できるホストの CPU またはメモリが不足しています。")).toBeVisible();
+  expect(previews).toBe(1);
+  expect(mutations).toEqual([]);
   await editor.getByRole("checkbox",{name:"SSH を有効にする"}).check();
   await editor.getByRole("button",{name:"変更を保存"}).click();
   await expect.poll(()=>mutations).toEqual(["ssh-enabled"]);

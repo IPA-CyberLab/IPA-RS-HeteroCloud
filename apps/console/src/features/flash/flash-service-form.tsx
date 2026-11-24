@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui";
+import { Alert, Button } from "@/components/ui";
 import { ColumnLayout } from "@/components/ui";
 import { FormField } from "@/components/ui";
 import { Header } from "@/components/ui";
@@ -9,14 +9,17 @@ import { SpaceBetween } from "@/components/ui";
 import { Textarea } from "@/components/ui";
 import { Toggle } from "@/components/ui";
 import ipaddr from "ipaddr.js";
+import { useMutation } from "@tanstack/react-query";
 import type { FormEvent, ReactNode } from "react";
 import "./flash-service-form.css";
 import { ProjectSelector } from "@/components/shared/resource-selectors";
+import { getApiErrorMessage } from "@/lib/api-client";
 import type {
   FlashDeploymentPolicy,
   FlashExposure, VpcNetwork, Principal,
   FlashEgressMode,
   FlashGpuType,
+  FlashPlacementResult,
   FlashPortInput,
   FlashPortProtocol,
   FlashQuotaLimits,
@@ -643,10 +646,56 @@ export function flashFormFromService(
   };
 }
 
+const placementReasons: Record<string, string> = {
+  insufficient_compute_capacity: "利用できるホストの CPU またはメモリが不足しています。",
+  insufficient_pod_capacity: "同時に実行できるコンテナ数の上限に達しています。",
+  insufficient_disk_capacity: "イメージや書き込み領域に必要なホストの空き容量が不足しています。",
+  insufficient_inodes: "ホストのファイルシステムに空き inode が不足しています。",
+  insufficient_replicated_storage: "永続ディスクの複製に必要な空き容量が不足しています。",
+  insufficient_topology_capacity: "レプリカの分散条件を満たすホストが不足しています。",
+  no_eligible_node: "この構成を実行できるホストが見つかりません。",
+  image_exceeds_disk_budget: "コンテナイメージが指定のディスク上限を超えています。",
+  image_unavailable: "イメージを確認できません。参照先とレジストリへのアクセスを確認してください。",
+  image_capacity_unknown: "イメージ容量を取得できませんでした。",
+  invalid_disk_layout: "イメージ・書き込み領域・永続ディスクが指定のディスク上限に収まりません。",
+  invalid_deployment: "この構成では指定の更新方式を使用できません。",
+  persistent_disk_cannot_shrink: "現在の永続ディスクより小さい容量を指定しています。",
+  persistent_storage_unavailable: "永続ディスクを使用できない構成です。",
+  storage_replica_policy_unavailable: "永続ディスクの複製設定を取得できませんでした。",
+  gpu_unavailable: "利用できる GPU に空きがありません。",
+};
+
+function FlashPlacementPreview({ value, check, disabled }: {
+  value: FlashServiceFormValue;
+  check: (draft: FlashServiceFormValue) => Promise<FlashPlacementResult>;
+  disabled?: boolean;
+}) {
+  const preview = useMutation({ mutationFn: check });
+  const current = preview.variables === value;
+  const placement = current ? preview.data : undefined;
+  return (
+    <SpaceBetween size="xs">
+      <Button disabled={disabled} loading={preview.isPending} onClick={() => preview.mutate(value)}>
+        配置を確認
+      </Button>
+      {placement ? (
+        <Alert type={placement.status === "feasible" ? "success" : placement.status === "blocked" ? "error" : "warning"}>
+          {placement.status === "feasible"
+            ? "現在の空き容量で配置できます。容量は予約されません。"
+            : placementReasons[placement.reason] ?? "現在の空き容量を確認できませんでした。"}
+        </Alert>
+      ) : null}
+      {current && preview.isError ? <Alert type="error">{getApiErrorMessage(preview.error)}</Alert> : null}
+    </SpaceBetween>
+  );
+}
+
 export function FlashServiceForm({
   value,
   onChange,
   onSubmit,
+  onPreflight,
+  preflightDisabled,
   disabled,
   editing,
   oidcCallbackUrl,
@@ -662,6 +711,8 @@ export function FlashServiceForm({
   value: FlashServiceFormValue;
   onChange: (value: FlashServiceFormValue) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onPreflight?: (value: FlashServiceFormValue) => Promise<FlashPlacementResult>;
+  preflightDisabled?: boolean;
   disabled?: boolean;
   editing?: boolean;
   oidcCallbackUrl?: string;
@@ -1332,6 +1383,7 @@ export function FlashServiceForm({
             </FormField>
           </ColumnLayout>
         ) : null}
+        {onPreflight ? <FlashPlacementPreview value={value} check={onPreflight} disabled={disabled || preflightDisabled} /> : null}
         {children}
       </SpaceBetween>
     </form>

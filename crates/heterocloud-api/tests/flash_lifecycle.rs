@@ -1,4 +1,12 @@
-use std::{env, error::Error, sync::Arc, time::Duration};
+use std::{
+    env,
+    error::Error,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use axum::{
     body::{Body, to_bytes},
@@ -6,7 +14,8 @@ use axum::{
 };
 use chrono::Utc;
 use heterocloud_api::{
-    app, config::RuntimeConfig, flow_access::FlowAccessSigner, routes::AppState,
+    app, config::RuntimeConfig, flash_provider::FlashProviderProxy, flow_access::FlowAccessSigner,
+    routes::AppState,
 };
 use heterocloud_auth::token_hash;
 use heterocloud_domain::{OrganizationId, PolicyDocument, ProjectId};
@@ -75,7 +84,8 @@ async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
         .await?;
     let resource = format!("hc:org:{org}:flash/instance/{}", instance.id);
     let policy: PolicyDocument = serde_json::from_value(json!({"version":"2026-07-31",
-        "statements":[{"effect":"Allow", "actions":["flash:UpdateInstance"], "resources":[resource]}]}))?;
+        "statements":[{"effect":"Allow", "actions":["flash:UpdateInstance"], "resources":[resource]},
+            {"effect":"Allow", "actions":["flash:CreateInstance"], "resources":[format!("hc:org:{org}:flash/*")]}]}))?;
     let policy = store
         .create_policy(org, "workspace lifecycle", &policy, &semantics_digest())
         .await?;
@@ -147,6 +157,119 @@ async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
         registration_limiter: Arc::new(Semaphore::new(2)),
     });
     let path = format!("/api/v1/organizations/{org}/flash/services/{}", instance.id);
+    let collection = format!("/api/v1/organizations/{org}/flash/services");
+    let provider_calls = Arc::new(AtomicUsize::new(0));
+    let calls = Arc::clone(&provider_calls);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = Url::parse(&format!("http://{}/", listener.local_addr()?))?;
+    let preview_provider = axum::Router::new().route(
+        "/internal/v1/service-instances/{id}/preflight",
+        axum::routing::post(
+            move |headers: axum::http::HeaderMap, axum::Json(value): axum::Json<Value>| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    assert!(headers.get(header::AUTHORIZATION).is_some());
+                    assert_eq!(value["spec"]["region"], "test");
+                    if value["existing"] == true {
+                        axum::Json(
+                            json!({"status":"blocked","reason":"insufficient_compute_capacity"}),
+                        )
+                    } else {
+                        axum::Json(json!({"status":"feasible"}))
+                    }
+                }
+            },
+        ),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, preview_provider).await });
+    let signer = heterocloud_provider::ProviderSigner::from_ed25519_pem(
+        "test", "flash", "placement-test",
+        b"-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEICKoEEWPLg2OazcyTWzBEw/mMPPXatNOUcEUWDHo2y0Y\n-----END PRIVATE KEY-----\n",
+    )?;
+    let placement_state = Arc::new(AppState {
+        flash_provider: Some(Arc::new(FlashProviderProxy::new(
+            endpoint,
+            signer,
+            reqwest::Client::builder().no_proxy().build()?,
+        ))),
+        ..state.as_ref().clone()
+    });
+    let desired = json!({"name":"preview-only", "project_id":project.id, "spec":instance.spec});
+    let preview_request = |method: &str,
+                           path: &str,
+                           auth_key: &str,
+                           body: Option<&Value>|
+     -> Result<Request<Body>, axum::http::Error> {
+        let request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::AUTHORIZATION, format!("Bearer {auth_key}"));
+        if let Some(body) = body {
+            request
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+        } else {
+            request.body(Body::empty())
+        }
+    };
+    let outbox_before: i64 = sqlx::query_scalar("SELECT count(*) FROM outbox_events")
+        .fetch_one(store.pool())
+        .await?;
+    let create_preview = format!("{collection}/preflight");
+    let existing_preview = format!("{path}/preflight");
+    for (route, body, expected) in [
+        (create_preview.as_str(), Some(&desired), "feasible"),
+        (existing_preview.as_str(), None, "blocked"),
+        (existing_preview.as_str(), Some(&desired), "blocked"),
+    ] {
+        let response = app(placement_state.clone(), None)
+            .oneshot(preview_request("POST", route, key, body)?)
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-store")
+        );
+        let value: Value = serde_json::from_slice(&to_bytes(response.into_body(), 1024).await?)?;
+        assert_eq!(value["status"], expected);
+    }
+    let denied = app(placement_state.clone(), None)
+        .oneshot(preview_request("POST", &existing_preview, read_key, None)?)
+        .await?;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let blocked = app(placement_state, None)
+        .oneshot(preview_request(
+            "PUT",
+            &format!("{path}?check_placement=true"),
+            key,
+            Some(&desired),
+        )?)
+        .await?;
+    assert_eq!(blocked.status(), StatusCode::CONFLICT);
+    let failure: Value = serde_json::from_slice(&to_bytes(blocked.into_body(), 1024).await?)?;
+    assert_eq!(failure["error"]["code"], "flash_placement_blocked");
+    assert_eq!(provider_calls.load(Ordering::SeqCst), 4);
+    assert_eq!(
+        store
+            .list_service_instances(org, None, Some("flash"))
+            .await?
+            .len(),
+        1
+    );
+    let after = store
+        .service_instance(instance.id)
+        .await?
+        .ok_or("service was removed")?;
+    assert_eq!(after.generation, instance.generation);
+    assert_eq!(after.spec, instance.spec);
+    let outbox_after: i64 = sqlx::query_scalar("SELECT count(*) FROM outbox_events")
+        .fetch_one(store.pool())
+        .await?;
+    assert_eq!(outbox_before, outbox_after);
+    server.abort();
     // Log access is distinct from both service updates and anonymous access.
     let log_path = format!("{path}/logs");
     assert_eq!(

@@ -75,6 +75,14 @@ pub enum FlashCommand {
     Revisions { id: Uuid },
     /// Show resource, startup, capacity and recovery notifications.
     Events { id: Uuid },
+    /// Check placement for a new, edited, or stopped Flash service without reserving resources.
+    Preflight {
+        #[arg(value_name = "SERVICE_ID", required_unless_present = "file")]
+        id: Option<Uuid>,
+        /// The same JSON manifest used by create or update. Omit to check the stored configuration.
+        #[arg(long)]
+        file: Option<String>,
+    },
     /// Restore execution settings from a healthy revision; retain current access controls and data.
     Rollback {
         id: Uuid,
@@ -878,6 +886,38 @@ pub(crate) async fn execute(
 
 pub(crate) async fn execute_flash(args: FlashArgs, settings: ApiSettings) -> Result<(), CliError> {
     let (id, stopped, no_wait) = match args.command {
+        FlashCommand::Preflight { id, file } => {
+            let output = settings.output;
+            let client = ApiClient::new(settings)?;
+            let collection = ServiceKind::Flash.collection_path(client.organization_id);
+            let path = match id {
+                Some(id) => format!("{collection}/{id}/preflight"),
+                None => format!("{collection}/preflight"),
+            };
+            let url = client
+                .endpoint
+                .join(&path)
+                .map_err(|error| CliError::InvalidApiEndpoint(error.to_string()))?;
+            let body = file.as_deref().map(read_manifest::<Value>).transpose()?;
+            let result: Value = client.send_json(Method::POST, url, body.as_ref()).await?;
+            let status = result
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unavailable");
+            let reason = result
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("capacity_metrics_unavailable");
+            if output == ApiOutputFormat::Json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else if status == "feasible" {
+                println!("Flash placement is feasible with current capacity.");
+            }
+            if status != "feasible" {
+                return Err(CliError::FlashPlacement(format!("{status} ({reason})")));
+            }
+            return Ok(());
+        }
         FlashCommand::Ssh { .. } | FlashCommand::SshProxy { .. } => {
             return Err(CliError::Authentication(
                 "SSH command dispatch failed".into(),

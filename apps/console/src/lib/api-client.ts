@@ -23,6 +23,7 @@ import type {
   IdentityCenterPermissionSet,
   IdentityCenterUser,
   FlashService,
+  FlashPlacementResult,
   FlashContainerList,
   FlashLogs,
   IamPolicy,
@@ -786,6 +787,14 @@ export class HeteroCloudApiClient {
             body: input,
           },
         ),
+      preflightCreate: (organizationId: string, input: CreateFlashServiceRequest) =>
+        this.request<FlashPlacementResult>(organizationPath(organizationId, "flash/services/preflight"), {
+          method: "POST", body: input,
+        }),
+      preflight: (organizationId: string, serviceId: string, input?: UpdateFlashServiceRequest) =>
+        this.request<FlashPlacementResult>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/preflight`), {
+          method: "POST", body: input,
+        }),
       get: (
         organizationId: string,
         serviceId: string,

@@ -65,13 +65,12 @@ export function FlashServicesPage() {
     ...flashGpuTypesQueryOptions(),
     enabled: createOpen,
   });
+  const createInput = (value: FlashServiceFormValue) => ({
+    project_id: value.projectId, name: value.name.trim(), spec: flashSpecFromForm(value),
+  });
   const createService = useMutation({
     mutationFn: async (value: FlashServiceFormValue) => {
-      const created = await api.flash.services.create(organizationId, {
-        project_id: value.projectId,
-        name: value.name.trim(),
-        spec: flashSpecFromForm(value),
-      });
+      const created = await api.flash.services.create(organizationId, createInput(value));
       // The resource remains visible and closed if credential transfer needs retry.
       try {
         if (value.authenticationMode === "oidc" && value.oidcClientSecret) await api.flash.services.putLoadBalancerSecret(organizationId,created.id,value.oidcSecretRef,value.oidcClientSecret);
@@ -281,6 +280,8 @@ export function FlashServicesPage() {
           value={form}
           onChange={setForm}
           onSubmit={submit}
+          onPreflight={(value) => api.flash.services.preflightCreate(organizationId, createInput(value))}
+          preflightDisabled={Boolean(validationError)}
           disabled={createService.isPending}
           registryImages={registryImages.data?.items}
           registryImagesStatus={

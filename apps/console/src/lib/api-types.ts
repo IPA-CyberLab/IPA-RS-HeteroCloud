@@ -854,6 +854,10 @@ export interface UpdateFlashServiceRequest {
   spec: FlashServiceSpecInput;
 }
 
+export type FlashPlacementResult =
+  | { status: "feasible" }
+  | { status: "blocked" | "unavailable"; reason: string };
+
 export interface RealtimeServiceMetrics {
   active_rooms: number;
   concurrent_connections: number;

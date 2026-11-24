@@ -59,8 +59,8 @@ use heterocloud_iam::{
 use heterocloud_store::{
     AuditEvent, AuthorizationContext, CliAccessTokenPrincipal, CliDeviceApprovalOutcome,
     CliDeviceExchangeOutcome, DeveloperCredentialMint, DeveloperCredentialMintOutcome,
-    FlashRateCard, FlashWeeklyBudget, FlowDeveloperCredentialRecord, GpuVisibility,
-    MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE, MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE,
+    FlashPlacementInput, FlashRateCard, FlashWeeklyBudget, FlowDeveloperCredentialRecord,
+    GpuVisibility, MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE, MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE,
     MAX_REALTIME_METRIC_HISTORY_SAMPLES, MAX_USER_LOGIN_EVENTS_PER_USER, NewFlashRateCard,
     NewFlashWeeklyBudget, NewFlowAccessContext, NewFlowDeveloperCredential, NewIamRoleSession,
     OidcUser, RealtimeMetricCollectionTarget, RegisterWithInvitation, SessionUser, Store,
@@ -78,8 +78,9 @@ use crate::{
     config::RuntimeConfig,
     error::ApiError,
     flash_provider::{
-        FlashContainerList, FlashProviderContext, FlashProviderError, FlashProviderProxy,
-        FlashUsageItem, bridge_websockets, refresh_autoscaled_status, refresh_autoscaled_statuses,
+        FlashContainerList, FlashPlacementResult, FlashPlacementUnavailable, FlashProviderContext,
+        FlashProviderError, FlashProviderProxy, FlashUsageItem, bridge_websockets,
+        refresh_autoscaled_status, refresh_autoscaled_statuses,
     },
     flow_access::{FlowAccessInput, SignedFlowAccessContext},
     metrics::fetch_and_record_realtime_metrics,
@@ -294,6 +295,8 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .route("/organizations/{organization_id}/flash/backups/{backup_id}/restore",post(backup_routes::restore_backup))
         .route("/organizations/{organization_id}/flash/services/{service_instance_id}/backups",post(backup_routes::create_backup))
         .route("/organizations/{organization_id}/flash/services/{service_instance_id}/revisions",get(operation_routes::revisions))
+        .route("/organizations/{organization_id}/flash/services/preflight", post(preflight_new_flash_service))
+        .route("/organizations/{organization_id}/flash/services/{service_instance_id}/preflight", post(preflight_existing_flash_service))
         .route("/organizations/{organization_id}/flash/services/{service_instance_id}/rollback",post(operation_routes::rollback))
         .route("/organizations/{organization_id}/flash/services/{service_instance_id}/events",get(operation_routes::events))
         .route("/organizations/{organization_id}/flash/events",get(operation_routes::list_events))
@@ -4632,28 +4635,40 @@ struct CreateFlashService {
     spec: FlashSpec,
 }
 
+#[derive(Deserialize)]
+struct FlashPlacementQuery {
+    #[serde(default)]
+    check_placement: bool,
+}
+
+fn validate_new_flash_spec(spec: &FlashSpec) -> Result<(), ApiError> {
+    validate_flash_spec(spec)?;
+    if spec.restore_from_backup_id.is_some() {
+        return Err(ApiError::BadRequest(
+            "Use the backup restore endpoint to create a restored service.".into(),
+        ));
+    }
+    if !spec.secret_env.is_empty() || !spec.secret_files.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Create the Flash service before attaching secrets.".into(),
+        ));
+    }
+    Ok(())
+}
+
 async fn create_flash_service(
     State(state): State<Arc<AppState>>,
     Path(organization_id): Path<Uuid>,
+    Query(query): Query<FlashPlacementQuery>,
     headers: HeaderMap,
     jar: CookieJar,
     Json(request): Json<CreateFlashService>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     validate_name(&request.name)?;
-    validate_flash_spec(&request.spec)?;
-    if request.spec.restore_from_backup_id.is_some() {
-        return Err(ApiError::BadRequest(
-            "Use the backup restore endpoint to create a restored service.".into(),
-        ));
-    }
+    validate_new_flash_spec(&request.spec)?;
     authorize_vpc_attachment(&state, &actor, organization_id, &request.spec).await?;
     authorize_task_role(&state, &actor, organization_id, request.spec.task_role).await?;
-    if !request.spec.secret_env.is_empty() || !request.spec.secret_files.is_empty() {
-        return Err(ApiError::BadRequest(
-            "Create the Flash service before attaching secrets.".into(),
-        ));
-    }
     if request.spec.gpu_type.is_some() {
         sync_gpu_catalog_from_provider(&state).await?;
     }
@@ -4666,6 +4681,19 @@ async fn create_flash_service(
     )
     .await?;
     let quota_user = quota_user_for_actor(&state, &actor, OrganizationId(organization_id)).await?;
+    let spec = serde_json::to_value(&request.spec).map_err(|_| ApiError::Internal)?;
+    if query.check_placement && !request.spec.stopped {
+        let input = FlashPlacementInput {
+            organization_id: OrganizationId(organization_id),
+            project_id: ProjectId(request.project_id),
+            principal_id: authorization.principal_id,
+            service_instance_id: ServiceInstanceId(Uuid::now_v7()),
+            existing_generation: None,
+            quota_user_id: quota_user,
+            spec: spec.clone(),
+        };
+        check_flash_placement(&state, &request.name, input).await?;
+    }
     let instance = state
         .store
         .create_service_instance_for_user(
@@ -4674,7 +4702,7 @@ async fn create_flash_service(
             authorization.principal_id,
             "flash",
             &request.name,
-            serde_json::to_value(request.spec).map_err(|_| ApiError::Internal)?,
+            spec,
             quota_user,
         )
         .await
@@ -4717,9 +4745,155 @@ struct UpdateFlashService {
     spec: FlashSpec,
 }
 
+fn prepare_flash_replacement(spec: &mut FlashSpec, prior: &FlashSpec) -> Result<(), ApiError> {
+    if spec.ssh_enabled.is_none() {
+        spec.ssh_enabled = prior.ssh_enabled;
+    }
+    if spec.restore_from_backup_id.is_some()
+        && spec.restore_from_backup_id != prior.restore_from_backup_id
+    {
+        return Err(ApiError::BadRequest(
+            "The disk restore source is immutable.".into(),
+        ));
+    }
+    spec.restore_from_backup_id = prior.restore_from_backup_id;
+    validate_flash_spec(spec)
+}
+
+async fn preflight_new_flash_service(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(mut request): Json<CreateFlashService>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let org = OrganizationId(organization_id);
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        org,
+        "flash:CreateInstance",
+        &flash_collection_resource(organization_id),
+    )
+    .await?;
+    validate_name(&request.name)?;
+    validate_new_flash_spec(&request.spec)?;
+    authorize_vpc_attachment(&state, &actor, organization_id, &request.spec).await?;
+    authorize_task_role(&state, &actor, organization_id, request.spec.task_role).await?;
+    request.spec.stopped = false;
+    let input = FlashPlacementInput {
+        organization_id: org,
+        principal_id: authorization.principal_id,
+        project_id: ProjectId(request.project_id),
+        service_instance_id: ServiceInstanceId(Uuid::now_v7()),
+        existing_generation: None,
+        quota_user_id: quota_user_for_actor(&state, &actor, org).await?,
+        spec: serde_json::to_value(request.spec).map_err(|_| ApiError::Internal)?,
+    };
+    let result = evaluate_flash_placement(&state, &request.name, input).await?;
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(result)))
+}
+
+async fn preflight_existing_flash_service(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    request: Option<Json<UpdateFlashService>>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let org = OrganizationId(organization_id);
+    let authorization = authorize_actor(
+        &state,
+        &actor,
+        org,
+        "flash:UpdateInstance",
+        &flash_service_resource(organization_id, id),
+    )
+    .await?;
+    let existing = flash_service(&state, organization_id, id).await?;
+    let prior: FlashSpec = serde_json::from_value(existing.spec).map_err(|_| ApiError::Internal)?;
+    let (name, project_id, mut spec) = if let Some(Json(mut request)) = request {
+        validate_name(&request.name)?;
+        prepare_flash_replacement(&mut request.spec, &prior)?;
+        authorize_vpc_attachment(&state, &actor, organization_id, &request.spec).await?;
+        authorize_task_role(&state, &actor, organization_id, request.spec.task_role).await?;
+        (
+            request.name,
+            request
+                .project_id
+                .map(ProjectId)
+                .unwrap_or(existing.project_id),
+            request.spec,
+        )
+    } else {
+        (existing.name, existing.project_id, prior)
+    };
+    spec.stopped = false;
+    let input = FlashPlacementInput {
+        organization_id: org,
+        principal_id: authorization.principal_id,
+        project_id,
+        service_instance_id: existing.id,
+        existing_generation: Some(existing.generation),
+        quota_user_id: None,
+        spec: serde_json::to_value(spec).map_err(|_| ApiError::Internal)?,
+    };
+    let result = evaluate_flash_placement(&state, &name, input).await?;
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(result)))
+}
+
+async fn evaluate_flash_placement(
+    state: &AppState,
+    name: &str,
+    input: FlashPlacementInput,
+) -> Result<FlashPlacementResult, ApiError> {
+    let existing = input.existing_generation.is_some();
+    let mut context = FlashProviderContext {
+        principal_id: input.principal_id,
+        user_id: None,
+        organization_id: input.organization_id,
+        project_id: input.project_id,
+        service_instance_id: input.service_instance_id,
+        generation: input.existing_generation.unwrap_or(1),
+    };
+    let (spec, subject) = state
+        .store
+        .preview_flash_placement(input)
+        .await
+        .map_err(ApiError::from_store)?;
+    context.user_id = subject;
+    let unavailable = FlashPlacementResult::Unavailable {
+        reason: FlashPlacementUnavailable::CapacityMetricsUnavailable,
+    };
+    Ok(if let Some(provider) = &state.flash_provider {
+        provider
+            .preflight(context, name, &spec, existing)
+            .await
+            .unwrap_or(unavailable)
+    } else {
+        unavailable
+    })
+}
+
+async fn check_flash_placement(
+    state: &AppState,
+    name: &str,
+    input: FlashPlacementInput,
+) -> Result<(), ApiError> {
+    if let FlashPlacementResult::Blocked { reason } =
+        evaluate_flash_placement(state, name, input).await?
+    {
+        return Err(ApiError::FlashPlacementBlocked(reason.message()));
+    }
+    Ok(())
+}
+
 async fn update_flash_service(
     State(state): State<Arc<AppState>>,
     Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<FlashPlacementQuery>,
     headers: HeaderMap,
     jar: CookieJar,
     Json(mut request): Json<UpdateFlashService>,
@@ -4727,19 +4901,8 @@ async fn update_flash_service(
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     let existing = flash_service(&state, organization_id, service_instance_id).await?;
     let prior: FlashSpec = serde_json::from_value(existing.spec).map_err(|_| ApiError::Internal)?;
-    if request.spec.ssh_enabled.is_none() {
-        request.spec.ssh_enabled = prior.ssh_enabled;
-    }
-    if request.spec.restore_from_backup_id.is_some()
-        && request.spec.restore_from_backup_id != prior.restore_from_backup_id
-    {
-        return Err(ApiError::BadRequest(
-            "The disk restore source is immutable.".into(),
-        ));
-    }
-    request.spec.restore_from_backup_id = prior.restore_from_backup_id;
     validate_name(&request.name)?;
-    validate_flash_spec(&request.spec)?;
+    prepare_flash_replacement(&mut request.spec, &prior)?;
     authorize_vpc_attachment(&state, &actor, organization_id, &request.spec).await?;
     authorize_task_role(&state, &actor, organization_id, request.spec.task_role).await?;
     if request.spec.gpu_type.is_some() {
@@ -4772,16 +4935,32 @@ async fn update_flash_service(
             ));
         }
     }
+    let spec = serde_json::to_value(&request.spec).map_err(|_| ApiError::Internal)?;
+    let project_id = request.project_id.map(ProjectId);
+    let check_placement = query.check_placement && !request.spec.stopped;
+    if check_placement {
+        let input = FlashPlacementInput {
+            organization_id: OrganizationId(organization_id),
+            project_id: project_id.unwrap_or(existing.project_id),
+            principal_id: authorization.principal_id,
+            service_instance_id: existing.id,
+            existing_generation: Some(existing.generation),
+            quota_user_id: None,
+            spec: spec.clone(),
+        };
+        check_flash_placement(&state, &request.name, input).await?;
+    }
     let instance = state
         .store
-        .update_service_instance_in_project(
+        .update_service_instance_checked(
             OrganizationId(organization_id),
             ServiceInstanceId(service_instance_id),
             "flash",
             authorization.principal_id,
-            request.project_id.map(ProjectId),
+            project_id,
             &request.name,
-            serde_json::to_value(request.spec).map_err(|_| ApiError::Internal)?,
+            spec,
+            check_placement.then_some(existing.generation),
         )
         .await
         .map_err(ApiError::from_store)?;

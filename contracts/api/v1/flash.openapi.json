@@ -145,8 +145,22 @@
           },
           "503": {
             "description": "Flash provider GPU catalog unavailable when gpu_type is requested"
+          },
+          "409": {
+            "description": "Flash placement is blocked by current capacity (flash_placement_blocked)."
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "check_placement",
+            "in": "query",
+            "description": "Check active placements before writing. Reject a confirmed scheduling blocker and defer to admission when measurements are unavailable.",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ]
       }
     },
     "/api/v1/organizations/{organization_id}/flash/services/{service_instance_id}": {
@@ -244,8 +258,22 @@
           },
           "503": {
             "description": "Flash provider GPU catalog unavailable when gpu_type is requested"
+          },
+          "409": {
+            "description": "Flash placement is blocked by current capacity (flash_placement_blocked)."
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "check_placement",
+            "in": "query",
+            "description": "Check active placements before writing. Reject a confirmed scheduling blocker and defer to admission when measurements are unavailable.",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ]
       }
     },
     "/api/v1/owner/gpus": {
@@ -1313,6 +1341,123 @@
           },
           "503": {
             "description": "Provider unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/organizations/{organization_id}/flash/services/preflight": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "summary": "Check available placement capacity",
+        "description": "Check a proposed new service using CreateInstance permission.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFlashService"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Read-only placement estimate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlashPlacementResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid specification or quota exceeded"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Project or service not found"
+          },
+          "422": {
+            "description": "Malformed request body"
+          }
+        }
+      }
+    },
+    "/api/v1/organizations/{organization_id}/flash/services/{service_instance_id}/preflight": {
+      "parameters": [
+        {
+          "name": "organization_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "service_instance_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "summary": "Check available placement capacity",
+        "description": "Check an edited service or the stored configuration with UpdateInstance permission. Send an empty request to check the stored configuration.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFlashService"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Read-only placement estimate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlashPlacementResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid specification or quota exceeded"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Project or service not found"
+          },
+          "422": {
+            "description": "Malformed request body"
           }
         }
       }
@@ -2866,6 +3011,41 @@
             "format": "date-time"
           }
         }
+      },
+      "FlashPlacementResult": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "const": "feasible"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "reason"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "blocked",
+                  "unavailable"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        ]
       }
     }
   }

@@ -205,6 +205,7 @@ resource "restapi_object" "workspace" {
     }
   }
   path                    = "/api/v1/organizations/${var.organization_id}/flash/services"
+  query_string            = "check_placement=true"
   ignore_server_additions = true
   data = sensitive(jsonencode({
     project_id = var.project_id

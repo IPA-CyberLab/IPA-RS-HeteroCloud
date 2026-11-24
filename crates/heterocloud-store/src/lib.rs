@@ -3,6 +3,7 @@ mod flash_backup_destinations;
 mod flash_backups;
 mod flash_billing;
 mod flash_operations;
+mod flash_placement;
 mod flash_ssh_keys;
 mod iam_groups;
 mod iam_roles;
@@ -15,6 +16,7 @@ mod organizations;
 pub use flash_operations::{
     BackupPolicyInput, FlashBackupPolicy, FlashEvent, FlashRevision, rollback_spec,
 };
+pub use flash_placement::FlashPlacementInput;
 pub use iam_groups::{IamGroup, IamPermissionsBoundary};
 pub use iam_roles::{
     BrowserRoleSession, IamRole, IamRoleSession, IamRoleSessionInfo, NewIamRoleSession,
@@ -3390,8 +3392,15 @@ impl Store {
             .await?;
         }
         if provider == "flash" {
-            validate_vpc_attachment(&mut transaction, organization_id, project_id, id, &spec)
-                .await?;
+            validate_vpc_attachment(
+                &mut transaction,
+                organization_id,
+                project_id,
+                id,
+                &spec,
+                true,
+            )
+            .await?;
         }
         let row = sqlx::query_as::<_, ServiceRow>(
             "INSERT INTO service_instances
@@ -3642,8 +3651,15 @@ impl Store {
         }
         if provider == "flash" {
             validate_flash_disk_update(&existing.spec, &existing.status, &spec)?;
-            validate_vpc_attachment(&mut transaction, organization_id, project_id, id, &spec)
-                .await?;
+            validate_vpc_attachment(
+                &mut transaction,
+                organization_id,
+                project_id,
+                id,
+                &spec,
+                true,
+            )
+            .await?;
         }
         // Gateway access is a control-plane setting. Changing only this flag
         // must not create a new workload generation or restart a container.
@@ -3817,6 +3833,7 @@ impl Store {
                 ProjectId(existing.project_id),
                 id,
                 &spec,
+                true,
             )
             .await?;
         }
@@ -4600,21 +4617,26 @@ async fn validate_vpc_attachment(
     project: ProjectId,
     id: ServiceInstanceId,
     spec: &Value,
+    lock: bool,
 ) -> Result<(), StoreError> {
     let flash: FlashSpec = serde_json::from_value(spec.clone())
         .map_err(|e| StoreError::RequestRejected(e.to_string()))?;
     let Some(network) = &flash.network else {
         return Ok(());
     };
-    let row: Option<(Value, String)> = sqlx::query_as(
+    let query = if lock {
         "SELECT spec, state FROM service_instances WHERE id = $1 AND organization_id = $2
-         AND project_id = $3 AND provider = 'vpc' FOR SHARE",
-    )
-    .bind(network.vpc_id)
-    .bind(org.0)
-    .bind(project.0)
-    .fetch_optional(&mut **tx)
-    .await?;
+         AND project_id = $3 AND provider = 'vpc' FOR SHARE"
+    } else {
+        "SELECT spec, state FROM service_instances WHERE id = $1 AND organization_id = $2
+         AND project_id = $3 AND provider = 'vpc'"
+    };
+    let row: Option<(Value, String)> = sqlx::query_as(query)
+        .bind(network.vpc_id)
+        .bind(org.0)
+        .bind(project.0)
+        .fetch_optional(&mut **tx)
+        .await?;
     let Some((vpc_spec, state)) = row else {
         return Err(StoreError::RequestRejected(
             "VPC must belong to this organization and project".into(),

@@ -23,6 +23,8 @@ pub enum ApiError {
     IdentityProviderUnavailable,
     #[error("Flash provider is unavailable")]
     FlashProviderUnavailable,
+    #[error("{0}")]
+    FlashPlacementBlocked(&'static str),
     #[error("Syouyu provider is unavailable")]
     SyouyuProviderUnavailable,
     #[error("resource not found")]
@@ -109,6 +111,9 @@ impl IntoResponse for ApiError {
                 "flash_provider_unavailable",
                 "The Flash provider is temporarily unavailable.",
             ),
+            Self::FlashPlacementBlocked(message) => {
+                (StatusCode::CONFLICT, "flash_placement_blocked", *message)
+            }
             Self::SyouyuProviderUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "syouyu_provider_unavailable",

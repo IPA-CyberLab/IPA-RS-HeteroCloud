@@ -5,6 +5,37 @@ deployment history, manual rollback and scheduled backups. Organization and owne
 consoles have a Flash notifications page. Measurements that cannot be obtained are
 shown as unavailable; they are never represented as zero use.
 
+## Placement preflight
+
+Use **配置を確認** in the Flash create or edit form, or run:
+
+```sh
+heterocloud flash preflight --file create.json
+heterocloud flash preflight SERVICE_ID --file update.json
+heterocloud flash preflight SERVICE_ID
+```
+
+The first two commands accept the same manifests as `create` and `update`.
+Omitting the manifest checks the stored configuration as if started. The check
+uses the current allocation limits, then estimates CPU, memory, image and host
+disk space, persistent-disk replication, visible GPU availability and required
+replica spread. It checks the requested initial replica count and any first
+rolling-update surge. Autoscaling ceilings are checked against allocation quotas.
+
+`POST .../flash/services/preflight` requires `flash:CreateInstance`.
+`POST .../flash/services/{id}/preflight` requires `flash:UpdateInstance` and
+accepts an optional update manifest. The JSON status is `feasible`, `blocked` or
+`unavailable`. The latter two include a reason code and produce a nonzero CLI
+exit status. Invalid manifests and allocation limits use ordinary API errors.
+The preview uses live observations and creates no reservations or resources.
+
+Create and replace-update requests can opt in with `?check_placement=true`.
+A definite scheduling blocker returns HTTP 409 `flash_placement_blocked`
+before creating or updating the service. When observations are unavailable,
+the normal reconciliation and admission checks run. The Coder template uses
+this option for workspace writes and continues to wait for real workload
+readiness after a successful write.
+
 ## Updates
 
 `spec.deployment` is optional. Defaults are `strategy: "auto"`,

@@ -42,6 +42,11 @@ run "new_workspace_reserves_more_temporary_space" {
   command = plan
 
   assert {
+    condition     = restapi_object.workspace.query_string == "check_placement=true"
+    error_message = "Workspace writes must request a placement check."
+  }
+
+  assert {
     condition = (
       jsondecode(restapi_object.workspace.data).spec.rootfs_storage_gib == 10 &&
       jsondecode(restapi_object.workspace.data).spec.ephemeral_storage_gib == 37

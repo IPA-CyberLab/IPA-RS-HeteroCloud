@@ -230,6 +230,14 @@ def run_suite(a):
             require(requests[0]["method"]==method and requests[0]["path"]==path, "incorrect domain API path")
             require(requests[0]["body"]==body, "incorrect domain request JSON")
         return check
+    service_path = f"/api/v1/organizations/{ORG}/flash/services"
+    proposed = {"project_id": PROJECT, "name": "placement-demo", "spec": {"replicas": 1}}
+    a.run("flash-preflight-create", ["flash", "preflight", "--file", "-"], api=True,
+          stdin=json.dumps(proposed), responses=[reply({"status": "feasible"})], contains="feasible",
+          check=domain_check("POST", service_path+"/preflight", proposed))
+    a.run("flash-preflight-blocked", ["flash", "preflight", ID], api=True, rc=1,
+          responses=[reply({"status": "blocked", "reason": "insufficient_compute_capacity"})],
+          contains="insufficient_compute_capacity", check=domain_check("POST", f"{service_path}/{ID}/preflight"))
     a.run("flash-domains-list", ["flash", "domains", "list", ID], api=True, responses=[reply({"items":[]})], check=domain_check("GET",domain_path))
     a.run("flash-domains-add", ["flash", "domains", "add", ID, "--hostname", "APP.example.org."], api=True, responses=[reply({"id":domain_id},202)], check=domain_check("POST",domain_path,{"hostname":"app.example.org"}))
     a.run("flash-domains-delete", ["flash", "domains", "delete", ID, domain_id, "--yes"], api=True, responses=[reply({"phase":"deleting"},202)], check=domain_check("DELETE",domain_path+"/"+domain_id))
