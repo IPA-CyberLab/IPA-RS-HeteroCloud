@@ -14,6 +14,7 @@ import type { FormEvent, ReactNode } from "react";
 import "./flash-service-form.css";
 import { ProjectSelector } from "@/components/shared/resource-selectors";
 import { getApiErrorMessage } from "@/lib/api-client";
+import { placementReasons } from "./flash-service-utils";
 import type {
   FlashDeploymentPolicy,
   FlashExposure, VpcNetwork, Principal,
@@ -645,25 +646,6 @@ export function flashFormFromService(
     args: service.spec.args.join("\n"),
   };
 }
-
-const placementReasons: Record<string, string> = {
-  insufficient_compute_capacity: "利用できるホストの CPU またはメモリが不足しています。",
-  insufficient_pod_capacity: "同時に実行できるコンテナ数の上限に達しています。",
-  insufficient_disk_capacity: "イメージや書き込み領域に必要なホストの空き容量が不足しています。",
-  insufficient_inodes: "ホストのファイルシステムに空き inode が不足しています。",
-  insufficient_replicated_storage: "永続ディスクの複製に必要な空き容量が不足しています。",
-  insufficient_topology_capacity: "レプリカの分散条件を満たすホストが不足しています。",
-  no_eligible_node: "この構成を実行できるホストが見つかりません。",
-  image_exceeds_disk_budget: "コンテナイメージが指定のディスク上限を超えています。",
-  image_unavailable: "イメージを確認できません。参照先とレジストリへのアクセスを確認してください。",
-  image_capacity_unknown: "イメージ容量を取得できませんでした。",
-  invalid_disk_layout: "イメージ・書き込み領域・永続ディスクが指定のディスク上限に収まりません。",
-  invalid_deployment: "この構成では指定の更新方式を使用できません。",
-  persistent_disk_cannot_shrink: "現在の永続ディスクより小さい容量を指定しています。",
-  persistent_storage_unavailable: "永続ディスクを使用できない構成です。",
-  storage_replica_policy_unavailable: "永続ディスクの複製設定を取得できませんでした。",
-  gpu_unavailable: "利用できる GPU に空きがありません。",
-};
 
 function FlashPlacementPreview({ value, check, disabled }: {
   value: FlashServiceFormValue;

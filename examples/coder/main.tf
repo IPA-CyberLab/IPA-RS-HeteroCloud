@@ -72,6 +72,15 @@ provider "restapi" {
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
+data "coder_parameter" "wait_for_flash_capacity" {
+  name         = "wait_for_flash_capacity"
+  display_name = "Flash の空き容量を待つ"
+  description  = "起動に必要な容量が不足している場合は最大5分待ちます。"
+  type         = "bool"
+  default      = "false"
+  mutable      = true
+}
+
 resource "coder_agent" "main" {
   arch                    = "amd64"
   os                      = "linux"
@@ -147,7 +156,8 @@ module "filebrowser" {
 }
 
 locals {
-  service_name = "coder-ws-${data.coder_workspace.me.id}"
+  service_name          = "coder-ws-${data.coder_workspace.me.id}"
+  capacity_wait_seconds = data.coder_workspace.me.start_count > 0 && tobool(data.coder_parameter.wait_for_flash_capacity.value) ? 300 : 0
   workspace_storage = lookup(var.workspace_storage_overrides, data.coder_workspace.me.id, {
     total_disk_gib         = 37
     rootfs_storage_gib     = 10
@@ -205,7 +215,7 @@ resource "restapi_object" "workspace" {
     }
   }
   path                    = "/api/v1/organizations/${var.organization_id}/flash/services"
-  query_string            = "check_placement=true"
+  query_string            = local.capacity_wait_seconds > 0 ? "check_placement=true&wait_for_capacity_seconds=${local.capacity_wait_seconds}" : "check_placement=true"
   ignore_server_additions = true
   data = sensitive(jsonencode({
     project_id = var.project_id
@@ -230,10 +240,16 @@ resource "terraform_data" "workspace_ready" {
   provisioner "local-exec" {
     command = "exec /bin/sh \"$HETEROCLOUD_CODER_WAIT_SCRIPT\""
     environment = {
-      HETEROCLOUD_CODER_WAIT_SCRIPT = abspath("${path.module}/wait-for-flash.sh")
-      HETEROCLOUD_CODER_BRIDGE      = var.provisioner_api_url
-      HETEROCLOUD_CODER_ACCOUNT_ID  = var.organization_id
-      HETEROCLOUD_CODER_SERVICE_ID  = restapi_object.workspace.id
+      HETEROCLOUD_CODER_WAIT_SCRIPT           = abspath("${path.module}/wait-for-flash.sh")
+      HETEROCLOUD_CODER_BRIDGE                = var.provisioner_api_url
+      HETEROCLOUD_CODER_ACCOUNT_ID            = var.organization_id
+      HETEROCLOUD_CODER_SERVICE_ID            = restapi_object.workspace.id
+      HETEROCLOUD_CODER_CAPACITY_WAIT_SECONDS = tostring(local.capacity_wait_seconds)
+      # Extract only the request identifier from the sensitive API response.
+      HETEROCLOUD_CODER_CAPACITY_WAIT_ID = nonsensitive(sensitive(try(
+        jsondecode(restapi_object.workspace.api_response).status.capacity_wait.id,
+        "",
+      )))
     }
   }
 }

@@ -115,15 +115,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "required": [
-                    "spec"
-                  ],
-                  "properties": {
-                    "spec": {
-                      "$ref": "#/components/schemas/FlashSpec"
-                    }
-                  }
+                  "$ref": "#/components/schemas/FlashServiceRead"
                 }
               }
             }
@@ -158,6 +150,16 @@
             "schema": {
               "type": "boolean",
               "default": false
+            }
+          },
+          {
+            "name": "wait_for_capacity_seconds",
+            "in": "query",
+            "description": "Opt in to waiting for physical capacity before starting a new or stopped service.",
+            "schema": {
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 900
             }
           }
         ]
@@ -211,13 +213,20 @@
       },
       "put": {
         "summary": "Replace a Flash service specification",
-        "description": "Validation and quota reservation occur before acceptance. CPU, memory, disk and replica quotas use autoscaling.max_replicas, or replicas for fixed services. Updates replace the previous reservation transactionally.",
+        "description": "Validation and quota reservation occur before acceptance. CPU, memory, disk and replica quotas use autoscaling.max_replicas, or replicas for fixed services. Updates replace the previous reservation transactionally. A cancellation document uses the same update permission and ends only the specified active capacity wait.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdateFlashService"
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/UpdateFlashService"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CancelFlashCapacityWait"
+                  }
+                ]
               }
             }
           }
@@ -228,15 +237,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "required": [
-                    "spec"
-                  ],
-                  "properties": {
-                    "spec": {
-                      "$ref": "#/components/schemas/FlashSpec"
-                    }
-                  }
+                  "$ref": "#/components/schemas/FlashServiceRead"
                 }
               }
             }
@@ -271,6 +272,16 @@
             "schema": {
               "type": "boolean",
               "default": false
+            }
+          },
+          {
+            "name": "wait_for_capacity_seconds",
+            "in": "query",
+            "description": "Opt in to waiting for physical capacity before starting a new or stopped service.",
+            "schema": {
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 900
             }
           }
         ]
@@ -441,15 +452,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "required": [
-                    "spec"
-                  ],
-                  "properties": {
-                    "spec": {
-                      "$ref": "#/components/schemas/FlashSpec"
-                    }
-                  }
+                  "$ref": "#/components/schemas/FlashServiceRead"
                 }
               }
             }
@@ -493,6 +496,16 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "wait_for_capacity_seconds",
+            "in": "query",
+            "description": "Opt in to waiting for physical capacity before starting a new or stopped service.",
+            "schema": {
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 900
             }
           }
         ]
@@ -1497,6 +1510,9 @@
               },
               "status": {
                 "$ref": "#/components/schemas/FlashObservedStatus"
+              },
+              "capacity_wait": {
+                "$ref": "#/components/schemas/FlashCapacityWait"
               }
             }
           }
@@ -3046,6 +3062,64 @@
             }
           }
         ]
+      },
+      "FlashCapacityWait": {
+        "type": "object",
+        "required": [
+          "id",
+          "generation",
+          "state",
+          "reason",
+          "requested_at",
+          "expires_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "generation": {
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "waiting",
+              "starting",
+              "ready",
+              "cancelled",
+              "expired",
+              "rejected",
+              "superseded"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CancelFlashCapacityWait": {
+        "type": "object",
+        "required": [
+          "cancel_capacity_wait_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "cancel_capacity_wait_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
       }
     }
   }

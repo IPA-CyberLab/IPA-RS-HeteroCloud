@@ -18,6 +18,13 @@ underlying problem is resolved, retrying the build reuses them. Stopping does
 not wait for a running replica. Provider readiness does not itself prove the
 Coder agent can connect, so monitor the agent separately.
 
+Enable **Flash の空き容量を待つ** in the workspace parameters to keep a start
+build open while Flash waits up to five minutes for physical capacity. The
+build reports the reason and follows the request through startup. Stopping the
+workspace or cancelling the capacity request ends that specific start while
+retaining the home disk. The isolated Coder E2E in the scheduling workflow
+releases fixture capacity and checks that a real workspace agent connects.
+
 The default allocation is 4 vCPU, 8 GiB RAM, 37 GiB total disk and 10 GiB for
 the container filesystem. Increasing the container filesystem from 3 to 10 GiB
 also increased the total disk budget by 7 GiB to preserve the existing home.

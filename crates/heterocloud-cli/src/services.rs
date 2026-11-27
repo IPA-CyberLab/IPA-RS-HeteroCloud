@@ -129,6 +129,16 @@ pub enum FlashCommand {
         id: Uuid,
         #[arg(long)]
         no_wait: bool,
+        /// Enqueue until capacity is available and return the request ID immediately.
+        #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u32).range(30..=900))]
+        wait_for_capacity: Option<u32>,
+    },
+    /// Cancel a specific queued start without deleting the service or its data.
+    CancelStart {
+        #[arg(value_name = "SERVICE_ID")]
+        id: Uuid,
+        #[arg(value_name = "REQUEST_ID")]
+        request_id: Uuid,
     },
     /// Stop all replicas and retain the service, secrets and persistent home.
     Stop {
@@ -885,7 +895,7 @@ pub(crate) async fn execute(
 }
 
 pub(crate) async fn execute_flash(args: FlashArgs, settings: ApiSettings) -> Result<(), CliError> {
-    let (id, stopped, no_wait) = match args.command {
+    let (id, stopped, no_wait, capacity_wait) = match args.command {
         FlashCommand::Preflight { id, file } => {
             let output = settings.output;
             let client = ApiClient::new(settings)?;
@@ -1177,13 +1187,34 @@ pub(crate) async fn execute_flash(args: FlashArgs, settings: ApiSettings) -> Res
         FlashCommand::Service(command) => {
             return execute(ServiceKind::Flash, ServiceArgs { command }, settings).await;
         }
-        FlashCommand::Start { id, no_wait } => (id, false, no_wait),
-        FlashCommand::Stop { id, no_wait } => (id, true, no_wait),
+        FlashCommand::CancelStart { id, request_id } => {
+            let output = settings.output;
+            let client = ApiClient::new(settings)?;
+            let service: ManagedService = serde_json::from_value(
+                client
+                    .send_json(
+                        Method::PUT,
+                        client.service_url(ServiceKind::Flash, id)?,
+                        Some(&json!({"cancel_capacity_wait_id":request_id})),
+                    )
+                    .await?,
+            )?;
+            return write_capacity_wait(&service, output);
+        }
+        FlashCommand::Start {
+            id,
+            no_wait,
+            wait_for_capacity,
+        } => (id, false, no_wait, wait_for_capacity),
+        FlashCommand::Stop { id, no_wait } => (id, true, no_wait, None),
     };
     let output = settings.output;
     let client = ApiClient::new(settings)?;
-    let service = client.set_flash_stopped(id, stopped).await?;
+    let service = client.set_flash_stopped(id, stopped, capacity_wait).await?;
     ensure_provider(ServiceKind::Flash, &service)?;
+    if capacity_wait.is_some() {
+        return write_capacity_wait(&service, output);
+    }
     let service = if no_wait {
         service
     } else {
@@ -1617,15 +1648,24 @@ impl ApiClient {
         serde_json::from_value(value).map_err(CliError::Json)
     }
 
-    async fn set_flash_stopped(&self, id: Uuid, stopped: bool) -> Result<ManagedService, CliError> {
+    async fn set_flash_stopped(
+        &self,
+        id: Uuid,
+        stopped: bool,
+        capacity_wait: Option<u32>,
+    ) -> Result<ManagedService, CliError> {
         let action = if stopped { "stop" } else { "start" };
-        let url = self
+        let mut url = self
             .endpoint
             .join(&format!(
                 "{}/{id}/{action}",
                 ServiceKind::Flash.collection_path(self.organization_id)
             ))
             .map_err(|error| CliError::InvalidApiEndpoint(error.to_string()))?;
+        if let Some(seconds) = capacity_wait {
+            url.query_pairs_mut()
+                .append_pair("wait_for_capacity_seconds", &seconds.to_string());
+        }
         let value = self.send_json::<Value>(Method::POST, url, None).await?;
         serde_json::from_value(value).map_err(CliError::Json)
     }
@@ -1891,7 +1931,41 @@ fn write_deleted(id: Uuid, format: ApiOutputFormat) -> Result<(), CliError> {
     Ok(())
 }
 
+fn write_capacity_wait(service: &ManagedService, format: ApiOutputFormat) -> Result<(), CliError> {
+    let wait = &service.status["capacity_wait"];
+    match format {
+        ApiOutputFormat::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(
+                &json!({"service_id": service.id, "capacity_wait":wait, "state":display_state(service)}),
+            )?
+        ),
+        ApiOutputFormat::Table => {
+            println!("SERVICE ID\tREQUEST ID\tSTATE\tREASON\tDEADLINE");
+            println!(
+                "{}\t{}\t{}\t{}\t{}",
+                service.id,
+                wait["id"].as_str().unwrap_or("-"),
+                wait["state"]
+                    .as_str()
+                    .unwrap_or_else(|| display_state(service)),
+                wait["reason"].as_str().unwrap_or("-"),
+                wait["expires_at"].as_str().unwrap_or("-")
+            );
+        }
+    }
+    Ok(())
+}
+
 fn display_state(service: &ManagedService) -> &str {
+    let wait = &service.status["capacity_wait"];
+    if service.state != "deleting" && wait["generation"].as_i64() == Some(service.generation) {
+        match wait["state"].as_str() {
+            Some("waiting") => return "waiting_for_capacity",
+            Some("starting") => return "starting",
+            _ => {}
+        }
+    }
     if service.provider == "flash"
         && service.spec.get("stopped").and_then(Value::as_bool) == Some(true)
         && !matches!(service.state.as_str(), "error" | "deleting")

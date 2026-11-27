@@ -37,9 +37,60 @@ export function flashGpuQueueMessage(status: FlashServiceStatus): string | null 
   return "利用可能なGPUを待っています。空き次第、自動で開始します。";
 }
 
+export const placementReasons: Record<string, string> = {
+  insufficient_compute_capacity: "利用できるホストの CPU またはメモリが不足しています。",
+  insufficient_pod_capacity: "同時に実行できるコンテナ数の上限に達しています。",
+  insufficient_disk_capacity: "イメージや書き込み領域に必要なホストの空き容量が不足しています。",
+  insufficient_inodes: "ホストのファイルシステムに空き inode が不足しています。",
+  insufficient_replicated_storage: "永続ディスクの複製に必要な空き容量が不足しています。",
+  insufficient_topology_capacity: "レプリカの分散条件を満たすホストが不足しています。",
+  no_eligible_node: "この構成を実行できるホストが見つかりません。",
+  image_exceeds_disk_budget: "コンテナイメージが指定のディスク上限を超えています。",
+  image_unavailable: "イメージを確認できません。参照先とレジストリへのアクセスを確認してください。",
+  image_capacity_unknown: "イメージ容量を取得できませんでした。",
+  invalid_disk_layout: "イメージ・書き込み領域・永続ディスクが指定のディスク上限に収まりません。",
+  invalid_deployment: "この構成では指定の更新方式を使用できません。",
+  persistent_disk_cannot_shrink: "現在の永続ディスクより小さい容量を指定しています。",
+  persistent_storage_unavailable: "永続ディスクを使用できない構成です。",
+  storage_replica_policy_unavailable: "永続ディスクの複製設定を取得できませんでした。",
+  gpu_unavailable: "利用できる GPU に空きがありません。",
+};
+
+export const defaultCapacityWaitSeconds = 300;
+
+export function activeCapacityWait(service?: Partial<Pick<FlashService, "generation" | "state" | "status">>) {
+  const wait = service?.status?.capacity_wait;
+  if (service?.state === "deleting" || wait?.generation !== service?.generation) return undefined;
+  return wait?.state === "waiting" || wait?.state === "starting" ? wait : undefined;
+}
+
+const waitReasons: Record<string, string> = {
+  checking_capacity: "空き容量を確認しています。",
+  capacity_metrics_unavailable: "容量データの取得を再試行しています。",
+  startup_pending: "コンテナの起動を確認しています。",
+  startup_failed: "コンテナの起動に失敗しました。",
+  authorization_revoked: "起動に必要な権限の有効期限切れ、または権限変更がありました。",
+  allocation_denied: "現在の割り当て上限またはサービス設定では起動できません。",
+};
+
+export function capacityWaitMessage(service: FlashService): string | undefined {
+  const wait = service.status.capacity_wait;
+  if (!wait || service.state === "deleting") return undefined;
+  const reason = wait.reason ? waitReasons[wait.reason] ?? placementReasons[wait.reason] : undefined;
+  if (activeCapacityWait(service)) return reason ?? "空き容量が確保され、起動を開始しました。";
+  if (!service.spec.stopped) return undefined;
+  if (wait.state === "expired") return "起動要求の期限が切れました。";
+  if (wait.state === "cancelled") return "起動要求を取り消しました。";
+  if (wait.state === "rejected") return reason ?? "起動要求を完了できませんでした。";
+  if (wait.state === "superseded") return "設定が変更されたため、起動要求を終了しました。";
+  return undefined;
+}
+
 export function flashDisplayState(
-  service: Pick<FlashService, "state" | "status"> & Partial<Pick<FlashService, "spec">>,
-): FlashService["state"] | "queued" | "stopped" | "stopping" {
+  service: Pick<FlashService, "state" | "status"> & Partial<Pick<FlashService, "spec" | "generation">>,
+): FlashService["state"] | "queued" | "stopped" | "stopping" | "waiting_for_capacity" | "starting" {
+  const wait = activeCapacityWait(service);
+  if (wait) return wait.state === "waiting" ? "waiting_for_capacity" : "starting";
   if (service.state === "deleting" || service.state === "error") return service.state;
   if (service.spec?.stopped) {
     return service.state === "ready" && flashProviderStatus(service.status).stopped === true ? "stopped" : "stopping";

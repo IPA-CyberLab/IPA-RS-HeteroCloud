@@ -3,7 +3,7 @@ use std::{
     error::Error,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -14,19 +14,25 @@ use axum::{
 };
 use chrono::Utc;
 use heterocloud_api::{
-    app, config::RuntimeConfig, flash_provider::FlashProviderProxy, flow_access::FlowAccessSigner,
-    routes::AppState,
+    app,
+    config::RuntimeConfig,
+    flash_provider::FlashProviderProxy,
+    flow_access::FlowAccessSigner,
+    routes::{AppState, flash_capacity_waits::reconcile_one},
 };
 use heterocloud_auth::token_hash;
 use heterocloud_domain::{OrganizationId, PolicyDocument, ProjectId};
 use heterocloud_iam::semantics_digest;
-use heterocloud_store::{BootstrapAdmin, Store};
+use heterocloud_store::{BootstrapAdmin, FlashCapacityOutcome, Store};
 use secrecy::SecretString;
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 use tower::ServiceExt;
 use url::Url;
 use uuid::Uuid;
+
+#[path = "support/coder_capacity_wait.rs"]
+mod coder_capacity_wait;
 
 #[tokio::test]
 async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
@@ -84,7 +90,7 @@ async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
         .await?;
     let resource = format!("hc:org:{org}:flash/instance/{}", instance.id);
     let policy: PolicyDocument = serde_json::from_value(json!({"version":"2026-07-31",
-        "statements":[{"effect":"Allow", "actions":["flash:UpdateInstance"], "resources":[resource]},
+        "statements":[{"effect":"Allow", "actions":["flash:UpdateInstance","flash:GetInstance"], "resources":[resource]},
             {"effect":"Allow", "actions":["flash:CreateInstance"], "resources":[format!("hc:org:{org}:flash/*")]}]}))?;
     let policy = store
         .create_policy(org, "workspace lifecycle", &policy, &semantics_digest())
@@ -159,7 +165,9 @@ async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
     let path = format!("/api/v1/organizations/{org}/flash/services/{}", instance.id);
     let collection = format!("/api/v1/organizations/{org}/flash/services");
     let provider_calls = Arc::new(AtomicUsize::new(0));
+    let capacity_available = Arc::new(AtomicBool::new(false));
     let calls = Arc::clone(&provider_calls);
+    let available = Arc::clone(&capacity_available);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let endpoint = Url::parse(&format!("http://{}/", listener.local_addr()?))?;
     let preview_provider = axum::Router::new().route(
@@ -167,10 +175,11 @@ async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
         axum::routing::post(
             move |headers: axum::http::HeaderMap, axum::Json(value): axum::Json<Value>| {
                 calls.fetch_add(1, Ordering::SeqCst);
+                let free = available.load(Ordering::SeqCst);
                 async move {
                     assert!(headers.get(header::AUTHORIZATION).is_some());
-                    assert_eq!(value["spec"]["region"], "test");
-                    if value["existing"] == true {
+                    assert!(matches!(value["spec"]["region"].as_str(), Some("test" | "heteronet-global")));
+                    if value["existing"] == true && !free {
                         axum::Json(
                             json!({"status":"blocked","reason":"insufficient_compute_capacity"}),
                         )
@@ -180,6 +189,14 @@ async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
                 }
             },
         ),
+    ).route(
+        "/internal/v1/service-instances/{id}",
+        axum::routing::get(|axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, i64>>| async move {
+            axum::Json(json!({
+                "phase":"ready","observed_generation":query["generation"],
+                "desired_replicas":1,"ready_replicas":1,"endpoints":[]
+            }))
+        }),
     );
     let server = tokio::spawn(async move { axum::serve(listener, preview_provider).await });
     let signer = heterocloud_provider::ProviderSigner::from_ed25519_pem(
@@ -239,7 +256,7 @@ async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
         .oneshot(preview_request("POST", &existing_preview, read_key, None)?)
         .await?;
     assert_eq!(denied.status(), StatusCode::FORBIDDEN);
-    let blocked = app(placement_state, None)
+    let blocked = app(placement_state.clone(), None)
         .oneshot(preview_request(
             "PUT",
             &format!("{path}?check_placement=true"),
@@ -268,7 +285,6 @@ async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
         .fetch_one(store.pool())
         .await?;
     assert_eq!(outbox_before, outbox_after);
-    server.abort();
     // Log access is distinct from both service updates and anonymous access.
     let log_path = format!("{path}/logs");
     assert_eq!(
@@ -431,6 +447,189 @@ async fn flash_stop_start_is_scoped_idempotent_and_preserves_configuration()
     assert_eq!(resumed["spec"], instance.spec);
     assert_eq!(resumed["id"], instance.id.to_string());
     assert_eq!(resumed["generation"], instance.generation + 2);
+    let queued_router = app(placement_state.clone(), None);
+    let call = |method: &str, route: &str, token: &str, body: Option<&Value>| {
+        let request = preview_request(method, route, token, body);
+        let router = queued_router.clone();
+        async move {
+            let response = router.oneshot(request?).await?;
+            let code = response.status();
+            let payload =
+                serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await?)?;
+            Ok::<(StatusCode, Value), Box<dyn Error>>((code, payload))
+        }
+    };
+    let stop = format!("{path}/stop");
+    let queue = format!("{path}/start?wait_for_capacity_seconds=30");
+    let (status, stopped) = call("POST", &stop, key, None).await?;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(
+        call("POST", &queue, read_key, None).await?.0,
+        StatusCode::FORBIDDEN
+    );
+    let (status, queued) = call("POST", &queue, key, None).await?;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(queued["generation"], stopped["generation"]);
+    let wait = &queued["status"]["capacity_wait"];
+    assert_eq!(wait["state"], "waiting");
+    assert_eq!(
+        call("POST", &queue, key, None).await?.1["status"]["capacity_wait"],
+        *wait
+    );
+    reconcile_one(&placement_state).await?;
+    let (_, checking) = call("GET", &path, key, None).await?;
+    assert_eq!(
+        checking["status"]["capacity_wait"]["reason"],
+        "insufficient_compute_capacity"
+    );
+    assert_eq!(checking["generation"], stopped["generation"]);
+    assert_eq!(checking["spec"]["stopped"], true);
+
+    let due = || async {
+        sqlx::query("UPDATE flash_capacity_waits SET next_check_at=clock_timestamp() WHERE service_instance_id=$1")
+            .bind(instance.id.0).execute(store.pool()).await?;
+        Ok::<(), sqlx::Error>(())
+    };
+    due().await?;
+    let stale_claim = store
+        .claim_flash_capacity_wait()
+        .await?
+        .ok_or("claimed capacity request")?;
+    let cancel = json!({"cancel_capacity_wait_id":wait["id"]});
+    assert_eq!(
+        call("PUT", &path, read_key, Some(&cancel)).await?.0,
+        StatusCode::FORBIDDEN
+    );
+    let (status, cancelled) = call("PUT", &path, key, Some(&cancel)).await?;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(cancelled["status"]["capacity_wait"]["state"], "cancelled");
+    capacity_available.store(true, Ordering::SeqCst);
+    store
+        .settle_flash_capacity_wait(&stale_claim, FlashCapacityOutcome::Start)
+        .await?;
+    assert_eq!(
+        call("GET", &path, key, None).await?.1["generation"],
+        stopped["generation"]
+    );
+
+    let (_, replacement) = call("POST", &queue, key, None).await?;
+    assert_ne!(replacement["status"]["capacity_wait"]["id"], wait["id"]);
+    assert_eq!(
+        call("PUT", &path, key, Some(&cancel)).await?.0,
+        StatusCode::NOT_FOUND
+    );
+    sqlx::query("UPDATE flash_capacity_waits SET expires_at=clock_timestamp() - interval '1 second' WHERE service_instance_id=$1")
+        .bind(instance.id.0).execute(store.pool()).await?;
+    due().await?;
+    reconcile_one(&placement_state).await?;
+    let (_, expired) = call("GET", &path, key, None).await?;
+    assert_eq!(expired["status"]["capacity_wait"]["state"], "expired");
+    assert_eq!(expired["generation"], stopped["generation"]);
+
+    // A Coder-style PUT also returns a real request and preserves stopped
+    // execution until the queue can activate the new configuration.
+    let configured = json!({"name":"workspace","spec":instance.spec});
+    let write = format!("{path}?wait_for_capacity_seconds=30&check_placement=true");
+    let (status, pending) = call("PUT", &write, key, Some(&configured)).await?;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(pending["status"]["capacity_wait"]["state"], "waiting");
+    assert_eq!(pending["spec"]["stopped"], true);
+    reconcile_one(&placement_state).await?;
+    let (_, starting) = call("GET", &path, key, None).await?;
+    assert_eq!(starting["status"]["capacity_wait"]["state"], "starting");
+    assert_eq!(starting["spec"], instance.spec);
+    reconcile_one(&placement_state).await?;
+    let (_, ready) = call("GET", &path, key, None).await?;
+    assert_eq!(ready["status"]["capacity_wait"]["state"], "ready");
+    assert_eq!(ready["id"], instance.id.to_string());
+    assert_eq!(ready["spec"], instance.spec);
+    assert_eq!(
+        call(
+            "PUT",
+            &path,
+            key,
+            Some(&json!({
+                "cancel_capacity_wait_id": ready["status"]["capacity_wait"]["id"]
+            }))
+        )
+        .await?
+        .0,
+        StatusCode::CONFLICT
+    );
+
+    // Once a request activates, cancellation fences the start generation
+    // before an outbox retry can launch it again.
+    assert_eq!(
+        call("POST", &stop, key, None).await?.0,
+        StatusCode::ACCEPTED
+    );
+    let (_, queued_again) = call("POST", &queue, key, None).await?;
+    reconcile_one(&placement_state).await?;
+    let (_, stopped_again) = call(
+        "PUT",
+        &path,
+        key,
+        Some(&json!({
+            "cancel_capacity_wait_id":queued_again["status"]["capacity_wait"]["id"]
+        })),
+    )
+    .await?;
+    assert_eq!(stopped_again["spec"]["stopped"], true);
+    assert_eq!(
+        stopped_again["status"]["capacity_wait"]["state"],
+        "cancelled"
+    );
+    assert_eq!(
+        stopped_again["generation"].as_i64(),
+        queued_again["generation"].as_i64().map(|g| g + 2)
+    );
+
+    call("POST", &queue, key, None).await?;
+    store.set_organization_resource_quota(org, &reduced).await?;
+    reconcile_one(&placement_state).await?;
+    let (_, denied_by_quota) = call("GET", &path, key, None).await?;
+    assert_eq!(
+        denied_by_quota["status"]["capacity_wait"]["state"],
+        "rejected"
+    );
+    assert_eq!(
+        denied_by_quota["status"]["capacity_wait"]["reason"],
+        "allocation_denied"
+    );
+    assert_eq!(denied_by_quota["generation"], stopped_again["generation"]);
+    store
+        .set_organization_resource_quota(org, &original_quota)
+        .await?;
+
+    let (status, new_wait) = call(
+        "POST",
+        &format!("{collection}?wait_for_capacity_seconds=30"),
+        key,
+        Some(&desired),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(new_wait["status"]["capacity_wait"]["state"], "waiting");
+    assert_eq!(new_wait["spec"]["stopped"], true);
+    reconcile_one(&placement_state).await?;
+    let new_id = Uuid::parse_str(new_wait["id"].as_str().ok_or("queued service id")?)?;
+    let created = store
+        .service_instance(heterocloud_domain::ServiceInstanceId(new_id))
+        .await?
+        .ok_or("created instance")?;
+    assert_ne!(created.spec["stopped"], true);
+    assert_eq!(created.generation, 2);
+    reconcile_one(&placement_state).await?;
+    coder_capacity_wait::run(
+        placement_state,
+        org,
+        project.id,
+        membership.principal_id,
+        capacity_available,
+        &url,
+    )
+    .await?;
+    server.abort();
     let stored = store
         .service_instance(instance.id)
         .await?

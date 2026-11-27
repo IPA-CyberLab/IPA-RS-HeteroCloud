@@ -2,6 +2,8 @@
 mod backup_destination_routes;
 #[path = "flash_backup_routes.rs"]
 mod backup_routes;
+#[path = "flash_capacity_waits.rs"]
+pub mod flash_capacity_waits;
 #[path = "identity_center_routes.rs"]
 mod identity_center_routes;
 #[path = "flash_operation_routes.rs"]
@@ -60,11 +62,12 @@ use heterocloud_iam::{
 use heterocloud_store::{
     AuditEvent, AuthorizationContext, CliAccessTokenPrincipal, CliDeviceApprovalOutcome,
     CliDeviceExchangeOutcome, DeveloperCredentialMint, DeveloperCredentialMintOutcome,
-    FlashPlacementInput, FlashRateCard, FlashWeeklyBudget, FlowDeveloperCredentialRecord,
-    GpuVisibility, MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE, MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE,
-    MAX_REALTIME_METRIC_HISTORY_SAMPLES, MAX_USER_LOGIN_EVENTS_PER_USER, NewFlashRateCard,
-    NewFlashWeeklyBudget, NewFlowAccessContext, NewFlowDeveloperCredential, NewIamRoleSession,
-    OidcUser, RealtimeMetricCollectionTarget, RegisterWithInvitation, SessionUser, Store,
+    FlashCapacityWaitOptions, FlashPlacementInput, FlashRateCard, FlashWeeklyBudget,
+    FlowDeveloperCredentialRecord, GpuVisibility, MAX_FLOW_ACCESS_CONTEXT_LIST_SIZE,
+    MAX_FLOW_DEVELOPER_CREDENTIAL_LIST_SIZE, MAX_REALTIME_METRIC_HISTORY_SAMPLES,
+    MAX_USER_LOGIN_EVENTS_PER_USER, NewFlashRateCard, NewFlashWeeklyBudget, NewFlowAccessContext,
+    NewFlowDeveloperCredential, NewIamRoleSession, OidcUser, RealtimeMetricCollectionTarget,
+    RegisterWithInvitation, SessionUser, Store,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -4619,12 +4622,13 @@ async fn list_flash_services(
         )
         .await
         .map_err(ApiError::from_store)?;
-    let items = refresh_autoscaled_statuses(
+    let mut items = refresh_autoscaled_statuses(
         state.flash_provider.as_deref(),
         authorization.principal_id,
         items,
     )
     .await;
+    flash_capacity_waits::attach(&state, OrganizationId(organization_id), &mut items).await?;
     Ok(Json(json!({ "items": items })))
 }
 
@@ -4640,6 +4644,32 @@ struct CreateFlashService {
 struct FlashPlacementQuery {
     #[serde(default)]
     check_placement: bool,
+    wait_for_capacity_seconds: Option<u32>,
+}
+
+impl FlashPlacementQuery {
+    fn wait(
+        &self,
+        actor: &AuthenticatedActor,
+    ) -> Result<Option<FlashCapacityWaitOptions>, ApiError> {
+        self.wait_for_capacity_seconds
+            .map(|seconds| {
+                if !(30..=900).contains(&seconds) {
+                    return Err(ApiError::BadRequest(
+                        "wait_for_capacity_seconds must be between 30 and 900.".into(),
+                    ));
+                }
+                let role_session_id = match actor {
+                    AuthenticatedActor::RoleSession { session, .. } => Some(session.id),
+                    _ => None,
+                };
+                Ok(FlashCapacityWaitOptions {
+                    seconds,
+                    role_session_id,
+                })
+            })
+            .transpose()
+    }
 }
 
 fn validate_new_flash_spec(spec: &FlashSpec) -> Result<(), ApiError> {
@@ -4666,6 +4696,7 @@ async fn create_flash_service(
     Json(request): Json<CreateFlashService>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let wait = query.wait(&actor)?.filter(|_| !request.spec.stopped);
     validate_name(&request.name)?;
     validate_new_flash_spec(&request.spec)?;
     authorize_vpc_attachment(&state, &actor, organization_id, &request.spec).await?;
@@ -4683,6 +4714,22 @@ async fn create_flash_service(
     .await?;
     let quota_user = quota_user_for_actor(&state, &actor, OrganizationId(organization_id)).await?;
     let spec = serde_json::to_value(&request.spec).map_err(|_| ApiError::Internal)?;
+    if let Some(wait) = wait {
+        let instance = state
+            .store
+            .create_flash_service_waiting(
+                OrganizationId(organization_id),
+                ProjectId(request.project_id),
+                authorization.principal_id,
+                &request.name,
+                spec,
+                quota_user,
+                wait,
+            )
+            .await
+            .map_err(ApiError::from_store)?;
+        return Ok((StatusCode::ACCEPTED, Json(instance)));
+    }
     if query.check_placement && !request.spec.stopped {
         let input = FlashPlacementInput {
             organization_id: OrganizationId(organization_id),
@@ -4727,14 +4774,19 @@ async fn get_flash_service(
     )
     .await?;
     let instance = flash_service(&state, organization_id, service_instance_id).await?;
-    Ok(Json(
-        refresh_autoscaled_status(
-            state.flash_provider.as_deref(),
-            authorization.principal_id,
-            instance,
-        )
-        .await,
-    ))
+    let mut instance = refresh_autoscaled_status(
+        state.flash_provider.as_deref(),
+        authorization.principal_id,
+        instance,
+    )
+    .await;
+    flash_capacity_waits::attach(
+        &state,
+        OrganizationId(organization_id),
+        std::slice::from_mut(&mut instance),
+    )
+    .await?;
+    Ok(Json(instance))
 }
 
 #[derive(Deserialize)]
@@ -4744,6 +4796,19 @@ struct UpdateFlashService {
     project_id: Option<Uuid>,
     name: String,
     spec: FlashSpec,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CancelFlashCapacityWait {
+    cancel_capacity_wait_id: Uuid,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FlashServiceWrite {
+    Replace(Box<UpdateFlashService>),
+    Cancel(CancelFlashCapacityWait),
 }
 
 fn prepare_flash_replacement(spec: &mut FlashSpec, prior: &FlashSpec) -> Result<(), ApiError> {
@@ -4901,9 +4966,34 @@ async fn update_flash_service(
     Query(query): Query<FlashPlacementQuery>,
     headers: HeaderMap,
     jar: CookieJar,
-    Json(mut request): Json<UpdateFlashService>,
+    Json(write): Json<FlashServiceWrite>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
+    let mut request = match write {
+        FlashServiceWrite::Replace(request) => request,
+        FlashServiceWrite::Cancel(cancel) => {
+            let authorization = authorize_actor(
+                &state,
+                &actor,
+                OrganizationId(organization_id),
+                "flash:UpdateInstance",
+                &flash_service_resource(organization_id, service_instance_id),
+            )
+            .await?;
+            let instance = state
+                .store
+                .cancel_flash_capacity_wait(
+                    OrganizationId(organization_id),
+                    ServiceInstanceId(service_instance_id),
+                    authorization.principal_id,
+                    cancel.cancel_capacity_wait_id,
+                )
+                .await
+                .map_err(ApiError::from_store)?;
+            return Ok((StatusCode::ACCEPTED, Json(instance)));
+        }
+    };
+    let wait = query.wait(&actor)?;
     let existing = flash_service(&state, organization_id, service_instance_id).await?;
     let prior: FlashSpec = serde_json::from_value(existing.spec).map_err(|_| ApiError::Internal)?;
     validate_name(&request.name)?;
@@ -4942,7 +5032,8 @@ async fn update_flash_service(
     }
     let spec = serde_json::to_value(&request.spec).map_err(|_| ApiError::Internal)?;
     let project_id = request.project_id.map(ProjectId);
-    let check_placement = query.check_placement && !request.spec.stopped;
+    let wait = wait.filter(|_| prior.stopped && !request.spec.stopped);
+    let check_placement = query.check_placement && !request.spec.stopped && wait.is_none();
     if check_placement {
         let input = FlashPlacementInput {
             organization_id: OrganizationId(organization_id),
@@ -4957,7 +5048,7 @@ async fn update_flash_service(
     }
     let instance = state
         .store
-        .update_service_instance_checked(
+        .update_service_instance_with_capacity_wait(
             OrganizationId(organization_id),
             ServiceInstanceId(service_instance_id),
             "flash",
@@ -4965,7 +5056,8 @@ async fn update_flash_service(
             project_id,
             &request.name,
             spec,
-            check_placement.then_some(existing.generation),
+            (check_placement || wait.is_some()).then_some(existing.generation),
+            wait,
         )
         .await
         .map_err(ApiError::from_store)?;
@@ -4985,6 +5077,7 @@ async fn stop_flash_service(
         headers,
         jar,
         true,
+        None,
     )
     .await
 }
@@ -4992,6 +5085,7 @@ async fn stop_flash_service(
 async fn start_flash_service(
     State(state): State<Arc<AppState>>,
     Path((organization_id, service_instance_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<FlashPlacementQuery>,
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -5002,6 +5096,7 @@ async fn start_flash_service(
         headers,
         jar,
         false,
+        query.wait_for_capacity_seconds,
     )
     .await
 }
@@ -5013,6 +5108,7 @@ async fn set_flash_service_execution(
     headers: HeaderMap,
     jar: CookieJar,
     stopped: bool,
+    wait_for_capacity_seconds: Option<u32>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor_mutation(&state, &headers, &jar).await?;
     let authorization = authorize_actor(
@@ -5023,6 +5119,23 @@ async fn set_flash_service_execution(
         &flash_service_resource(organization_id, service_instance_id),
     )
     .await?;
+    let query = FlashPlacementQuery {
+        check_placement: false,
+        wait_for_capacity_seconds,
+    };
+    if let Some(wait) = query.wait(&actor)? {
+        let instance = state
+            .store
+            .enqueue_flash_capacity_wait(
+                OrganizationId(organization_id),
+                ServiceInstanceId(service_instance_id),
+                authorization.principal_id,
+                wait,
+            )
+            .await
+            .map_err(ApiError::from_store)?;
+        return Ok((StatusCode::ACCEPTED, Json(instance)));
+    }
     let instance = state
         .store
         .set_flash_service_stopped(

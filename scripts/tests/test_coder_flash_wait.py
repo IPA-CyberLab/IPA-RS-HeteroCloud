@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / 'examples/coder/wait-for-flash.sh'
 ACCOUNT = '019fbda8-eff3-7610-bdd5-8fe89e746c14'
 SERVICE = '01a1a54f-f1ea-7a73-88ac-5ab146ee960d'
+WAIT = '019fbda8-eff3-7610-bdd5-8fe89e746c15'
 SECRET = 'do-not-log-this-workspace-secret'
 
 
@@ -19,6 +20,12 @@ def service(phase, *, observed=4, generation=4, ready=0, code='', message=''):
             'status': {'status': {'phase': phase, 'observed_generation': observed,
                                   'ready_replicas': ready, 'message': message,
                                   'diagnostics': [{'code': code}] if code else []}}}
+
+
+def capacity_service(state, *, phase='ready', ready=0, observed=4, reason=None, request=WAIT):
+    value = service(phase, ready=ready, observed=observed)
+    value['status']['capacity_wait'] = {'id': request, 'state': state, 'reason': reason}
+    return value
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -43,7 +50,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 class WaitForFlashTest(unittest.TestCase):
-    def run_wait(self, responses, seconds=8):
+    def run_wait(self, responses, seconds=8, request=''):
         server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         server.responses = responses
         server.seen = 0
@@ -52,7 +59,9 @@ class WaitForFlashTest(unittest.TestCase):
         env = os.environ.copy()
         env.update(HETEROCLOUD_CODER_BRIDGE=f'http://127.0.0.1:{server.server_port}',
                    HETEROCLOUD_CODER_ACCOUNT_ID=ACCOUNT, HETEROCLOUD_CODER_SERVICE_ID=SERVICE,
-                   HETEROCLOUD_CODER_WAIT_SECONDS=str(seconds), HETEROCLOUD_CODER_POLL_SECONDS='1')
+                   HETEROCLOUD_CODER_WAIT_SECONDS=str(seconds), HETEROCLOUD_CODER_POLL_SECONDS='1',
+                   HETEROCLOUD_CODER_CAPACITY_WAIT_SECONDS='30' if request else '0',
+                   HETEROCLOUD_CODER_CAPACITY_WAIT_ID=request)
         try:
             result = subprocess.run(['/bin/sh', str(SCRIPT)], env=env, text=True,
                                     capture_output=True, timeout=seconds + 15)
@@ -98,6 +107,29 @@ class WaitForFlashTest(unittest.TestCase):
         result, _ = self.run_wait([service('ready', observed=3, ready=1)], seconds=2)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('起動を確認できません', result.stderr)
+
+    def test_capacity_wait_observes_the_specific_request_and_current_workload(self):
+        result, requests = self.run_wait([
+            capacity_service('waiting', ready=1, reason='insufficient_compute_capacity'),
+            capacity_service('starting', ready=1),
+            capacity_service('ready', ready=1, observed=3),
+            capacity_service('ready', ready=1),
+        ], request=WAIT)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertGreaterEqual(requests, 4)
+        self.assertIn('CPU またはメモリの空き容量が不足', result.stdout)
+        self.assertIn('コンテナが起動しました', result.stdout)
+
+    def test_capacity_wait_rejects_expired_cancelled_and_replaced_requests(self):
+        for state, request, message in [
+            ('expired', WAIT, '期限が切れました'),
+            ('cancelled', WAIT, '取り消されました'),
+            ('ready', ACCOUNT, '起動要求が更新されました'),
+        ]:
+            with self.subTest(state=state, request=request):
+                result, _ = self.run_wait([capacity_service(state, request=request, ready=1)], request=WAIT)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
 
     def test_terraform_failure_and_retry_keep_the_same_service(self):
         server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)

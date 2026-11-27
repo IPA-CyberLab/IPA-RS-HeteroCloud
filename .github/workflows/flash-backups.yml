@@ -64,4 +64,4 @@ jobs:
       - run: npm test -- --maxWorkers=1 src/features/flash/flash-operations-panel.test.tsx src/features/flash/flash-backups-panel.test.tsx src/features/flash/flash-service-detail-page.test.tsx src/features/flash/flash-logs-panel.test.tsx src/components/layout/navigation.test.ts
       - run: npm run build
       - run: npx playwright install --with-deps chromium
-      - run: npx playwright test e2e/flash-backups.spec.ts e2e/flash-operations.spec.ts --workers=1
+      - run: npx playwright test e2e/flash-backups.spec.ts e2e/flash-operations.spec.ts e2e/flash-lifecycle.spec.ts --workers=1

@@ -36,6 +36,32 @@ the normal reconciliation and admission checks run. The Coder template uses
 this option for workspace writes and continues to wait for real workload
 readiness after a successful write.
 
+## Wait for capacity
+
+Choose **空きを待って起動** for a stopped service or enable capacity waiting in
+the create form. Coder's **Flash の空き容量を待つ** workspace parameter also enables
+this behavior for a new or stopped workspace. The console and Coder wait up to
+five minutes for capacity. The CLI accepts a period from 30 to 900 seconds.
+
+```sh
+heterocloud flash start SERVICE_ID --wait-for-capacity 300
+heterocloud flash get SERVICE_ID
+heterocloud flash cancel-start SERVICE_ID REQUEST_ID
+```
+
+The first command returns the request ID immediately. Service detail shows its
+reason, deadline and state. Once placement is feasible, Flash checks current
+allocations again and starts the same service. It allows a further seven minutes
+for provider readiness. Cancelling or expiring the queue keeps the service and
+home disk. If execution has started for that request, the operation stops only
+its generation. A later service edit supersedes the pending request.
+
+`wait_for_capacity_seconds` is an optional query parameter on Flash POST-create,
+PUT-replace of a stopped service and POST-start. Read `status.capacity_wait`
+from the service. PUT the document `{"cancel_capacity_wait_id":"REQUEST_ID"}`
+to the same service to cancel exactly that request using `flash:UpdateInstance`.
+The read-only preflight remains available for checking a draft independently.
+
 ## Updates
 
 `spec.deployment` is optional. Defaults are `strategy: "auto"`,

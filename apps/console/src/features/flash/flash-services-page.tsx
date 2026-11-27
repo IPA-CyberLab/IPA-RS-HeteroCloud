@@ -5,6 +5,7 @@ import { ColumnLayout } from "@/components/ui";
 import { Container } from "@/components/ui";
 import { Modal } from "@/components/ui";
 import { SpaceBetween } from "@/components/ui";
+import { Toggle } from "@/components/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { type FormEvent, useMemo, useState } from "react";
@@ -36,6 +37,7 @@ import {
 } from "./flash-service-form";
 import {
   flashExposureLabel,
+  defaultCapacityWaitSeconds,
   flashDisplayState,
   flashGpuQueueMessage,
   flashServiceEndpoints,
@@ -53,6 +55,7 @@ export function FlashServicesPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
+  const [waitForCapacity, setWaitForCapacity] = useState(false);
   const [form, setForm] = useState<FlashServiceFormValue>(
     defaultFlashServiceFormValue,
   );
@@ -70,7 +73,9 @@ export function FlashServicesPage() {
   });
   const createService = useMutation({
     mutationFn: async (value: FlashServiceFormValue) => {
-      const created = await api.flash.services.create(organizationId, createInput(value));
+      const created = await api.flash.services.create(
+        organizationId, createInput(value), waitForCapacity ? defaultCapacityWaitSeconds : undefined,
+      );
       // The resource remains visible and closed if credential transfer needs retry.
       try {
         if (value.authenticationMode === "oidc" && value.oidcClientSecret) await api.flash.services.putLoadBalancerSecret(organizationId,created.id,value.oidcSecretRef,value.oidcClientSecret);
@@ -79,6 +84,7 @@ export function FlashServicesPage() {
     },
     onSuccess: async (created) => {
       setCreateOpen(false);
+      setWaitForCapacity(false);
       setForm(defaultFlashServiceFormValue);
       await queryClient.invalidateQueries({
         queryKey: ["organizations", organizationId, "flash", "services"],
@@ -187,7 +193,7 @@ export function FlashServicesPage() {
   }
 
   const serviceItems = services.data.items;
-  const readyCount = serviceItems.filter((service) => service.state === "ready").length;
+  const readyCount = serviceItems.filter((service) => flashDisplayState(service) === "ready").length;
   const replicaCount = serviceItems.some((service) => readyReplicas(service) === null) ? null : serviceItems.reduce(
     (total, service) => total + (readyReplicas(service) ?? 0),
     0,
@@ -301,6 +307,10 @@ export function FlashServicesPage() {
           }
           quota={quota.data}
         >
+          <Toggle checked={waitForCapacity} disabled={createService.isPending}
+            onChange={({ detail }) => setWaitForCapacity(detail.checked)}>
+            空き容量を最大5分待って起動
+          </Toggle>
           <FormError
             message={
               createService.isError

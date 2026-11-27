@@ -2,6 +2,7 @@ mod cloud_organizations;
 mod flash_backup_destinations;
 mod flash_backups;
 mod flash_billing;
+mod flash_capacity_waits;
 mod flash_operations;
 mod flash_placement;
 mod flash_ssh_keys;
@@ -13,6 +14,10 @@ pub use cloud_organizations::{
     CloudScpAttachment, CloudServiceControlPolicy,
 };
 mod organizations;
+pub use flash_capacity_waits::{
+    FlashCapacityClaim, FlashCapacityOutcome, FlashCapacityWait, FlashCapacityWaitOptions,
+    FlashCapacityWaitState, flash_start_is_ready,
+};
 pub use flash_operations::{
     BackupPolicyInput, FlashBackupPolicy, FlashEvent, FlashRevision, rollback_spec,
 };
@@ -155,14 +160,14 @@ impl Store {
     }
 
     pub async fn migrate(&self) -> Result<(), StoreError> {
-        // Migration 37 was staged in the preceding compatibility release.
+        // Migration 38 was staged in the preceding compatibility release.
         // Do not raise this ceiling until every process recognizes the new version.
         // SQLx's migrator can return while its session advisory lock is still
         // held (for example on a checksum mismatch). Never return that session
         // to the pool, including if the caller is cancelled during migration.
         let mut connection = self.pool.acquire().await?;
         connection.close_on_drop();
-        let result = MIGRATOR.run_to(37, &mut *connection).await;
+        let result = MIGRATOR.run_to(38, &mut *connection).await;
         let closed = connection.close().await;
         result?;
         closed?;
@@ -3198,6 +3203,32 @@ impl Store {
             spec,
             ServiceInstanceId::new(),
             Some(quota_user_id),
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_flash_service_waiting(
+        &self,
+        organization_id: OrganizationId,
+        project_id: ProjectId,
+        principal_id: PrincipalId,
+        name: &str,
+        spec: Value,
+        quota_user_id: Option<UserId>,
+        wait: FlashCapacityWaitOptions,
+    ) -> Result<ServiceInstance, StoreError> {
+        self.create_service_instance_with_id_for_user(
+            organization_id,
+            project_id,
+            principal_id,
+            "flash",
+            name,
+            spec,
+            ServiceInstanceId::new(),
+            Some(quota_user_id),
+            Some(wait),
         )
         .await
     }
@@ -3222,6 +3253,7 @@ impl Store {
             name,
             spec,
             id,
+            None,
             None,
         )
         .await
@@ -3250,6 +3282,7 @@ impl Store {
             spec,
             id,
             Some(quota_user_id),
+            None,
         )
         .await
     }
@@ -3265,6 +3298,7 @@ impl Store {
         spec: Value,
         id: ServiceInstanceId,
         requested_quota_user_id: Option<Option<UserId>>,
+        capacity_wait: Option<FlashCapacityWaitOptions>,
     ) -> Result<ServiceInstance, StoreError> {
         let mut transaction = self.pool.begin().await?;
         lock_tenant_allocations(&mut transaction, organization_id).await?;
@@ -3360,7 +3394,7 @@ impl Store {
             }
             _ => Ok(spec),
         };
-        let spec = match prepared {
+        let mut spec = match prepared {
             Ok(spec) => spec,
             Err(error) => {
                 transaction.rollback().await?;
@@ -3401,6 +3435,9 @@ impl Store {
                 true,
             )
             .await?;
+        }
+        if capacity_wait.is_some() {
+            spec["stopped"] = Value::Bool(true);
         }
         let row = sqlx::query_as::<_, ServiceRow>(
             "INSERT INTO service_instances
@@ -3456,8 +3493,19 @@ impl Store {
         }))
         .execute(&mut *transaction)
         .await?;
+        let wait = match capacity_wait {
+            Some(options) => Some(
+                flash_capacity_waits::enqueue(&mut transaction, &row, principal_id, options, true)
+                    .await?,
+            ),
+            None => None,
+        };
+        let mut instance = ServiceInstance::try_from(row)?;
+        if let Some(wait) = wait {
+            wait.attach(&mut instance)?;
+        }
         transaction.commit().await?;
-        ServiceInstance::try_from(row)
+        Ok(instance)
     }
 
     pub async fn update_service_instance(
@@ -3518,6 +3566,33 @@ impl Store {
         name: &str,
         spec: Value,
         expected_generation: Option<i64>,
+    ) -> Result<ServiceInstance, StoreError> {
+        self.update_service_instance_with_capacity_wait(
+            organization_id,
+            id,
+            provider,
+            principal_id,
+            requested_project,
+            name,
+            spec,
+            expected_generation,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_service_instance_with_capacity_wait(
+        &self,
+        organization_id: OrganizationId,
+        id: ServiceInstanceId,
+        provider: &str,
+        principal_id: PrincipalId,
+        requested_project: Option<ProjectId>,
+        name: &str,
+        spec: Value,
+        expected_generation: Option<i64>,
+        capacity_wait: Option<FlashCapacityWaitOptions>,
     ) -> Result<ServiceInstance, StoreError> {
         if requested_project.is_some() && provider != "flash" {
             return Err(StoreError::RequestRejected(
@@ -3615,7 +3690,7 @@ impl Store {
             }
             _ => Ok(spec),
         };
-        let spec = match prepared {
+        let mut spec = match prepared {
             Ok(spec) => spec,
             Err(error) => {
                 transaction.rollback().await?;
@@ -3660,6 +3735,25 @@ impl Store {
                 true,
             )
             .await?;
+        }
+        let capacity_wait = capacity_wait.filter(|_| starting_flash);
+        if let Some(options) = capacity_wait {
+            spec["stopped"] = Value::Bool(true);
+            if existing.name == name && existing.project_id == project_id.0 && existing.spec == spec
+            {
+                let wait = flash_capacity_waits::enqueue(
+                    &mut transaction,
+                    &existing,
+                    principal_id,
+                    options,
+                    false,
+                )
+                .await?;
+                let mut instance = ServiceInstance::try_from(existing)?;
+                wait.attach(&mut instance)?;
+                transaction.commit().await?;
+                return Ok(instance);
+            }
         }
         // Gateway access is a control-plane setting. Changing only this flag
         // must not create a new workload generation or restart a container.
@@ -3742,8 +3836,30 @@ impl Store {
         }))
         .execute(&mut *transaction)
         .await?;
+        let mut wait = None;
+        if provider == "flash" {
+            if let Some(options) = capacity_wait {
+                wait = Some(
+                    flash_capacity_waits::enqueue(
+                        &mut transaction,
+                        &row,
+                        principal_id,
+                        options,
+                        false,
+                    )
+                    .await?,
+                );
+            } else {
+                flash_capacity_waits::supersede(&mut transaction, id, row.spec["stopped"] == true)
+                    .await?;
+            }
+        }
+        let mut instance = ServiceInstance::try_from(row)?;
+        if let Some(wait) = wait {
+            wait.attach(&mut instance)?;
+        }
         transaction.commit().await?;
-        ServiceInstance::try_from(row)
+        Ok(instance)
     }
 
     /// Toggle execution without replacing configuration or deleting storage.
@@ -3757,26 +3873,31 @@ impl Store {
         stopped: bool,
     ) -> Result<ServiceInstance, StoreError> {
         let mut transaction = self.pool.begin().await?;
-        lock_tenant_allocations(&mut transaction, organization_id).await?;
-        lock_flash_allocations(&mut transaction).await?;
-        let existing = sqlx::query_as::<_, ServiceRow>(
-            "SELECT id, organization_id, project_id, provider, name, generation,
-                    state, spec, status, created_at, updated_at
-             FROM service_instances
-             WHERE id = $1 AND organization_id = $2 AND provider = 'flash' FOR UPDATE",
-        )
-        .bind(id.0)
-        .bind(organization_id.0)
-        .fetch_optional(&mut *transaction)
-        .await?
-        .ok_or(StoreError::NotFound)?;
+        let existing =
+            flash_capacity_waits::lock_service(&mut transaction, organization_id, id).await?;
         if existing.state == "deleting" {
             return Err(StoreError::Conflict);
         }
+        if stopped || existing.spec["stopped"] == true {
+            flash_capacity_waits::supersede(&mut transaction, id, stopped).await?;
+        }
+        let row =
+            Self::change_flash_execution(&mut transaction, existing, principal_id, stopped).await?;
+        transaction.commit().await?;
+        ServiceInstance::try_from(row)
+    }
+
+    async fn change_flash_execution(
+        transaction: &mut Transaction<'_, Postgres>,
+        existing: ServiceRow,
+        principal_id: PrincipalId,
+        stopped: bool,
+    ) -> Result<ServiceRow, StoreError> {
+        let organization_id = OrganizationId(existing.organization_id);
+        let id = ServiceInstanceId(existing.id);
         let current: FlashSpec = serde_json::from_value(existing.spec.clone())?;
         if current.stopped == stopped {
-            transaction.commit().await?;
-            return ServiceInstance::try_from(existing);
+            return Ok(existing);
         }
         let mut spec = existing.spec.clone();
         let object = spec
@@ -3791,9 +3912,9 @@ impl Store {
             // A stop is always permitted, including after a quota/access
             // reduction. Starting must pass the current allocation and GPU
             // access checks; stopped services retain their quota reservation.
-            let quota = resource_quota_in_transaction(&mut transaction, organization_id).await?;
+            let quota = resource_quota_in_transaction(transaction, organization_id).await?;
             spec = prepare_flash_spec(
-                &mut transaction,
+                transaction,
                 organization_id,
                 principal_id,
                 Some(id),
@@ -3803,7 +3924,7 @@ impl Store {
             )
             .await?;
             organizations::validate_cloud_organization_allocation(
-                &mut transaction,
+                transaction,
                 organization_id,
                 Some(id),
                 "flash",
@@ -3813,10 +3934,10 @@ impl Store {
             .await?;
             let quota_user_id = sqlx::query_scalar::<_, Option<Uuid>>(
                 "SELECT quota_user_id FROM service_instances WHERE id = $1 AND organization_id = $2",
-            ).bind(id.0).bind(organization_id.0).fetch_one(&mut *transaction).await?;
+            ).bind(id.0).bind(organization_id.0).fetch_one(&mut **transaction).await?;
             if let Some(user_id) = quota_user_id {
                 organizations::validate_member_allocation(
-                    &mut transaction,
+                    transaction,
                     organization_id,
                     UserId(user_id),
                     Some(id),
@@ -3828,7 +3949,7 @@ impl Store {
                 .await?;
             }
             validate_vpc_attachment(
-                &mut transaction,
+                transaction,
                 organization_id,
                 ProjectId(existing.project_id),
                 id,
@@ -3840,7 +3961,7 @@ impl Store {
         if stopped {
             sqlx::query("DELETE FROM workload_access_tokens WHERE service_instance_id=$1")
                 .bind(id.0)
-                .execute(&mut *transaction)
+                .execute(&mut **transaction)
                 .await?;
         }
         let generation = existing
@@ -3858,11 +3979,11 @@ impl Store {
         .bind(organization_id.0)
         .bind(spec)
         .bind(generation)
-        .fetch_one(&mut *transaction)
+        .fetch_one(&mut **transaction)
         .await?;
         if !stopped {
             replace_flash_gpu_service_request(
-                &mut transaction,
+                transaction,
                 id,
                 organization_id,
                 principal_id,
@@ -3881,10 +4002,9 @@ impl Store {
             "project_id": ProjectId(existing.project_id), "principal_id": principal_id,
             "provider": "flash", "generation": generation,
         }))
-        .execute(&mut *transaction)
+        .execute(&mut **transaction)
         .await?;
-        transaction.commit().await?;
-        ServiceInstance::try_from(row)
+        Ok(row)
     }
 
     pub async fn begin_delete_service_instance(

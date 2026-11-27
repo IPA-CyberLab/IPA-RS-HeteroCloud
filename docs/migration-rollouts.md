@@ -20,3 +20,11 @@ tables. Its rollout must keep the compatibility image available. The
 compatibility release still rejects unknown migration versions and checksum
 changes to earlier migrations. Embedding migration 36 does not make arbitrary
 future or destructive migrations safe: stage and validate each separately.
+
+## Flash capacity waits
+
+Migration 38 adds the capacity wait table and its scheduling index. First pin
+the 0.1.119 compatibility build, which recognizes migration 38 and applies
+through migration 37. Wait for every API, owner-console and worker replica to
+run that build. The 0.1.120 feature build applies migration 38. Keep the verified
+0.1.119 image as the rollback target after activation.

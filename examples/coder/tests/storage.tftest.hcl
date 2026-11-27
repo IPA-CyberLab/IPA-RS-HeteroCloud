@@ -16,6 +16,9 @@ mock_provider "coder" {
       email     = "owner@example.test"
     }
   }
+  mock_data "coder_parameter" {
+    defaults = { value = "false" }
+  }
   mock_resource "coder_agent" {
     defaults = {
       init_script = "curl http://coder-private:7080"
@@ -84,6 +87,18 @@ run "existing_workspace_keeps_larger_storage_allocation" {
       jsondecode(restapi_object.workspace.update_data).spec.ephemeral_storage_gib == 64
     )
     error_message = "Updating an existing workspace must not shrink a larger disk allocation."
+  }
+}
+
+run "capacity_wait_is_opt_in" {
+  command = plan
+  override_data {
+    target = data.coder_parameter.wait_for_flash_capacity
+    values = { value = "true" }
+  }
+  assert {
+    condition     = restapi_object.workspace.query_string == "check_placement=true&wait_for_capacity_seconds=300"
+    error_message = "An opted-in workspace must ask the Flash API to wait before starting."
   }
 }
 

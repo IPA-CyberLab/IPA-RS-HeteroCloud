@@ -53,6 +53,9 @@ import {
 } from "./flash-web-shell";
 import {
   flashExposureLabel,
+  activeCapacityWait,
+  capacityWaitMessage,
+  defaultCapacityWaitSeconds,
   flashDisplayState,
   flashGpuQueueMessage,
   flashProviderStatus,
@@ -94,6 +97,7 @@ export function FlashServiceDetailPage() {
   const service = useQuery({
     ...flashServiceQueryOptions(organizationId, serviceId),
     enabled: Boolean(serviceId),
+    refetchInterval: (query) => activeCapacityWait(query.state.data) ? 5_000 : 15_000,
   });
   const quota = useQuery(flashQuotaQueryOptions(organizationId));
   const projects = useQuery(projectsQueryOptions(organizationId));
@@ -170,9 +174,12 @@ export function FlashServiceDetailPage() {
     },
   });
   const changeExecution = useMutation({
-    mutationFn: (stopped: boolean) => stopped
-      ? api.flash.services.stop(organizationId, serviceId)
-      : api.flash.services.start(organizationId, serviceId),
+    mutationFn: (action: "start" | "stop" | "wait" | { cancel: string }) => {
+      if (typeof action === "object") return api.flash.services.cancelStart(organizationId, serviceId, action.cancel);
+      if (action === "stop") return api.flash.services.stop(organizationId, serviceId);
+      if (action === "wait") return api.flash.services.start(organizationId, serviceId, defaultCapacityWaitSeconds);
+      return api.flash.services.start(organizationId, serviceId);
+    },
     onSuccess: async (updated) => {
       queryClient.setQueryData(flashServiceQueryOptions(organizationId, serviceId).queryKey, updated);
       setShellOpen(false);
@@ -206,6 +213,8 @@ export function FlashServiceDetailPage() {
   }
 
   const item = service.data;
+  const pendingStart = activeCapacityWait(item);
+  const capacityMessage = capacityWaitMessage(item);
   const endpoints = flashServiceEndpoints(item.status, item.spec.exposure.endpoint_mode);
   const projectName =
     projects.data.items.find((project) => project.id === item.project_id)?.name ??
@@ -277,10 +286,16 @@ export function FlashServiceDetailPage() {
             <Button
               disabled={disabled || editOpen || updateService.isPending || deleteService.isPending}
               loading={changeExecution.isPending}
-              onClick={() => changeExecution.mutate(!item.spec.stopped)}
+              onClick={() => changeExecution.mutate(pendingStart ? { cancel: pendingStart.id } : item.spec.stopped ? "start" : "stop")}
             >
-              {item.spec.stopped ? "開始" : "停止"}
+              {pendingStart ? "起動を取り消す" : item.spec.stopped ? "開始" : "停止"}
             </Button>
+            {item.spec.stopped && !pendingStart && (
+              <Button disabled={disabled || editOpen || updateService.isPending || deleteService.isPending || changeExecution.isPending}
+                onClick={() => changeExecution.mutate("wait")}>
+                空きを待って起動
+              </Button>
+            )}
             <Button
               variant="icon"
               iconName="refresh"
@@ -289,7 +304,7 @@ export function FlashServiceDetailPage() {
             />
             <Button
               iconName="script"
-              disabled={disabled || Boolean(item.spec.stopped) || Boolean(gpuQueueMessage)}
+              disabled={disabled || Boolean(item.spec.stopped) || Boolean(pendingStart) || Boolean(gpuQueueMessage)}
               onClick={() => {
                 setShellPod(null);
                 setShellSession(0);
@@ -320,7 +335,16 @@ export function FlashServiceDetailPage() {
         }
       />
       {changeExecution.isError && <Alert type="error">{getApiErrorMessage(changeExecution.error)}</Alert>}
-      {item.spec.stopped && <Alert type="info">サービスを停止しています。ホーム領域・シークレット・設定は保持され、開始すると同じホーム領域を使用します。コンテナの書き込み領域は再作成されます。</Alert>}
+      {capacityMessage && (
+        <Alert type={pendingStart ? "info" : "warning"}
+          header={pendingStart?.state === "waiting" ? "空き容量待ち" : pendingStart ? "起動中" : "前回の起動要求"}>
+          <SpaceBetween size="xs">
+            <div>{capacityMessage}</div>
+            {pendingStart && <div>期限 {formatDateTime(pendingStart.expires_at)}</div>}
+          </SpaceBetween>
+        </Alert>
+      )}
+      {item.spec.stopped && !pendingStart && <Alert type="info">サービスを停止しています。ホーム領域・シークレット・設定は保持され、開始すると同じホーム領域を使用します。コンテナの書き込み領域は再作成されます。</Alert>}
       <Container>
         <ColumnLayout columns={3} variant="text-grid">
           {[

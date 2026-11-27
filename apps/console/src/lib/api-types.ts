@@ -676,6 +676,7 @@ export interface FlashServiceEndpoint {
 }
 
 export interface FlashServiceStatus {
+  capacity_wait?: FlashCapacityWait;
   serving_replicas?: number;
   allocated_cpu_millis?: number;
   allocated_memory_mib?: number;
@@ -711,6 +712,15 @@ export interface FlashServiceStatus {
   };
   endpoints?: FlashServiceEndpoint[] | Record<string, unknown>;
   private_endpoints?: FlashServiceEndpoint[];
+}
+
+export interface FlashCapacityWait {
+  id: string;
+  generation: number;
+  state: "waiting" | "starting" | "ready" | "cancelled" | "expired" | "rejected" | "superseded";
+  reason: string | null;
+  requested_at: string;
+  expires_at: string;
 }
 
 export interface FlashService {

@@ -779,9 +779,9 @@ export class HeteroCloudApiClient {
           organizationPath(organizationId, "flash/services"),
           { signal },
         ),
-      create: (organizationId: string, input: CreateFlashServiceRequest) =>
+      create: (organizationId: string, input: CreateFlashServiceRequest, waitSeconds?: number) =>
         this.request<FlashService>(
-          organizationPath(organizationId, "flash/services"),
+          organizationPath(organizationId, `flash/services${waitSeconds === undefined ? "" : `?wait_for_capacity_seconds=${waitSeconds}`}`),
           {
             method: "POST",
             body: input,
@@ -832,8 +832,16 @@ export class HeteroCloudApiClient {
         ),
       stop: (organizationId: string, serviceId: string) =>
         this.request<FlashService>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/stop`), { method: "POST" }),
-      start: (organizationId: string, serviceId: string) =>
-        this.request<FlashService>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/start`), { method: "POST" }),
+      start: (organizationId: string, serviceId: string, waitSeconds?: number) =>
+        this.request<FlashService>(
+          organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/start${waitSeconds === undefined ? "" : `?wait_for_capacity_seconds=${waitSeconds}`}`),
+          { method: "POST" },
+        ),
+      cancelStart: (organizationId: string, serviceId: string, requestId: string) =>
+        this.request<FlashService>(
+          organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}`),
+          { method: "PUT", body: { cancel_capacity_wait_id: requestId } },
+        ),
       listDomains: (organizationId: string, serviceId: string, signal?: AbortSignal) =>
         this.request<{ items: import("./api-types").FlashDomain[]; provider_unavailable: boolean }>(organizationPath(organizationId, `flash/services/${encodeURIComponent(serviceId)}/domains`), { signal }),
       addDomain: (organizationId: string, serviceId: string, hostname: string) =>
