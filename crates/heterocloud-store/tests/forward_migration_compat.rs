@@ -66,13 +66,24 @@ async fn staged_release_survives_additive_upgrade_but_rejects_unknown_versions()
         "a later release must be able to activate migration 37"
     );
 
-    sqlx::query("INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (38, 'unknown future migration', true, decode('00','hex'), 0)")
+    // All current binaries must recognize migration 38 before any of them
+    // activates it. A staged binary can restart after an additive upgrade.
+    compatibility_release(&store, 38).await?;
+    compatibility_release(&store, 37).await?;
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT to_regclass('flash_capacity_waits') IS NOT NULL")
+            .fetch_one(store.pool())
+            .await?
+    );
+    store.migrate().await?;
+
+    sqlx::query("INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (39, 'unknown future migration', true, decode('00','hex'), 0)")
         .execute(store.pool()).await?;
     assert!(
         store.migrate().await.is_err(),
         "unrecognized schema versions must fail closed"
     );
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version=38")
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version=39")
         .execute(store.pool())
         .await?;
     tokio::time::timeout(Duration::from_secs(5), store.migrate()).await??;
