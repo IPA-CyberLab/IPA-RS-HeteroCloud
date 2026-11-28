@@ -1,0 +1,168 @@
+{{- if .Values.publicSite.enabled }}
+{{- $name := printf "%s-public-site" (include "heterocloud.fullname" .) }}
+{{- $directories := list "heterocloud" "heteronet" "technology" "getting-started" "legal" "contact" "site-assets" }}
+{{- $labels := dict "app.kubernetes.io/name" (include "heterocloud.name" .) "app.kubernetes.io/instance" .Release.Name "app.kubernetes.io/component" "public-site" }}
+{{- $nginx := .Files.Get "files/public-site-nginx.conf" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+data:
+  nginx.conf: |{{ $nginx | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+spec:
+  replicas: {{ .Values.publicSite.replicaCount }}
+  selector:
+    matchLabels:
+      {{- toYaml $labels | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- toYaml $labels | nindent 8 }}
+      annotations:
+        checksum/public-site-config: {{ $nginx | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- toYaml $labels | nindent 20 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: copy-public-site
+          image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              cd /opt/heterocloud/console
+              test -s index.html
+              cp -R index.html {{ join " " $directories }} /site/
+          securityContext: &containerSecurity
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {cpu: 5m, memory: 16Mi}
+            limits: {cpu: 250m, memory: 64Mi}
+          volumeMounts:
+            - name: site
+              mountPath: /site
+      containers:
+        - name: nginx
+          image: {{ required "publicSite.servingImage is required when the public site is enabled" .Values.publicSite.servingImage | quote }}
+          command: [nginx, -c, /etc/site/nginx.conf, -g, "daemon off;"]
+          securityContext: *containerSecurity
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 5m, memory: 16Mi}
+            limits: {cpu: 250m, memory: 64Mi}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/site
+              readOnly: true
+            - name: site
+              mountPath: /site
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+        - name: site
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+spec:
+  selector:
+    {{- toYaml $labels | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $labels | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ required "publicSite.gateway.proxyNamespace is required" .Values.publicSite.gateway.proxyNamespace | quote }}
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress: []
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $name }}
+spec:
+  parentRefs:
+    - name: {{ required "publicSite.gateway.name is required" .Values.publicSite.gateway.name | quote }}
+      namespace: {{ required "publicSite.gateway.namespace is required" .Values.publicSite.gateway.namespace | quote }}
+      sectionName: {{ .Values.publicSite.gateway.sectionName | quote }}
+  hostnames:
+    - {{ required "publicSite.hostname is required" .Values.publicSite.hostname | quote }}
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /
+        {{- range $directories }}
+        - path:
+            type: PathPrefix
+            value: /{{ . }}
+        {{- end }}
+      backendRefs:
+        - name: {{ $name }}
+          port: 8080
+{{- end }}

@@ -45,6 +45,11 @@ server. The server also supports older console-only artifacts. Do not use a
 static host's default `index.html` SPA fallback for `/login`, `/overview`,
 `/cli/authorize`, etc.; the fallback must be **console.html**.
 
+The Helm chart can serve the public pages from a dedicated deployment using
+`publicSite.enabled`. It copies the public files from the release's API image
+before starting Nginx. The Gateway API route covers the public pages and
+`/site-assets`, so this deployment can start during an API or database outage.
+
 ## Public pages
 
 `/`, `/heterocloud/`, `/heteronet/`, `/technology/`, `/getting-started/`,
